@@ -122,10 +122,76 @@
 
 .node-library button:hover,
 .example-picker button:hover,
+.workflow-list button:hover,
+.workflow-actions button:hover,
+.mini-action:hover,
 .toolbar .ghost:hover,
 .icon-button:hover {
   border-color: #9aa68f;
   background: #f7f8f3;
+}
+
+.mini-action,
+.workflow-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #d8ded4;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #334155;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 7px;
+}
+
+.workflow-list {
+  display: grid;
+  gap: 7px;
+}
+
+.workflow-list button {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #d8ded4;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #1f2937;
+  cursor: pointer;
+  font: inherit;
+  padding: 8px 9px;
+  text-align: left;
+}
+
+.workflow-list button.active {
+  border-color: #193f34;
+  background: #eef4ec;
+}
+
+.workflow-list span {
+  overflow: hidden;
+  color: #111827;
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-list small {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.workflow-actions {
+  display: flex;
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.workflow-actions button {
+  flex: 1 1 0;
+  justify-content: center;
 }
 
 .variable-list {
@@ -242,11 +308,22 @@
   text-transform: uppercase;
 }
 
-.topbar h1 {
+.workflow-name-input {
+  width: min(520px, 100%);
+  border: 1px solid transparent;
+  background: transparent;
   color: #111827;
   font-size: 20px;
+  font-weight: 700;
   line-height: 1.2;
-  margin: 0;
+  padding: 2px 0;
+}
+
+.workflow-name-input:focus {
+  border-color: #9aa68f;
+  background: #ffffff;
+  outline: 3px solid rgba(25, 63, 52, 0.1);
+  padding: 5px 7px;
 }
 
 .toolbar {

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { useMemo, useRef, useState, type ChangeEvent } from 'react'
 import {
   Background,
   Controls,
@@ -22,6 +22,7 @@ import {
   Braces,
   ChevronRight,
   CircleDot,
+  Copy,
   Code2,
   Download,
   GitBranch,
@@ -77,11 +78,21 @@ type RunStep = {
 }
 
 type WorkflowDefinition = {
+  id?: string
   name: string
   version: string
   nodes: WorkflowNode[]
   edges: Edge[]
   updatedAt?: string
+}
+
+type WorkflowRecord = Required<Pick<WorkflowDefinition, 'id' | 'name' | 'version' | 'nodes' | 'edges'>> & {
+  updatedAt: string
+}
+
+type WorkflowStore = {
+  activeWorkflowId: string
+  workflows: WorkflowRecord[]
 }
 
 type WorkflowIssue = {
@@ -91,7 +102,9 @@ type WorkflowIssue = {
   nodeId?: string
 }
 
-const STORAGE_KEY = 'workflow-studio.current-workflow'
+const LEGACY_STORAGE_KEY = 'workflow-studio.current-workflow'
+const WORKFLOWS_STORAGE_KEY = 'workflow-studio.workflows'
+const ACTIVE_WORKFLOW_STORAGE_KEY = 'workflow-studio.active-workflow-id'
 
 const nodeMeta: Record<
   NodeKind,
@@ -234,12 +247,22 @@ const createWorkflowDefinition = (
   nodes: WorkflowNode[],
   edges: Edge[],
   updatedAt?: string,
+  name = '工作流编辑器演示',
 ): WorkflowDefinition => ({
-  name: '工作流编辑器演示',
+  name,
   version: '0.2.0',
   nodes,
   edges,
   updatedAt,
+})
+
+const createWorkflowRecord = (name = '工作流编辑器演示'): WorkflowRecord => ({
+  id: crypto.randomUUID(),
+  name,
+  version: '0.2.0',
+  nodes: initialNodes,
+  edges: initialEdges,
+  updatedAt: new Date().toISOString(),
 })
 
 const isWorkflowDefinition = (value: unknown): value is WorkflowDefinition => {
@@ -250,7 +273,7 @@ const isWorkflowDefinition = (value: unknown): value is WorkflowDefinition => {
 
 const loadStoredWorkflow = (): WorkflowDefinition | null => {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
+    const raw = window.localStorage.getItem(LEGACY_STORAGE_KEY)
     if (!raw) return null
     const parsed = JSON.parse(raw) as unknown
     return isWorkflowDefinition(parsed) ? parsed : null
@@ -258,6 +281,65 @@ const loadStoredWorkflow = (): WorkflowDefinition | null => {
     return null
   }
 }
+
+const loadWorkflowStore = (): WorkflowStore => {
+  try {
+    const raw = window.localStorage.getItem(WORKFLOWS_STORAGE_KEY)
+    const activeWorkflowId = window.localStorage.getItem(ACTIVE_WORKFLOW_STORAGE_KEY)
+    const parsed = raw ? (JSON.parse(raw) as unknown) : null
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      Array.isArray((parsed as { workflows?: unknown }).workflows)
+    ) {
+      const workflows = (parsed as { workflows: WorkflowRecord[] }).workflows.filter(isWorkflowDefinition).map(
+        (workflow) => ({
+          id: workflow.id ?? crypto.randomUUID(),
+          name: workflow.name || '未命名工作流',
+          version: workflow.version || '0.2.0',
+          nodes: workflow.nodes,
+          edges: workflow.edges,
+          updatedAt: workflow.updatedAt ?? new Date().toISOString(),
+        }),
+      )
+      if (workflows.length > 0) {
+        return {
+          activeWorkflowId:
+            activeWorkflowId && workflows.some((workflow) => workflow.id === activeWorkflowId)
+              ? activeWorkflowId
+              : workflows[0].id,
+          workflows,
+        }
+      }
+    }
+  } catch {
+    // Fall through to legacy migration/default creation.
+  }
+
+  const legacy = loadStoredWorkflow()
+  if (legacy) {
+    const migrated: WorkflowRecord = {
+      id: crypto.randomUUID(),
+      name: legacy.name || '迁移的工作流',
+      version: legacy.version || '0.2.0',
+      nodes: legacy.nodes,
+      edges: legacy.edges,
+      updatedAt: legacy.updatedAt ?? new Date().toISOString(),
+    }
+    return { activeWorkflowId: migrated.id, workflows: [migrated] }
+  }
+
+  const initial = createWorkflowRecord()
+  return { activeWorkflowId: initial.id, workflows: [initial] }
+}
+
+const persistWorkflowStore = (store: WorkflowStore) => {
+  window.localStorage.setItem(WORKFLOWS_STORAGE_KEY, JSON.stringify({ workflows: store.workflows }))
+  window.localStorage.setItem(ACTIVE_WORKFLOW_STORAGE_KEY, store.activeWorkflowId)
+}
+
+const cloneNodes = (nodes: WorkflowNode[]) => structuredClone(nodes) as WorkflowNode[]
+const cloneEdges = (edges: Edge[]) => structuredClone(edges) as Edge[]
 
 const renderTemplate = (template: string | undefined, context: Record<string, string>) =>
   (template ?? '').replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (_, key: string) => context[key] ?? '')
@@ -479,18 +561,43 @@ function WorkflowNodeCard({ data, selected }: NodeProps<WorkflowNode>) {
 const nodeTypes = { workflow: WorkflowNodeCard }
 
 function App() {
-  const storedWorkflow = useMemo(() => loadStoredWorkflow(), [])
-  const [nodes, setNodes] = useState<WorkflowNode[]>(storedWorkflow?.nodes ?? initialNodes)
-  const [edges, setEdges] = useState<Edge[]>(storedWorkflow?.edges ?? initialEdges)
+  const initialStore = useMemo(() => loadWorkflowStore(), [])
+  const [workflowStore, setWorkflowStore] = useState<WorkflowStore>(initialStore)
   const [selectedNodeId, setSelectedNodeId] = useState('llm-1')
   const [runSteps, setRunSteps] = useState<RunStep[]>([])
   const [runInput, setRunInput] = useState(examples[0])
-  const [lastSavedAt, setLastSavedAt] = useState(storedWorkflow?.updatedAt ?? '')
-  const [notice, setNotice] = useState(storedWorkflow ? '已从本地恢复上次编辑的工作流。' : '')
+  const [notice, setNotice] = useState('已加载本地工作流列表。')
   const nextNodeId = useRef(1)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
+  const activeWorkflow =
+    workflowStore.workflows.find((workflow) => workflow.id === workflowStore.activeWorkflowId) ??
+    workflowStore.workflows[0]
+  const nodes = activeWorkflow.nodes
+  const edges = activeWorkflow.edges
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? nodes[0]
+
+  const updateActiveWorkflow = (patch: Partial<WorkflowRecord>) => {
+    const updatedAt = new Date().toISOString()
+    setWorkflowStore((current) => {
+      const next = {
+        ...current,
+        workflows: current.workflows.map((workflow) =>
+          workflow.id === current.activeWorkflowId ? { ...workflow, ...patch, updatedAt } : workflow,
+        ),
+      }
+      persistWorkflowStore(next)
+      return next
+    })
+  }
+
+  const updateActiveNodes = (updater: (current: WorkflowNode[]) => WorkflowNode[]) => {
+    updateActiveWorkflow({ nodes: updater(nodes) })
+  }
+
+  const updateActiveEdges = (updater: (current: Edge[]) => Edge[]) => {
+    updateActiveWorkflow({ edges: updater(edges) })
+  }
 
   const variables = useMemo(
     () =>
@@ -533,25 +640,25 @@ function App() {
     [nodeIssueLevels, nodes],
   )
 
-  const onNodesChange = useCallback((changes: NodeChange<WorkflowNode>[]) => {
-    setNodes((current) => applyNodeChanges(changes, current))
+  const onNodesChange = (changes: NodeChange<WorkflowNode>[]) => {
+    updateActiveNodes((current) => applyNodeChanges(changes, current))
     setNotice('')
-  }, [])
+  }
 
-  const onEdgesChange = useCallback((changes: EdgeChange[]) => {
-    setEdges((current) => applyEdgeChanges(changes, current))
+  const onEdgesChange = (changes: EdgeChange[]) => {
+    updateActiveEdges((current) => applyEdgeChanges(changes, current))
     setNotice('')
-  }, [])
+  }
 
-  const onConnect = useCallback((connection: Connection) => {
-    setEdges((current) =>
+  const onConnect = (connection: Connection) => {
+    updateActiveEdges((current) =>
       addEdge({ ...connection, animated: connection.source === 'input-1' }, current),
     )
     setNotice('')
-  }, [])
+  }
 
   const updateSelectedNode = (patch: Partial<WorkflowNodeData>) => {
-    setNodes((current) =>
+    updateActiveNodes((current) =>
       current.map((node) =>
         node.id === selectedNode.id ? { ...node, data: { ...node.data, ...patch } } : node,
       ),
@@ -579,7 +686,7 @@ function App() {
       },
     }
 
-    setNodes((current) => [...current, node])
+    updateActiveNodes((current) => [...current, node])
     setSelectedNodeId(id)
     setRunSteps([])
     setNotice('')
@@ -587,13 +694,74 @@ function App() {
 
   const deleteSelectedNode = () => {
     if (!selectedNode || selectedNode.data.kind === 'input') return
-    setNodes((current) => current.filter((node) => node.id !== selectedNode.id))
-    setEdges((current) =>
+    updateActiveNodes((current) => current.filter((node) => node.id !== selectedNode.id))
+    updateActiveEdges((current) =>
       current.filter((edge) => edge.source !== selectedNode.id && edge.target !== selectedNode.id),
     )
     setSelectedNodeId(nodes[0]?.id ?? '')
     setRunSteps([])
     setNotice('')
+  }
+
+  const switchWorkflow = (workflowId: string) => {
+    const next = { ...workflowStore, activeWorkflowId: workflowId }
+    setWorkflowStore(next)
+    persistWorkflowStore(next)
+    const nextWorkflow = next.workflows.find((workflow) => workflow.id === workflowId)
+    setSelectedNodeId(nextWorkflow?.nodes[0]?.id ?? '')
+    setRunSteps([])
+    setNotice('已切换工作流。')
+  }
+
+  const createNewWorkflow = () => {
+    const nextWorkflow = createWorkflowRecord(`新工作流 ${workflowStore.workflows.length + 1}`)
+    const next = {
+      activeWorkflowId: nextWorkflow.id,
+      workflows: [...workflowStore.workflows, nextWorkflow],
+    }
+    setWorkflowStore(next)
+    persistWorkflowStore(next)
+    setSelectedNodeId(nextWorkflow.nodes[0]?.id ?? '')
+    setRunSteps([])
+    setNotice('已新建工作流。')
+  }
+
+  const duplicateWorkflow = () => {
+    const duplicated: WorkflowRecord = {
+      ...activeWorkflow,
+      id: crypto.randomUUID(),
+      name: `${activeWorkflow.name} 副本`,
+      nodes: cloneNodes(activeWorkflow.nodes),
+      edges: cloneEdges(activeWorkflow.edges),
+      updatedAt: new Date().toISOString(),
+    }
+    const next = {
+      activeWorkflowId: duplicated.id,
+      workflows: [...workflowStore.workflows, duplicated],
+    }
+    setWorkflowStore(next)
+    persistWorkflowStore(next)
+    setSelectedNodeId(duplicated.nodes[0]?.id ?? '')
+    setRunSteps([])
+    setNotice('已复制当前工作流。')
+  }
+
+  const deleteWorkflow = () => {
+    if (workflowStore.workflows.length === 1) {
+      setNotice('至少保留一个工作流，不能删除最后一个。')
+      return
+    }
+    const remaining = workflowStore.workflows.filter((workflow) => workflow.id !== activeWorkflow.id)
+    const nextActive = remaining[0]
+    const next = {
+      activeWorkflowId: nextActive.id,
+      workflows: remaining,
+    }
+    setWorkflowStore(next)
+    persistWorkflowStore(next)
+    setSelectedNodeId(nextActive.nodes[0]?.id ?? '')
+    setRunSteps([])
+    setNotice('已删除当前工作流。')
   }
 
   const runWorkflow = () => {
@@ -735,15 +903,16 @@ function App() {
   }
 
   const saveWorkflow = () => {
-    const updatedAt = new Date().toISOString()
-    const payload = createWorkflowDefinition(nodes, edges, updatedAt)
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
-    setLastSavedAt(updatedAt)
-    setNotice('已保存到当前浏览器，下次打开会自动恢复。')
+    persistWorkflowStore(workflowStore)
+    setNotice('已保存全部本地工作流。')
   }
 
   const exportWorkflow = () => {
-    const payload = JSON.stringify(createWorkflowDefinition(nodes, edges, new Date().toISOString()), null, 2)
+    const payload = JSON.stringify(
+      createWorkflowDefinition(nodes, edges, new Date().toISOString(), activeWorkflow.name),
+      null,
+      2,
+    )
     const blob = new Blob([payload], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
@@ -767,12 +936,23 @@ function App() {
           return
         }
 
-        setNodes(parsed.nodes)
-        setEdges(parsed.edges)
-        setSelectedNodeId(parsed.nodes[0]?.id ?? '')
+        const imported: WorkflowRecord = {
+          id: crypto.randomUUID(),
+          name: parsed.name ? `${parsed.name}（导入）` : '导入的工作流',
+          version: parsed.version || '0.2.0',
+          nodes: parsed.nodes,
+          edges: parsed.edges,
+          updatedAt: new Date().toISOString(),
+        }
+        const next = {
+          activeWorkflowId: imported.id,
+          workflows: [...workflowStore.workflows, imported],
+        }
+        setWorkflowStore(next)
+        persistWorkflowStore(next)
+        setSelectedNodeId(imported.nodes[0]?.id ?? '')
         setRunSteps([])
-        setLastSavedAt(parsed.updatedAt ?? '')
-        setNotice('已导入工作流。需要长期保留时请点击保存。')
+        setNotice('已导入为新的工作流。')
       } catch {
         setNotice('导入失败：文件不是合法 JSON。')
       } finally {
@@ -783,8 +963,7 @@ function App() {
   }
 
   const resetWorkflow = () => {
-    setNodes(initialNodes)
-    setEdges(initialEdges)
+    updateActiveWorkflow({ nodes: cloneNodes(initialNodes), edges: cloneEdges(initialEdges) })
     setSelectedNodeId('llm-1')
     setRunSteps([])
     setNotice('已重置为示例工作流。')
@@ -823,6 +1002,42 @@ function App() {
                 </button>
               )
             })}
+          </div>
+        </section>
+
+        <section className="panel workflow-list-panel">
+          <div className="panel-title between">
+            <span>
+              <Workflow size={16} />
+              我的工作流
+            </span>
+            <button type="button" className="mini-action" onClick={createNewWorkflow}>
+              <Plus size={14} />
+              新建
+            </button>
+          </div>
+          <div className="workflow-list">
+            {workflowStore.workflows.map((workflow) => (
+              <button
+                key={workflow.id}
+                type="button"
+                className={clsx(workflow.id === activeWorkflow.id && 'active')}
+                onClick={() => switchWorkflow(workflow.id)}
+              >
+                <span>{workflow.name}</span>
+                <small>{new Date(workflow.updatedAt).toLocaleString('zh-CN')}</small>
+              </button>
+            ))}
+          </div>
+          <div className="workflow-actions">
+            <button type="button" onClick={duplicateWorkflow}>
+              <Copy size={14} />
+              复制
+            </button>
+            <button type="button" onClick={deleteWorkflow}>
+              <Trash2 size={14} />
+              删除
+            </button>
           </div>
         </section>
 
@@ -868,7 +1083,12 @@ function App() {
         <header className="topbar">
           <div>
             <p>AI 工作流编排</p>
-            <h1>设计、调试并导出你的模型工作流</h1>
+            <input
+              className="workflow-name-input"
+              value={activeWorkflow.name}
+              onChange={(event) => updateActiveWorkflow({ name: event.target.value })}
+              aria-label="工作流名称"
+            />
           </div>
           <div className="toolbar">
             <input
@@ -902,10 +1122,10 @@ function App() {
         </header>
 
         <div className="canvas-wrap">
-          {(notice || lastSavedAt) && (
+          {notice && (
             <div className="workspace-notice">
-              <span>{notice || '当前工作流有本地保存记录。'}</span>
-              {lastSavedAt && <time>保存时间：{new Date(lastSavedAt).toLocaleString('zh-CN')}</time>}
+              <span>{notice}</span>
+              <time>当前工作流：{activeWorkflow.name}</time>
             </div>
           )}
           <ReactFlow
