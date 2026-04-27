@@ -43,16 +43,24 @@ import '@xyflow/react/dist/style.css'
 import './App.css'
 
 type NodeKind = 'input' | 'llm' | 'knowledge' | 'tool' | 'condition' | 'output'
+type ConditionOperator = 'contains' | 'equals' | 'not_empty'
 
 type WorkflowNodeData = {
   kind: NodeKind
   label: string
   description: string
   model?: string
+  systemPrompt?: string
   prompt?: string
   query?: string
+  topK?: number
   toolName?: string
+  toolParams?: string
   condition?: string
+  conditionVariable?: string
+  conditionOperator?: ConditionOperator
+  conditionValue?: string
+  sampleInput?: string
   outputKey?: string
   issueLevel?: 'error' | 'warning'
 }
@@ -103,6 +111,7 @@ const nodeMeta: Record<
     defaults: {
       label: '用户输入',
       description: '收集主题、受众和输出格式要求。',
+      sampleInput: '总结用户反馈，并生成按优先级排序的产品行动项。',
       outputKey: 'user_request',
     },
   },
@@ -115,6 +124,7 @@ const nodeMeta: Record<
       label: '大模型草稿',
       description: '调用模型生成结构化回答草稿。',
       model: 'gpt-5.4-mini',
+      systemPrompt: '你是严谨的 AI 工作流助手，回答要结构清晰、可执行。',
       prompt: '根据 {{user_request}} 和检索到的上下文，生成一份简洁回答。',
       outputKey: 'draft',
     },
@@ -128,6 +138,7 @@ const nodeMeta: Record<
       label: '知识库检索',
       description: '搜索已上传文档或已连接知识库。',
       query: '{{user_request}}',
+      topK: 4,
       outputKey: 'context',
     },
   },
@@ -140,6 +151,7 @@ const nodeMeta: Record<
       label: '工具调用',
       description: '调用连接器、API、脚本或内部动作。',
       toolName: 'webhook.lookup',
+      toolParams: '{\n  "query": "{{user_request}}"\n}',
       outputKey: 'tool_result',
     },
   },
@@ -152,6 +164,9 @@ const nodeMeta: Record<
       label: '质量判断',
       description: '根据置信度、意图或内容决定下一步。',
       condition: '{{draft}} 包含引用来源',
+      conditionVariable: 'draft',
+      conditionOperator: 'contains',
+      conditionValue: '引用来源',
     },
   },
   output: {
@@ -247,6 +262,12 @@ const loadStoredWorkflow = (): WorkflowDefinition | null => {
 const renderTemplate = (template: string | undefined, context: Record<string, string>) =>
   (template ?? '').replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (_, key: string) => context[key] ?? '')
 
+const getContextValue = (key: string | undefined, context: Record<string, string>) => {
+  if (!key) return ''
+  const normalized = key.replace(/^\{\{\s*|\s*\}\}$/g, '').trim()
+  return context[normalized] ?? ''
+}
+
 const createExecutionOrder = (nodes: WorkflowNode[], edges: Edge[]) => {
   const nodeById = new Map(nodes.map((node) => [node.id, node]))
   const indegree = new Map(nodes.map((node) => [node.id, 0]))
@@ -299,6 +320,51 @@ const evaluateCondition = (rule: string | undefined, context: Record<string, str
   }
 
   return { passed: !['false', '否', '不通过', '0'].includes(rendered), detail: `规则结果：${rendered}` }
+}
+
+const evaluateStructuredCondition = (data: WorkflowNodeData, context: Record<string, string>) => {
+  if (!data.conditionVariable && !data.conditionOperator) {
+    return evaluateCondition(data.condition, context)
+  }
+
+  const value = getContextValue(data.conditionVariable, context)
+  const target = renderTemplate(data.conditionValue, context).trim()
+  const operator = data.conditionOperator ?? 'contains'
+
+  if (operator === 'not_empty') {
+    return {
+      passed: value.trim().length > 0,
+      detail: `判断 {{${data.conditionVariable || '未选择变量'}}} 是否不为空。`,
+    }
+  }
+
+  if (operator === 'equals') {
+    return {
+      passed: value === target,
+      detail: `判断 {{${data.conditionVariable || '未选择变量'}}} 是否等于 "${target}"。`,
+    }
+  }
+
+  return {
+    passed: target.length === 0 ? true : value.includes(target),
+    detail: `判断 {{${data.conditionVariable || '未选择变量'}}} 是否包含 "${target}"。`,
+  }
+}
+
+const getConditionInputText = (data: WorkflowNodeData, context: Record<string, string>) => {
+  if (!data.conditionVariable && !data.conditionOperator) {
+    return renderTemplate(data.condition, context) || '未配置判断规则'
+  }
+
+  const operatorLabel: Record<ConditionOperator, string> = {
+    contains: '包含',
+    equals: '等于',
+    not_empty: '不为空',
+  }
+  const operator = data.conditionOperator ?? 'contains'
+  return `{{${data.conditionVariable || '未选择变量'}}} ${operatorLabel[operator]} ${
+    operator === 'not_empty' ? '' : data.conditionValue || ''
+  }`.trim()
 }
 
 const validateWorkflow = (nodes: WorkflowNode[], edges: Edge[]) => {
@@ -418,7 +484,7 @@ function App() {
   const [edges, setEdges] = useState<Edge[]>(storedWorkflow?.edges ?? initialEdges)
   const [selectedNodeId, setSelectedNodeId] = useState('llm-1')
   const [runSteps, setRunSteps] = useState<RunStep[]>([])
-  const [activeExample, setActiveExample] = useState(examples[0])
+  const [runInput, setRunInput] = useState(examples[0])
   const [lastSavedAt, setLastSavedAt] = useState(storedWorkflow?.updatedAt ?? '')
   const [notice, setNotice] = useState(storedWorkflow ? '已从本地恢复上次编辑的工作流。' : '')
   const nextNodeId = useRef(1)
@@ -432,6 +498,13 @@ function App() {
         .map((node) => node.data.outputKey)
         .filter((key): key is string => Boolean(key))
         .map((key) => `{{${key}}}`),
+    [nodes],
+  )
+  const variableKeys = useMemo(
+    () =>
+      nodes
+        .map((node) => node.data.outputKey?.trim())
+        .filter((key): key is string => Boolean(key)),
     [nodes],
   )
 
@@ -484,6 +557,11 @@ function App() {
       ),
     )
     setNotice('')
+  }
+
+  const appendToSelectedField = (field: 'prompt' | 'systemPrompt' | 'query' | 'toolParams' | 'conditionValue', variable: string) => {
+    const current = selectedNode.data[field] ?? ''
+    updateSelectedNode({ [field]: `${current}${current ? ' ' : ''}{{${variable}}}` })
   }
 
   const addNode = (kind: NodeKind) => {
@@ -572,12 +650,12 @@ function App() {
       }
 
       if (data.kind === 'input') {
-        const output = activeExample
+        const output = runInput.trim() || data.sampleInput?.trim() || examples[0]
         steps.push({
           nodeId: node.id,
           title: `${index + 1}. ${data.label}`,
           status: 'done',
-          input: '运行示例',
+          input: '用户请求',
           output,
           variable: writeOutput(output),
         })
@@ -586,7 +664,7 @@ function App() {
 
       if (data.kind === 'knowledge') {
         const query = renderTemplate(data.query, context)
-        const output = `围绕「${query || activeExample}」检索到产品反馈、处理策略、常见问题和上下文摘要。`
+        const output = `围绕「${query || runInput}」检索到 ${data.topK ?? 4} 段相关内容，包含产品反馈、处理策略、常见问题和上下文摘要。`
         steps.push({
           nodeId: node.id,
           title: `${index + 1}. ${data.label}`,
@@ -599,13 +677,14 @@ function App() {
       }
 
       if (data.kind === 'llm') {
+        const systemPrompt = renderTemplate(data.systemPrompt, context)
         const prompt = renderTemplate(data.prompt, context)
-        const output = `模型 ${data.model ?? '未指定'} 根据提示词生成草稿：${prompt.slice(0, 120)}`
+        const output = `模型 ${data.model ?? '未指定'} 根据系统提示和用户提示生成草稿：${prompt.slice(0, 120)}`
         steps.push({
           nodeId: node.id,
           title: `${index + 1}. ${data.label}`,
           status: 'done',
-          input: prompt || '未配置提示词',
+          input: [systemPrompt, prompt].filter(Boolean).join('\n\n') || '未配置提示词',
           output,
           variable: writeOutput(output),
         })
@@ -613,7 +692,8 @@ function App() {
       }
 
       if (data.kind === 'tool') {
-        const input = JSON.stringify(context, null, 2)
+        const params = renderTemplate(data.toolParams, context)
+        const input = params || JSON.stringify(context, null, 2)
         const output = `${data.toolName ?? '未命名工具'} 返回模拟结果，已读取 ${Object.keys(context).length} 个变量。`
         steps.push({
           nodeId: node.id,
@@ -627,13 +707,13 @@ function App() {
       }
 
       if (data.kind === 'condition') {
-        const result = evaluateCondition(data.condition, context)
+        const result = evaluateStructuredCondition(data, context)
         branchOpen = result.passed
         steps.push({
           nodeId: node.id,
           title: `${index + 1}. ${data.label}`,
           status: result.passed ? 'routed' : 'skipped',
-          input: renderTemplate(data.condition, context) || '未配置判断规则',
+          input: getConditionInputText(data, context),
           output: result.passed ? `${result.detail} 已继续执行。` : `${result.detail} 后续非输出节点将跳过。`,
         })
         return
@@ -888,44 +968,177 @@ function App() {
                 </select>
               </label>
               <label>
-                提示词
+                系统提示词
+                <textarea
+                  rows={4}
+                  value={selectedNode.data.systemPrompt ?? ''}
+                  onChange={(event) => updateSelectedNode({ systemPrompt: event.target.value })}
+                />
+              </label>
+              <div className="insert-row">
+                {variableKeys.map((variable) => (
+                  <button key={variable} type="button" onClick={() => appendToSelectedField('systemPrompt', variable)}>
+                    {`{{${variable}}}`}
+                  </button>
+                ))}
+              </div>
+              <label>
+                用户提示词
                 <textarea
                   rows={6}
                   value={selectedNode.data.prompt}
                   onChange={(event) => updateSelectedNode({ prompt: event.target.value })}
                 />
               </label>
+              <div className="insert-row">
+                {variableKeys.map((variable) => (
+                  <button key={variable} type="button" onClick={() => appendToSelectedField('prompt', variable)}>
+                    {`{{${variable}}}`}
+                  </button>
+                ))}
+              </div>
             </>
           )}
 
           {selectedNode.data.kind === 'knowledge' && (
-            <label>
-              检索语句
-              <input
-                value={selectedNode.data.query}
-                onChange={(event) => updateSelectedNode({ query: event.target.value })}
-              />
-            </label>
+            <>
+              <label>
+                检索语句
+                <input
+                  value={selectedNode.data.query}
+                  onChange={(event) => updateSelectedNode({ query: event.target.value })}
+                />
+              </label>
+              <div className="insert-row">
+                {variableKeys.map((variable) => (
+                  <button key={variable} type="button" onClick={() => appendToSelectedField('query', variable)}>
+                    {`{{${variable}}}`}
+                  </button>
+                ))}
+              </div>
+              <label>
+                返回条数
+                <input
+                  min={1}
+                  max={10}
+                  type="number"
+                  value={selectedNode.data.topK ?? 4}
+                  onChange={(event) => updateSelectedNode({ topK: Number(event.target.value) })}
+                />
+              </label>
+            </>
           )}
 
           {selectedNode.data.kind === 'tool' && (
+            <>
+              <label>
+                工具名称
+                <input
+                  value={selectedNode.data.toolName}
+                  onChange={(event) => updateSelectedNode({ toolName: event.target.value })}
+                />
+              </label>
+              <label>
+                请求参数
+                <textarea
+                  rows={5}
+                  value={selectedNode.data.toolParams ?? ''}
+                  onChange={(event) => updateSelectedNode({ toolParams: event.target.value })}
+                />
+              </label>
+              <div className="insert-row">
+                {variableKeys.map((variable) => (
+                  <button key={variable} type="button" onClick={() => appendToSelectedField('toolParams', variable)}>
+                    {`{{${variable}}}`}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          {selectedNode.data.kind === 'condition' && (
+            <div className="condition-form">
+              <label>
+                判断变量
+                <select
+                  value={selectedNode.data.conditionVariable ?? ''}
+                  onChange={(event) => updateSelectedNode({ conditionVariable: event.target.value })}
+                >
+                  <option value="">选择变量</option>
+                  {variableKeys.map((variable) => (
+                    <option key={variable} value={variable}>
+                      {`{{${variable}}}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                判断方式
+                <select
+                  value={selectedNode.data.conditionOperator ?? 'contains'}
+                  onChange={(event) =>
+                    updateSelectedNode({ conditionOperator: event.target.value as ConditionOperator })
+                  }
+                >
+                  <option value="contains">包含</option>
+                  <option value="equals">等于</option>
+                  <option value="not_empty">不为空</option>
+                </select>
+              </label>
+              {selectedNode.data.conditionOperator !== 'not_empty' && (
+                <>
+                  <label>
+                    判断值
+                    <input
+                      value={selectedNode.data.conditionValue ?? ''}
+                      onChange={(event) => updateSelectedNode({ conditionValue: event.target.value })}
+                    />
+                  </label>
+                  <div className="insert-row">
+                    {variableKeys.map((variable) => (
+                      <button
+                        key={variable}
+                        type="button"
+                        onClick={() => appendToSelectedField('conditionValue', variable)}
+                      >
+                        {`{{${variable}}}`}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {selectedNode.data.kind === 'input' && (
             <label>
-              工具名称
-              <input
-                value={selectedNode.data.toolName}
-                onChange={(event) => updateSelectedNode({ toolName: event.target.value })}
+              示例输入
+              <textarea
+                rows={4}
+                value={selectedNode.data.sampleInput ?? ''}
+                onChange={(event) => updateSelectedNode({ sampleInput: event.target.value })}
               />
             </label>
           )}
 
-          {selectedNode.data.kind === 'condition' && (
-            <label>
-              判断规则
-              <textarea
-                value={selectedNode.data.condition}
-                onChange={(event) => updateSelectedNode({ condition: event.target.value })}
-              />
-            </label>
+          {selectedNode.data.kind === 'output' && (
+            <>
+              <label>
+                输出模板
+                <textarea
+                  rows={6}
+                  value={selectedNode.data.prompt ?? ''}
+                  onChange={(event) => updateSelectedNode({ prompt: event.target.value })}
+                />
+              </label>
+              <div className="insert-row">
+                {variableKeys.map((variable) => (
+                  <button key={variable} type="button" onClick={() => appendToSelectedField('prompt', variable)}>
+                    {`{{${variable}}}`}
+                  </button>
+                ))}
+              </div>
+            </>
           )}
 
           <label>
@@ -947,14 +1160,22 @@ function App() {
             {examples.map((example) => (
               <button
                 type="button"
-                className={clsx(activeExample === example && 'active')}
+                className={clsx(runInput === example && 'active')}
                 key={example}
-                onClick={() => setActiveExample(example)}
+                onClick={() => setRunInput(example)}
               >
                 {example}
               </button>
             ))}
           </div>
+          <label className="run-input">
+            本次运行输入
+            <textarea
+              rows={4}
+              value={runInput}
+              onChange={(event) => setRunInput(event.target.value)}
+            />
+          </label>
 
           <div className="run-log">
             {runSteps.length === 0 ? (

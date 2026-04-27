@@ -415,6 +415,40 @@
   margin-bottom: 11px;
 }
 
+.insert-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: -4px 0 12px;
+}
+
+.insert-row button {
+  border: 1px solid #d8ded4;
+  border-radius: 6px;
+  background: #f4f7ef;
+  color: #31513f;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 7px;
+}
+
+.insert-row button:hover {
+  border-color: #9aa68f;
+  background: #eef4ec;
+}
+
+.condition-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 9px;
+}
+
+.condition-form label:first-child,
+.condition-form label:nth-child(3),
+.condition-form .insert-row {
+  grid-column: 1 / -1;
+}
+
 input,
 select,
 textarea {
@@ -467,6 +501,15 @@ textarea:focus {
   border-color: #193f34;
   background: #eef4ec;
   color: #17221e;
+}
+
+.run-input {
+  display: grid;
+  gap: 6px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 12px;
 }
 
 .run-log {
