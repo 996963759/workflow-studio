@@ -60,8 +60,10 @@ type WorkflowNode = Node<WorkflowNodeData, 'workflow'>
 type RunStep = {
   nodeId: string
   title: string
-  status: 'done' | 'routed' | 'waiting'
+  status: 'done' | 'routed' | 'waiting' | 'skipped' | 'error'
+  input: string
   output: string
+  variable?: string
 }
 
 type WorkflowDefinition = {
@@ -233,6 +235,63 @@ const loadStoredWorkflow = (): WorkflowDefinition | null => {
   }
 }
 
+const renderTemplate = (template: string | undefined, context: Record<string, string>) =>
+  (template ?? '').replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (_, key: string) => context[key] ?? '')
+
+const createExecutionOrder = (nodes: WorkflowNode[], edges: Edge[]) => {
+  const nodeById = new Map(nodes.map((node) => [node.id, node]))
+  const indegree = new Map(nodes.map((node) => [node.id, 0]))
+  const outgoing = new Map<string, Edge[]>()
+
+  edges.forEach((edge) => {
+    if (!nodeById.has(edge.source) || !nodeById.has(edge.target)) return
+    indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1)
+    outgoing.set(edge.source, [...(outgoing.get(edge.source) ?? []), edge])
+  })
+
+  const queue = nodes
+    .filter((node) => (indegree.get(node.id) ?? 0) === 0)
+    .sort((a, b) => a.position.x - b.position.x)
+  const order: WorkflowNode[] = []
+
+  while (queue.length > 0) {
+    const node = queue.shift()
+    if (!node) continue
+    order.push(node)
+
+    ;(outgoing.get(node.id) ?? []).forEach((edge) => {
+      const nextDegree = (indegree.get(edge.target) ?? 0) - 1
+      indegree.set(edge.target, nextDegree)
+      if (nextDegree === 0) {
+        const target = nodeById.get(edge.target)
+        if (target) {
+          queue.push(target)
+          queue.sort((a, b) => a.position.x - b.position.x)
+        }
+      }
+    })
+  }
+
+  return order.length === nodes.length ? order : null
+}
+
+const evaluateCondition = (rule: string | undefined, context: Record<string, string>) => {
+  const rendered = renderTemplate(rule, context).trim()
+  if (!rendered) return { passed: true, detail: '没有配置判断规则，默认通过。' }
+
+  const containsMatch = rendered.match(/(.+?)\s*(包含|contains)\s*(.+)/i)
+  if (containsMatch) {
+    const haystack = containsMatch[1].trim()
+    const needle = containsMatch[3].trim().replace(/^["'“”‘’]+|["'“”‘’]+$/g, '')
+    return {
+      passed: needle.length === 0 ? true : haystack.includes(needle),
+      detail: `判断 "${haystack}" 是否包含 "${needle}"。`,
+    }
+  }
+
+  return { passed: !['false', '否', '不通过', '0'].includes(rendered), detail: `规则结果：${rendered}` }
+}
+
 function WorkflowNodeCard({ data, selected }: NodeProps<WorkflowNode>) {
   const meta = nodeMeta[data.kind]
   const Icon = meta.icon
@@ -344,26 +403,125 @@ function App() {
   }
 
   const runWorkflow = () => {
-    const order = [...nodes].sort((a, b) => a.position.x - b.position.x)
-    const steps = order.map((node, index) => {
-      const outputByKind: Record<NodeKind, string> = {
-        input: `已接收用户请求："${activeExample}"`,
-        knowledge: '已检索到 4 段相关内容，包含策略、FAQ 和产品上下文。',
-        llm: `已使用 ${node.data.model ?? '当前模型'} 和上游变量生成草稿。`,
-        tool: `已执行 ${node.data.toolName ?? '工具'}，并标准化返回数据。`,
-        condition: '条件判断为真，已路由到最终回答节点。',
-        output: '已根据草稿、上下文和工具结果组装最终回答。',
+    const order = createExecutionOrder(nodes, edges)
+    if (!order) {
+      setRunSteps([
+        {
+          nodeId: 'workflow-error',
+          title: '执行失败',
+          status: 'error',
+          input: '当前画布',
+          output: '工作流存在环形依赖或无效连线，无法计算执行顺序。',
+        },
+      ])
+      return
+    }
+
+    const context: Record<string, string> = {}
+    const steps: RunStep[] = []
+    let branchOpen = true
+
+    order.forEach((node, index) => {
+      if (!branchOpen && node.data.kind !== 'output') {
+        steps.push({
+          nodeId: node.id,
+          title: `${index + 1}. ${node.data.label}`,
+          status: 'skipped',
+          input: '上一条件节点未通过。',
+          output: '已跳过该节点。',
+        })
+        return
       }
 
-      return {
+      const data = node.data
+      const writeOutput = (value: string) => {
+        if (data.outputKey) {
+          context[data.outputKey] = value
+        }
+        return data.outputKey ? `{{${data.outputKey}}}` : undefined
+      }
+
+      if (data.kind === 'input') {
+        const output = activeExample
+        steps.push({
+          nodeId: node.id,
+          title: `${index + 1}. ${data.label}`,
+          status: 'done',
+          input: '运行示例',
+          output,
+          variable: writeOutput(output),
+        })
+        return
+      }
+
+      if (data.kind === 'knowledge') {
+        const query = renderTemplate(data.query, context)
+        const output = `围绕「${query || activeExample}」检索到产品反馈、处理策略、常见问题和上下文摘要。`
+        steps.push({
+          nodeId: node.id,
+          title: `${index + 1}. ${data.label}`,
+          status: 'done',
+          input: query || '未配置检索语句',
+          output,
+          variable: writeOutput(output),
+        })
+        return
+      }
+
+      if (data.kind === 'llm') {
+        const prompt = renderTemplate(data.prompt, context)
+        const output = `模型 ${data.model ?? '未指定'} 根据提示词生成草稿：${prompt.slice(0, 120)}`
+        steps.push({
+          nodeId: node.id,
+          title: `${index + 1}. ${data.label}`,
+          status: 'done',
+          input: prompt || '未配置提示词',
+          output,
+          variable: writeOutput(output),
+        })
+        return
+      }
+
+      if (data.kind === 'tool') {
+        const input = JSON.stringify(context, null, 2)
+        const output = `${data.toolName ?? '未命名工具'} 返回模拟结果，已读取 ${Object.keys(context).length} 个变量。`
+        steps.push({
+          nodeId: node.id,
+          title: `${index + 1}. ${data.label}`,
+          status: 'done',
+          input,
+          output,
+          variable: writeOutput(output),
+        })
+        return
+      }
+
+      if (data.kind === 'condition') {
+        const result = evaluateCondition(data.condition, context)
+        branchOpen = result.passed
+        steps.push({
+          nodeId: node.id,
+          title: `${index + 1}. ${data.label}`,
+          status: result.passed ? 'routed' : 'skipped',
+          input: renderTemplate(data.condition, context) || '未配置判断规则',
+          output: result.passed ? `${result.detail} 已继续执行。` : `${result.detail} 后续非输出节点将跳过。`,
+        })
+        return
+      }
+
+      const output = renderTemplate(data.prompt, context)
+      steps.push({
         nodeId: node.id,
-        title: `${index + 1}. ${node.data.label}`,
-        status: node.data.kind === 'condition' ? 'routed' : 'done',
-        output: outputByKind[node.data.kind],
-      } satisfies RunStep
+        title: `${index + 1}. ${data.label}`,
+        status: 'done',
+        input: data.prompt ?? '未配置输出模板',
+        output: output || '没有可输出内容。',
+        variable: writeOutput(output),
+      })
     })
 
     setRunSteps(steps)
+    setNotice(`已按 ${order.length} 个节点的连线顺序完成运行。`)
   }
 
   const saveWorkflow = () => {
@@ -655,7 +813,22 @@ function App() {
                   <span className={clsx('status-dot', step.status)} />
                   <div>
                     <strong>{step.title}</strong>
-                    <p>{step.output}</p>
+                    <dl>
+                      <div>
+                        <dt>输入</dt>
+                        <dd>{step.input}</dd>
+                      </div>
+                      <div>
+                        <dt>输出</dt>
+                        <dd>{step.output}</dd>
+                      </div>
+                      {step.variable && (
+                        <div>
+                          <dt>写入</dt>
+                          <dd>{step.variable}</dd>
+                        </div>
+                      )}
+                    </dl>
                   </div>
                 </article>
               ))
