@@ -17,6 +17,7 @@ import {
   type NodeProps,
 } from '@xyflow/react'
 import {
+  AlertTriangle,
   Bot,
   Braces,
   ChevronRight,
@@ -53,6 +54,7 @@ type WorkflowNodeData = {
   toolName?: string
   condition?: string
   outputKey?: string
+  issueLevel?: 'error' | 'warning'
 }
 
 type WorkflowNode = Node<WorkflowNodeData, 'workflow'>
@@ -72,6 +74,13 @@ type WorkflowDefinition = {
   nodes: WorkflowNode[]
   edges: Edge[]
   updatedAt?: string
+}
+
+type WorkflowIssue = {
+  id: string
+  level: 'error' | 'warning'
+  message: string
+  nodeId?: string
 }
 
 const STORAGE_KEY = 'workflow-studio.current-workflow'
@@ -292,12 +301,89 @@ const evaluateCondition = (rule: string | undefined, context: Record<string, str
   return { passed: !['false', '否', '不通过', '0'].includes(rendered), detail: `规则结果：${rendered}` }
 }
 
+const validateWorkflow = (nodes: WorkflowNode[], edges: Edge[]) => {
+  const issues: WorkflowIssue[] = []
+  const nodeById = new Map(nodes.map((node) => [node.id, node]))
+  const validEdges = edges.filter((edge) => nodeById.has(edge.source) && nodeById.has(edge.target))
+  const incoming = new Map(nodes.map((node) => [node.id, 0]))
+  const outgoing = new Map(nodes.map((node) => [node.id, 0]))
+
+  validEdges.forEach((edge) => {
+    incoming.set(edge.target, (incoming.get(edge.target) ?? 0) + 1)
+    outgoing.set(edge.source, (outgoing.get(edge.source) ?? 0) + 1)
+  })
+
+  if (!nodes.some((node) => node.data.kind === 'input')) {
+    issues.push({ id: 'missing-input', level: 'error', message: '至少需要一个用户输入节点。' })
+  }
+
+  if (!nodes.some((node) => node.data.kind === 'output')) {
+    issues.push({ id: 'missing-output', level: 'error', message: '至少需要一个最终回答节点。' })
+  }
+
+  if (!createExecutionOrder(nodes, validEdges)) {
+    issues.push({ id: 'cycle', level: 'error', message: '工作流存在环形依赖，无法按顺序执行。' })
+  }
+
+  nodes.forEach((node) => {
+    const hasIncoming = (incoming.get(node.id) ?? 0) > 0
+    const hasOutgoing = (outgoing.get(node.id) ?? 0) > 0
+    if (!hasIncoming && !hasOutgoing && nodes.length > 1) {
+      issues.push({
+        id: `isolated-${node.id}`,
+        level: 'warning',
+        nodeId: node.id,
+        message: `节点「${node.data.label}」没有任何连线。`,
+      })
+    }
+
+    if (node.data.kind !== 'input' && !hasIncoming) {
+      issues.push({
+        id: `missing-upstream-${node.id}`,
+        level: 'warning',
+        nodeId: node.id,
+        message: `节点「${node.data.label}」没有上游输入。`,
+      })
+    }
+
+    if (node.data.kind === 'output' && !hasIncoming) {
+      issues.push({
+        id: `output-no-upstream-${node.id}`,
+        level: 'error',
+        nodeId: node.id,
+        message: `最终回答节点「${node.data.label}」必须连接上游节点。`,
+      })
+    }
+  })
+
+  const variableOwners = new Map<string, WorkflowNode[]>()
+  nodes.forEach((node) => {
+    const key = node.data.outputKey?.trim()
+    if (!key) return
+    variableOwners.set(key, [...(variableOwners.get(key) ?? []), node])
+  })
+
+  variableOwners.forEach((owners, key) => {
+    if (owners.length < 2) return
+    owners.forEach((node) => {
+      issues.push({
+        id: `duplicate-var-${key}-${node.id}`,
+        level: 'error',
+        nodeId: node.id,
+        message: `输出变量「${key}」被多个节点重复使用。`,
+      })
+    })
+  })
+
+  return issues
+}
+
 function WorkflowNodeCard({ data, selected }: NodeProps<WorkflowNode>) {
   const meta = nodeMeta[data.kind]
   const Icon = meta.icon
 
   return (
-    <div className={clsx('workflow-node', selected && 'selected')}>
+    <div className={clsx('workflow-node', selected && 'selected', data.issueLevel)}>
       <Handle type="target" position={Position.Left} />
       <div className="node-head">
         <span className="node-icon" style={{ color: meta.color, backgroundColor: `${meta.color}16` }}>
@@ -307,6 +393,11 @@ function WorkflowNodeCard({ data, selected }: NodeProps<WorkflowNode>) {
           <strong>{data.label}</strong>
           <small>{meta.title}</small>
         </div>
+        {data.issueLevel && (
+          <span className={clsx('node-warning', data.issueLevel)}>
+            <AlertTriangle size={14} />
+          </span>
+        )}
       </div>
       <p>{data.description}</p>
       <div className="node-vars">
@@ -342,6 +433,31 @@ function App() {
         .filter((key): key is string => Boolean(key))
         .map((key) => `{{${key}}}`),
     [nodes],
+  )
+
+  const workflowIssues = useMemo(() => validateWorkflow(nodes, edges), [nodes, edges])
+  const blockingIssues = workflowIssues.filter((issue) => issue.level === 'error')
+  const nodeIssueLevels = useMemo(() => {
+    const levels = new Map<string, 'error' | 'warning'>()
+    workflowIssues.forEach((issue) => {
+      if (!issue.nodeId) return
+      const current = levels.get(issue.nodeId)
+      if (current === 'error') return
+      levels.set(issue.nodeId, issue.level)
+    })
+    return levels
+  }, [workflowIssues])
+
+  const displayedNodes = useMemo(
+    () =>
+      nodes.map((node) => ({
+        ...node,
+        data: {
+          ...node.data,
+          issueLevel: nodeIssueLevels.get(node.id),
+        },
+      })),
+    [nodeIssueLevels, nodes],
   )
 
   const onNodesChange = useCallback((changes: NodeChange<WorkflowNode>[]) => {
@@ -403,6 +519,20 @@ function App() {
   }
 
   const runWorkflow = () => {
+    if (blockingIssues.length > 0) {
+      setRunSteps(
+        blockingIssues.map((issue, index) => ({
+          nodeId: issue.nodeId ?? issue.id,
+          title: `${index + 1}. 运行前校验失败`,
+          status: 'error',
+          input: '当前工作流定义',
+          output: issue.message,
+        })),
+      )
+      setNotice(`发现 ${blockingIssues.length} 个严重问题，已阻止运行。`)
+      return
+    }
+
     const order = createExecutionOrder(nodes, edges)
     if (!order) {
       setRunSteps([
@@ -627,6 +757,31 @@ function App() {
             ))}
           </div>
         </section>
+
+        <section className="panel validation-panel">
+          <div className="panel-title">
+            <AlertTriangle size={16} />
+            <span>工作流检查</span>
+          </div>
+          <div className="issue-summary">
+            <span className={clsx(blockingIssues.length > 0 ? 'bad' : 'good')}>
+              {blockingIssues.length} 个严重问题
+            </span>
+            <span>{workflowIssues.length - blockingIssues.length} 个提醒</span>
+          </div>
+          {workflowIssues.length === 0 ? (
+            <p className="no-issues">当前工作流可以运行。</p>
+          ) : (
+            <ul className="issue-list">
+              {workflowIssues.map((issue) => (
+                <li key={issue.id} className={issue.level}>
+                  <strong>{issue.level === 'error' ? '错误' : '提醒'}</strong>
+                  <span>{issue.message}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       </aside>
 
       <section className="workspace">
@@ -674,7 +829,7 @@ function App() {
             </div>
           )}
           <ReactFlow
-            nodes={nodes}
+            nodes={displayedNodes}
             edges={edges}
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}
@@ -841,7 +996,19 @@ function App() {
             <Code2 size={16} />
             <span>定义摘要</span>
           </div>
-          <pre>{JSON.stringify({ nodes: nodes.length, edges: edges.length, variables }, null, 2)}</pre>
+          <pre>
+            {JSON.stringify(
+              {
+                节点数: nodes.length,
+                连线数: edges.length,
+                变量数: variables.length,
+                严重问题: blockingIssues.length,
+                提醒: workflowIssues.length - blockingIssues.length,
+              },
+              null,
+              2,
+            )}
+          </pre>
         </section>
       </aside>
     </main>
