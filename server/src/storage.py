@@ -159,15 +159,26 @@ class WorkflowStore:
             steps=response.steps,
         )
 
-    def list_runs(self) -> list[RunRecord]:
+    def list_runs(self, workflow_id: str | None = None) -> list[RunRecord]:
         with self._connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT id, workflow_id, workflow_name, input_text, status, steps_json, created_at
-                FROM runs
-                ORDER BY created_at DESC
-                """
-            ).fetchall()
+            if workflow_id:
+                rows = connection.execute(
+                    """
+                    SELECT id, workflow_id, workflow_name, input_text, status, steps_json, created_at
+                    FROM runs
+                    WHERE workflow_id = ?
+                    ORDER BY created_at DESC
+                    """,
+                    (workflow_id,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT id, workflow_id, workflow_name, input_text, status, steps_json, created_at
+                    FROM runs
+                    ORDER BY created_at DESC
+                    """
+                ).fetchall()
         return [self._row_to_run(row) for row in rows]
 
     def get_run(self, run_id: str) -> RunRecord | None:
@@ -181,6 +192,19 @@ class WorkflowStore:
                 (run_id,),
             ).fetchone()
         return self._row_to_run(row) if row else None
+
+    def delete_run(self, run_id: str) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute("DELETE FROM runs WHERE id = ?", (run_id,))
+        return cursor.rowcount > 0
+
+    def delete_runs(self, workflow_id: str | None = None) -> int:
+        with self._connect() as connection:
+            if workflow_id:
+                cursor = connection.execute("DELETE FROM runs WHERE workflow_id = ?", (workflow_id,))
+            else:
+                cursor = connection.execute("DELETE FROM runs")
+        return cursor.rowcount
 
     def _row_to_record(self, row: sqlite3.Row) -> WorkflowRecord:
         return WorkflowRecord(

@@ -1001,13 +1001,20 @@ function App() {
   }
 
   const loadRunHistory = async () => {
+    if (!activeWorkflow.serverId) {
+      setRunHistory([])
+      setSelectedRunId('')
+      setNotice('当前工作流还没有同步到后端，暂无可加载的后端历史。')
+      return
+    }
+
     try {
-      const response = await fetch(`${API_BASE_URL}/api/runs`)
+      const response = await fetch(`${API_BASE_URL}/api/runs?workflow_id=${activeWorkflow.serverId}`)
       if (!response.ok) throw new Error('load runs failed')
       const runs = (await response.json()) as ServerRunRecord[]
       setRunHistory(runs)
       setBackendStatus('online')
-      setNotice(`已加载 ${runs.length} 条后端运行历史。`)
+      setNotice(`已加载当前工作流的 ${runs.length} 条后端运行历史。`)
     } catch {
       setBackendStatus('offline')
       setNotice('加载运行历史失败：后端不可用或请求失败。')
@@ -1028,6 +1035,48 @@ function App() {
     } catch {
       setBackendStatus('offline')
       setNotice('载入运行历史失败：后端不可用或记录不存在。')
+    }
+  }
+
+  const deleteRunHistory = async (runId: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/runs/${runId}`, { method: 'DELETE' })
+      if (!response.ok) throw new Error('delete run failed')
+      setRunHistory((current) => current.filter((run) => run.id !== runId))
+      if (selectedRunId === runId) {
+        setSelectedRunId('')
+        setRunSteps([])
+      }
+      setBackendStatus('online')
+      setNotice('已删除这条运行历史。')
+    } catch {
+      setBackendStatus('offline')
+      setNotice('删除运行历史失败：后端不可用或记录不存在。')
+    }
+  }
+
+  const clearCurrentRunHistory = async () => {
+    if (!activeWorkflow.serverId) {
+      setRunHistory([])
+      setSelectedRunId('')
+      setRunSteps([])
+      setNotice('当前工作流还没有同步到后端，本地历史视图已清空。')
+      return
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/runs?workflow_id=${activeWorkflow.serverId}`, {
+        method: 'DELETE',
+      })
+      if (!response.ok) throw new Error('clear runs failed')
+      setRunHistory([])
+      setSelectedRunId('')
+      setRunSteps([])
+      setBackendStatus('online')
+      setNotice('已清空当前工作流的后端运行历史。')
+    } catch {
+      setBackendStatus('offline')
+      setNotice('清空运行历史失败：后端不可用或请求失败。')
     }
   }
 
@@ -1751,6 +1800,9 @@ function App() {
             <button type="button" onClick={loadRunHistory}>
               加载历史
             </button>
+            <button type="button" onClick={clearCurrentRunHistory}>
+              清空历史
+            </button>
           </div>
 
           <div className="run-history">
@@ -1758,15 +1810,20 @@ function App() {
               <p>暂无后端运行历史。</p>
             ) : (
               runHistory.slice(0, 6).map((run) => (
-                <button
-                  key={run.id}
-                  type="button"
-                  className={clsx(run.id === selectedRunId && 'active')}
-                  onClick={() => selectRunHistory(run.id)}
-                >
-                  <strong>{run.workflow_name}</strong>
-                  <span>{new Date(run.created_at).toLocaleString('zh-CN')}</span>
-                </button>
+                <div key={run.id} className={clsx('run-history-item', run.id === selectedRunId && 'active')}>
+                  <button type="button" onClick={() => selectRunHistory(run.id)}>
+                    <strong>{run.workflow_name}</strong>
+                    <span>{new Date(run.created_at).toLocaleString('zh-CN')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="run-delete-button"
+                    aria-label="删除运行历史"
+                    onClick={() => deleteRunHistory(run.id)}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               ))
             )}
           </div>

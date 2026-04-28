@@ -645,12 +645,11 @@ textarea:focus {
 }
 
 .runner-actions button,
-.run-history button {
+.run-history-item {
   border: 1px solid #d8ded4;
   border-radius: 7px;
   background: #ffffff;
   color: #334155;
-  cursor: pointer;
   font: inherit;
 }
 
@@ -659,10 +658,11 @@ textarea:focus {
   font-size: 12px;
   font-weight: 700;
   padding: 7px 9px;
+  cursor: pointer;
 }
 
 .runner-actions button:hover,
-.run-history button:hover {
+.run-history-item:hover {
   border-color: #9aa68f;
   background: #f7f8f3;
 }
@@ -679,16 +679,30 @@ textarea:focus {
   margin: 0;
 }
 
-.run-history button {
+.run-history-item {
   display: grid;
-  gap: 3px;
-  padding: 8px 9px;
-  text-align: left;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 7px;
 }
 
-.run-history button.active {
+.run-history-item.active {
   border-color: #193f34;
   background: #eef4ec;
+}
+
+.run-history-item > button:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-align: left;
 }
 
 .run-history strong {
@@ -702,6 +716,24 @@ textarea:focus {
 .run-history span {
   color: #64748b;
   font-size: 11px;
+}
+
+.run-delete-button {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.run-delete-button:hover {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #b91c1c;
 }
 
 .run-log {

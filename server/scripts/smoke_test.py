@@ -75,7 +75,13 @@ def main() -> None:
     run = request("/api/runs", "POST", {"workflow": workflow, "input_text": "测试输入"})
     stored_run = request(f"/api/workflows/{created['id']}/runs", "POST", {"input_text": "后端历史测试"})
     runs = request("/api/runs")
+    workflow_runs = request(f"/api/runs?workflow_id={created['id']}")
     fetched_run = request(f"/api/runs/{stored_run['id']}")
+    delete_single_result = request(f"/api/runs/{stored_run['id']}", "DELETE")
+    deleted_single_status, _ = request_error(f"/api/runs/{stored_run['id']}")
+    second_stored_run = request(f"/api/workflows/{created['id']}/runs", "POST", {"input_text": "清理历史测试"})
+    delete_workflow_runs_result = request(f"/api/runs?workflow_id={created['id']}", "DELETE")
+    workflow_runs_after_clear = request(f"/api/runs?workflow_id={created['id']}")
 
     assert validation["valid"] is True
     assert invalid_validation["valid"] is False
@@ -83,6 +89,13 @@ def main() -> None:
     assert invalid_create_body["detail"]["valid"] is False
     assert invalid_run_status == 400
     assert invalid_run_body["detail"]["valid"] is False
+    assert len(workflow_runs) >= 1
+    assert all(run["workflow_id"] == created["id"] for run in workflow_runs)
+    assert delete_single_result == {}
+    assert deleted_single_status == 404
+    assert second_stored_run["workflow_id"] == created["id"]
+    assert delete_workflow_runs_result == {}
+    assert workflow_runs_after_clear == []
 
     print(
         json.dumps(
@@ -97,6 +110,9 @@ def main() -> None:
                 "step_count": len(run["steps"]),
                 "stored_run_id": stored_run["id"],
                 "run_count": len(runs),
+                "workflow_run_count": len(workflow_runs),
+                "deleted_single_status": deleted_single_status,
+                "workflow_runs_after_clear": len(workflow_runs_after_clear),
                 "fetched_run_status": fetched_run["status"],
             },
             ensure_ascii=False,

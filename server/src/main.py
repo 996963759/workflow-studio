@@ -85,8 +85,13 @@ def run_workflow(payload: RunRequest) -> RunResponse:
 
 
 @app.get("/api/runs", response_model=list[RunRecord])
-def list_runs() -> list[RunRecord]:
-    return store.list_runs()
+def list_runs(workflow_id: str | None = None) -> list[RunRecord]:
+    return store.list_runs(workflow_id)
+
+
+@app.delete("/api/runs", status_code=204)
+def delete_runs(workflow_id: str | None = None) -> None:
+    store.delete_runs(workflow_id)
 
 
 @app.get("/api/runs/{run_id}", response_model=RunRecord)
@@ -95,6 +100,12 @@ def get_run(run_id: str) -> RunRecord:
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     return run
+
+
+@app.delete("/api/runs/{run_id}", status_code=204)
+def delete_run(run_id: str) -> None:
+    if not store.delete_run(run_id):
+        raise HTTPException(status_code=404, detail="Run not found")
 
 
 @app.post("/api/workflows/{workflow_id}/runs", response_model=RunRecord, status_code=201)

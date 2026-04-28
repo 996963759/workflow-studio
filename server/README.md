@@ -26,7 +26,11 @@ server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 
 - `DELETE /api/workflows/{workflow_id}`
 - `POST /api/runs`
 - `GET /api/runs`
+- `GET /api/runs?workflow_id={workflow_id}`
+- `DELETE /api/runs`
+- `DELETE /api/runs?workflow_id={workflow_id}`
 - `GET /api/runs/{run_id}`
+- `DELETE /api/runs/{run_id}`
 - `POST /api/workflows/{workflow_id}/runs`
 
 `POST /api/workflows`, `PUT /api/workflows/{workflow_id}`, `POST /api/runs` and `POST /api/workflows/{workflow_id}/runs` reject workflows with validation errors and return HTTP 400 with the validation result in `detail`.
