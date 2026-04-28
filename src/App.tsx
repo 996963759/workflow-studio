@@ -539,6 +539,24 @@ const getConditionInputText = (data: WorkflowNodeData, context: Record<string, s
   }`.trim()
 }
 
+const getReachableNodeIds = (startIds: string[], edges: Edge[]) => {
+  const reachable = new Set<string>()
+  const queue = [...startIds]
+
+  while (queue.length > 0) {
+    const current = queue.shift()
+    if (!current || reachable.has(current)) continue
+    reachable.add(current)
+    edges
+      .filter((edge) => edge.source === current)
+      .forEach((edge) => {
+        if (!reachable.has(edge.target)) queue.push(edge.target)
+      })
+  }
+
+  return reachable
+}
+
 const validateWorkflow = (nodes: WorkflowNode[], edges: Edge[]) => {
   const issues: WorkflowIssue[] = []
   const nodeById = new Map(nodes.map((node) => [node.id, node]))
@@ -643,7 +661,16 @@ function WorkflowNodeCard({ data, selected }: NodeProps<WorkflowNode>) {
         {data.toolName && <span>{data.toolName}</span>}
         {data.outputKey && <span>{`{{${data.outputKey}}}`}</span>}
       </div>
-      <Handle type="source" position={Position.Right} />
+      {data.kind === 'condition' ? (
+        <>
+          <span className="branch-label true">真</span>
+          <Handle id="true" type="source" position={Position.Right} className="branch-handle true" />
+          <span className="branch-label false">假</span>
+          <Handle id="false" type="source" position={Position.Right} className="branch-handle false" />
+        </>
+      ) : (
+        <Handle type="source" position={Position.Right} />
+      )}
     </div>
   )
 }
@@ -1213,8 +1240,20 @@ function App() {
     const context: Record<string, string> = {}
     const steps: RunStep[] = []
     let branchOpen = true
+    const skippedByBranch = new Set<string>()
 
     order.forEach((node, index) => {
+      if (skippedByBranch.has(node.id)) {
+        steps.push({
+          nodeId: node.id,
+          title: `${index + 1}. ${node.data.label}`,
+          status: 'skipped',
+          input: '条件分支未命中该路径。',
+          output: '已跳过该分支节点。',
+        })
+        return
+      }
+
       if (!branchOpen && node.data.kind !== 'output') {
         steps.push({
           nodeId: node.id,
@@ -1294,12 +1333,27 @@ function App() {
       if (data.kind === 'condition') {
         const result = evaluateStructuredCondition(data, context)
         branchOpen = result.passed
+        const branchEdges = edges.filter(
+          (edge) => edge.source === node.id && (edge.sourceHandle === 'true' || edge.sourceHandle === 'false'),
+        )
+        if (branchEdges.length > 0) {
+          const inactiveHandle = result.passed ? 'false' : 'true'
+          const inactiveTargets = branchEdges
+            .filter((edge) => edge.sourceHandle === inactiveHandle)
+            .map((edge) => edge.target)
+          getReachableNodeIds(inactiveTargets, edges).forEach((id) => skippedByBranch.add(id))
+        }
         steps.push({
           nodeId: node.id,
           title: `${index + 1}. ${data.label}`,
           status: result.passed ? 'routed' : 'skipped',
           input: getConditionInputText(data, context),
-          output: result.passed ? `${result.detail} 已继续执行。` : `${result.detail} 后续非输出节点将跳过。`,
+          output:
+            branchEdges.length > 0
+              ? `${result.detail} 已进入${result.passed ? '真' : '假'}分支。`
+              : result.passed
+                ? `${result.detail} 已继续执行。`
+                : `${result.detail} 后续非输出节点将跳过。`,
         })
         return
       }

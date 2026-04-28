@@ -61,6 +61,25 @@ def create_execution_order(nodes: list[dict[str, Any]], edges: list[dict[str, An
     return [node_by_id[item] for item in ordered_ids]
 
 
+def get_reachable_node_ids(start_ids: list[str], edges: list[dict[str, Any]]) -> set[str]:
+    reachable: set[str] = set()
+    queue = deque(start_ids)
+
+    while queue:
+        current = queue.popleft()
+        if current in reachable:
+            continue
+        reachable.add(current)
+        for edge in edges:
+            if str(edge.get("source") or "") != current:
+                continue
+            target = str(edge.get("target") or "")
+            if target and target not in reachable:
+                queue.append(target)
+
+    return reachable
+
+
 def get_provider_status() -> dict[str, str | bool]:
     return {
         "deepseek_configured": bool(os.getenv("DEEPSEEK_API_KEY")),
@@ -99,6 +118,21 @@ def select_deepseek_model(configured_model: Any) -> str:
     if model.startswith("deepseek-"):
         return model
     return os.getenv("DEEPSEEK_MODEL") or DEFAULT_DEEPSEEK_MODEL
+
+
+def evaluate_condition(data: dict[str, Any], context: dict[str, str]) -> tuple[bool, str]:
+    variable = str(data.get("conditionVariable") or "")
+    operator = str(data.get("conditionOperator") or "contains")
+    target = render_template(data.get("conditionValue"), context).strip()
+    value = context.get(variable, "")
+
+    if operator == "not_empty":
+        return bool(value.strip()), f"判断 {{{{{variable or '未选择变量'}}}}} 是否不为空。"
+
+    if operator == "equals":
+        return value == target, f"判断 {{{{{variable or '未选择变量'}}}}} 是否等于 \"{target}\"。"
+
+    return (target in value if target else True), f"判断 {{{{{variable or '未选择变量'}}}}} 是否包含 \"{target}\"。"
 
 
 def run_deepseek_node(data: dict[str, Any], system_prompt: str, prompt: str) -> tuple[str, str]:
@@ -185,16 +219,30 @@ def simulate_run(workflow: WorkflowPayload, input_text: str) -> RunResponse:
                     error="无法根据连线计算拓扑执行顺序。",
                 )
             ],
-        )
+    )
     steps: list[RunStep] = []
+    skipped_by_branch: set[str] = set()
 
     for index, node in enumerate(nodes, start=1):
+        current_id = node_id(node)
         data = node.get("data", {})
         kind = data.get("kind")
         output_key = data.get("outputKey")
         title = f"{index}. {node_label(node)}"
         provider = None
         error = None
+
+        if current_id in skipped_by_branch:
+            steps.append(
+                RunStep(
+                    node_id=current_id or f"node-{index}",
+                    title=title,
+                    status="skipped",
+                    input="条件分支未命中该路径。",
+                    output="已跳过该分支节点。",
+                )
+            )
+            continue
 
         if kind == "input":
             output = input_text or data.get("sampleInput") or ""
@@ -211,13 +259,24 @@ def simulate_run(workflow: WorkflowPayload, input_text: str) -> RunResponse:
             output = f"{data.get('toolName') or '未命名工具'} 返回模拟结果。"
             step_input = params or "未配置请求参数"
         elif kind == "condition":
-            variable = data.get("conditionVariable") or ""
-            operator = data.get("conditionOperator") or "contains"
-            target = render_template(data.get("conditionValue"), context)
-            value = context.get(variable, "")
-            passed = bool(value) if operator == "not_empty" else (value == target if operator == "equals" else target in value)
-            output = "条件通过，继续执行。" if passed else "条件未通过，当前后端模拟仍继续生成后续步骤。"
-            step_input = f"{{{{{variable}}}}} {operator} {target}".strip()
+            passed, detail = evaluate_condition(data, context)
+            branch_edges = [
+                edge
+                for edge in workflow.edges
+                if str(edge.get("source") or "") == current_id and edge.get("sourceHandle") in {"true", "false"}
+            ]
+            if branch_edges:
+                inactive_handle = "false" if passed else "true"
+                inactive_targets = [
+                    str(edge.get("target") or "")
+                    for edge in branch_edges
+                    if edge.get("sourceHandle") == inactive_handle
+                ]
+                skipped_by_branch.update(get_reachable_node_ids(inactive_targets, workflow.edges))
+                output = f"{detail} 已进入{'真' if passed else '假'}分支。"
+            else:
+                output = "条件通过，继续执行。" if passed else "条件未通过，当前后端模拟仍继续生成后续步骤。"
+            step_input = detail
         else:
             template = data.get("prompt")
             output = render_template(template, context) or "没有可输出内容。"

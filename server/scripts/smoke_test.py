@@ -28,6 +28,56 @@ def request_error(path: str, method: str = "GET", body: dict | None = None) -> t
     raise AssertionError(f"Expected {method} {path} to fail")
 
 
+def branch_workflow() -> dict:
+    return {
+        "name": "Branch Smoke Test Workflow",
+        "version": "0.2.0",
+        "nodes": [
+            {
+                "id": "input-1",
+                "position": {"x": 0, "y": 0},
+                "data": {"kind": "input", "label": "用户输入", "outputKey": "user_request"},
+            },
+            {
+                "id": "condition-1",
+                "position": {"x": 240, "y": 0},
+                "data": {
+                    "kind": "condition",
+                    "label": "是否退款",
+                    "conditionVariable": "user_request",
+                    "conditionOperator": "contains",
+                    "conditionValue": "退款",
+                },
+            },
+            {
+                "id": "true-output",
+                "position": {"x": 520, "y": -80},
+                "data": {"kind": "output", "label": "退款回复", "prompt": "退款流程", "outputKey": "refund_answer"},
+            },
+            {
+                "id": "false-output",
+                "position": {"x": 520, "y": 90},
+                "data": {"kind": "output", "label": "普通回复", "prompt": "普通流程", "outputKey": "normal_answer"},
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "input-1", "target": "condition-1"},
+            {
+                "id": "e-true",
+                "source": "condition-1",
+                "sourceHandle": "true",
+                "target": "true-output",
+            },
+            {
+                "id": "e-false",
+                "source": "condition-1",
+                "sourceHandle": "false",
+                "target": "false-output",
+            },
+        ],
+    }
+
+
 def main() -> None:
     health = request("/api/health")
     workflow = {
@@ -89,6 +139,8 @@ def main() -> None:
     )
     created = request("/api/workflows", "POST", workflow)
     run = request("/api/runs", "POST", {"workflow": workflow, "input_text": "测试输入"})
+    branch_true_run = request("/api/runs", "POST", {"workflow": branch_workflow(), "input_text": "我要退款"})
+    branch_false_run = request("/api/runs", "POST", {"workflow": branch_workflow(), "input_text": "我要咨询"})
     stored_run = request(f"/api/workflows/{created['id']}/runs", "POST", {"input_text": "后端历史测试"})
     runs = request("/api/runs")
     workflow_runs = request(f"/api/runs?workflow_id={created['id']}")
@@ -106,6 +158,10 @@ def main() -> None:
     assert invalid_run_status == 400
     assert invalid_run_body["detail"]["valid"] is False
     assert [step["node_id"] for step in run["steps"]] == ["input-1", "llm-1", "output-1"]
+    assert next(step for step in branch_true_run["steps"] if step["node_id"] == "true-output")["status"] == "done"
+    assert next(step for step in branch_true_run["steps"] if step["node_id"] == "false-output")["status"] == "skipped"
+    assert next(step for step in branch_false_run["steps"] if step["node_id"] == "true-output")["status"] == "skipped"
+    assert next(step for step in branch_false_run["steps"] if step["node_id"] == "false-output")["status"] == "done"
     assert any(
         step.get("provider") == "模拟输出"
         or str(step.get("provider", "")).startswith("OpenAI")
@@ -135,6 +191,8 @@ def main() -> None:
                 "step_count": len(run["steps"]),
                 "llm_provider": llm_step.get("provider"),
                 "llm_error": llm_step.get("error"),
+                "branch_true_status": [step["status"] for step in branch_true_run["steps"]],
+                "branch_false_status": [step["status"] for step in branch_false_run["steps"]],
                 "stored_run_id": stored_run["id"],
                 "run_count": len(runs),
                 "workflow_run_count": len(workflow_runs),

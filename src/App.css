@@ -521,6 +521,40 @@
   background: #193f34;
 }
 
+.workflow-node .branch-handle.true {
+  top: 42%;
+  background: #16a34a;
+}
+
+.workflow-node .branch-handle.false {
+  top: 68%;
+  background: #be123c;
+}
+
+.branch-label {
+  position: absolute;
+  right: 12px;
+  display: inline-grid;
+  min-width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 5px;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  pointer-events: none;
+}
+
+.branch-label.true {
+  top: calc(42% - 9px);
+  background: #16a34a;
+}
+
+.branch-label.false {
+  top: calc(68% - 9px);
+  background: #be123c;
+}
+
 .react-flow__edge-path {
   stroke: #60726a;
   stroke-width: 2;
