@@ -20,6 +20,10 @@ class RunRequest(BaseModel):
     input_text: str = ""
 
 
+class WorkflowRunRequest(BaseModel):
+    input_text: str = ""
+
+
 class RunStep(BaseModel):
     node_id: str
     title: str
@@ -32,3 +36,11 @@ class RunStep(BaseModel):
 class RunResponse(BaseModel):
     status: str
     steps: list[RunStep]
+
+
+class RunRecord(RunResponse):
+    id: str
+    workflow_id: str | None = None
+    workflow_name: str
+    input_text: str
+    created_at: str

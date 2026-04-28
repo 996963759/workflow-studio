@@ -43,6 +43,9 @@ def main() -> None:
     }
     created = request("/api/workflows", "POST", workflow)
     run = request("/api/runs", "POST", {"workflow": workflow, "input_text": "测试输入"})
+    stored_run = request(f"/api/workflows/{created['id']}/runs", "POST", {"input_text": "后端历史测试"})
+    runs = request("/api/runs")
+    fetched_run = request(f"/api/runs/{stored_run['id']}")
     print(
         json.dumps(
             {
@@ -50,6 +53,9 @@ def main() -> None:
                 "created_id": created["id"],
                 "run_status": run["status"],
                 "step_count": len(run["steps"]),
+                "stored_run_id": stored_run["id"],
+                "run_count": len(runs),
+                "fetched_run_status": fetched_run["status"],
             },
             ensure_ascii=False,
             indent=2,

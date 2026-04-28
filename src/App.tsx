@@ -101,6 +101,16 @@ type ServerWorkflowRecord = {
   updated_at: string
 }
 
+type ServerRunRecord = {
+  id: string
+  workflow_id: string | null
+  workflow_name: string
+  input_text: string
+  status: string
+  steps: RunStep[]
+  created_at: string
+}
+
 type WorkflowStore = {
   activeWorkflowId: string
   workflows: WorkflowRecord[]
@@ -597,6 +607,8 @@ function App() {
   const [workflowStore, setWorkflowStore] = useState<WorkflowStore>(initialStore)
   const [selectedNodeId, setSelectedNodeId] = useState('llm-1')
   const [runSteps, setRunSteps] = useState<RunStep[]>([])
+  const [runHistory, setRunHistory] = useState<ServerRunRecord[]>([])
+  const [selectedRunId, setSelectedRunId] = useState('')
   const [runInput, setRunInput] = useState(examples[0])
   const [notice, setNotice] = useState('已加载本地工作流列表。')
   const [backendStatus, setBackendStatus] = useState<'unknown' | 'online' | 'offline'>('unknown')
@@ -822,6 +834,62 @@ function App() {
     } catch {
       setBackendStatus('offline')
       setNotice('加载失败：后端不可用或请求失败。')
+    }
+  }
+
+  const runWorkflowOnBackend = async () => {
+    if (!activeWorkflow.serverId) {
+      setNotice('请先点击“同步到后端”，再使用后端运行。')
+      return
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/workflows/${activeWorkflow.serverId}/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input_text: runInput }),
+      })
+      if (!response.ok) throw new Error('backend run failed')
+      const run = (await response.json()) as ServerRunRecord
+      setRunSteps(run.steps)
+      setRunHistory((current) => [run, ...current.filter((item) => item.id !== run.id)])
+      setSelectedRunId(run.id)
+      setBackendStatus('online')
+      setNotice('已通过后端运行，并保存到运行历史。')
+    } catch {
+      setBackendStatus('offline')
+      setNotice('后端运行失败：请确认后端在线，且当前工作流已同步。')
+    }
+  }
+
+  const loadRunHistory = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/runs`)
+      if (!response.ok) throw new Error('load runs failed')
+      const runs = (await response.json()) as ServerRunRecord[]
+      setRunHistory(runs)
+      setBackendStatus('online')
+      setNotice(`已加载 ${runs.length} 条后端运行历史。`)
+    } catch {
+      setBackendStatus('offline')
+      setNotice('加载运行历史失败：后端不可用或请求失败。')
+    }
+  }
+
+  const selectRunHistory = async (runId: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/runs/${runId}`)
+      if (!response.ok) throw new Error('load run failed')
+      const run = (await response.json()) as ServerRunRecord
+      setRunSteps(run.steps)
+      setRunInput(run.input_text)
+      setSelectedRunId(run.id)
+      setRunHistory((current) => [run, ...current.filter((item) => item.id !== run.id)])
+      setBackendStatus('online')
+      setNotice('已载入后端运行历史。')
+    } catch {
+      setBackendStatus('offline')
+      setNotice('载入运行历史失败：后端不可用或记录不存在。')
     }
   }
 
@@ -1542,6 +1610,32 @@ function App() {
               onChange={(event) => setRunInput(event.target.value)}
             />
           </label>
+          <div className="runner-actions">
+            <button type="button" onClick={runWorkflowOnBackend}>
+              后端运行
+            </button>
+            <button type="button" onClick={loadRunHistory}>
+              加载历史
+            </button>
+          </div>
+
+          <div className="run-history">
+            {runHistory.length === 0 ? (
+              <p>暂无后端运行历史。</p>
+            ) : (
+              runHistory.slice(0, 6).map((run) => (
+                <button
+                  key={run.id}
+                  type="button"
+                  className={clsx(run.id === selectedRunId && 'active')}
+                  onClick={() => selectRunHistory(run.id)}
+                >
+                  <strong>{run.workflow_name}</strong>
+                  <span>{new Date(run.created_at).toLocaleString('zh-CN')}</span>
+                </button>
+              ))
+            )}
+          </div>
 
           <div className="run-log">
             {runSteps.length === 0 ? (

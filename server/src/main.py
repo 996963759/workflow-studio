@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from .models import RunRequest, RunResponse, WorkflowPayload, WorkflowRecord
+from .models import RunRecord, RunRequest, RunResponse, WorkflowPayload, WorkflowRecord, WorkflowRunRequest
 from .runner import simulate_run
 from .storage import WorkflowStore
 
@@ -58,3 +58,25 @@ def delete_workflow(workflow_id: str) -> None:
 @app.post("/api/runs", response_model=RunResponse)
 def run_workflow(payload: RunRequest) -> RunResponse:
     return simulate_run(payload.workflow, payload.input_text)
+
+
+@app.get("/api/runs", response_model=list[RunRecord])
+def list_runs() -> list[RunRecord]:
+    return store.list_runs()
+
+
+@app.get("/api/runs/{run_id}", response_model=RunRecord)
+def get_run(run_id: str) -> RunRecord:
+    run = store.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return run
+
+
+@app.post("/api/workflows/{workflow_id}/runs", response_model=RunRecord, status_code=201)
+def run_stored_workflow(workflow_id: str, payload: WorkflowRunRequest) -> RunRecord:
+    workflow = store.get_workflow(workflow_id)
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    response = simulate_run(workflow, payload.input_text)
+    return store.create_run(workflow.id, workflow.name, payload.input_text, response)

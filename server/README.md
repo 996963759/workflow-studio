@@ -24,6 +24,9 @@ server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 
 - `PUT /api/workflows/{workflow_id}`
 - `DELETE /api/workflows/{workflow_id}`
 - `POST /api/runs`
+- `GET /api/runs`
+- `GET /api/runs/{run_id}`
+- `POST /api/workflows/{workflow_id}/runs`
 
 ## Storage
 
@@ -34,3 +37,11 @@ server/data/workflow_studio.db
 ```
 
 The database file is ignored by Git.
+
+## Smoke Test
+
+With the API server running:
+
+```powershell
+server\.venv\Scripts\python.exe server/scripts/smoke_test.py
+```

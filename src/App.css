@@ -615,6 +615,72 @@ textarea:focus {
   margin-bottom: 12px;
 }
 
+.runner-actions {
+  display: flex;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+
+.runner-actions button,
+.run-history button {
+  border: 1px solid #d8ded4;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #334155;
+  cursor: pointer;
+  font: inherit;
+}
+
+.runner-actions button {
+  flex: 1 1 0;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 9px;
+}
+
+.runner-actions button:hover,
+.run-history button:hover {
+  border-color: #9aa68f;
+  background: #f7f8f3;
+}
+
+.run-history {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+
+.run-history p {
+  color: #64748b;
+  font-size: 12px;
+  margin: 0;
+}
+
+.run-history button {
+  display: grid;
+  gap: 3px;
+  padding: 8px 9px;
+  text-align: left;
+}
+
+.run-history button.active {
+  border-color: #193f34;
+  background: #eef4ec;
+}
+
+.run-history strong {
+  overflow: hidden;
+  color: #111827;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-history span {
+  color: #64748b;
+  font-size: 11px;
+}
+
 .run-log {
   display: grid;
   gap: 9px;

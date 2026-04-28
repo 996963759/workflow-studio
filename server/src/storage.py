@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .models import WorkflowPayload, WorkflowRecord
+from .models import RunRecord, RunResponse, WorkflowPayload, WorkflowRecord
 
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
@@ -37,6 +37,19 @@ class WorkflowStore:
                     nodes_json TEXT NOT NULL,
                     edges_json TEXT NOT NULL,
                     updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS runs (
+                    id TEXT PRIMARY KEY,
+                    workflow_id TEXT,
+                    workflow_name TEXT NOT NULL,
+                    input_text TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    steps_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
                 )
                 """
             )
@@ -111,6 +124,64 @@ class WorkflowStore:
             cursor = connection.execute("DELETE FROM workflows WHERE id = ?", (workflow_id,))
         return cursor.rowcount > 0
 
+    def create_run(
+        self,
+        workflow_id: str | None,
+        workflow_name: str,
+        input_text: str,
+        response: RunResponse,
+    ) -> RunRecord:
+        run_id = str(uuid.uuid4())
+        created_at = utc_now()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO runs (id, workflow_id, workflow_name, input_text, status, steps_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    workflow_id,
+                    workflow_name,
+                    input_text,
+                    response.status,
+                    json.dumps([step.model_dump() for step in response.steps], ensure_ascii=False),
+                    created_at,
+                ),
+            )
+        return RunRecord(
+            id=run_id,
+            workflow_id=workflow_id,
+            workflow_name=workflow_name,
+            input_text=input_text,
+            created_at=created_at,
+            status=response.status,
+            steps=response.steps,
+        )
+
+    def list_runs(self) -> list[RunRecord]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, workflow_id, workflow_name, input_text, status, steps_json, created_at
+                FROM runs
+                ORDER BY created_at DESC
+                """
+            ).fetchall()
+        return [self._row_to_run(row) for row in rows]
+
+    def get_run(self, run_id: str) -> RunRecord | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id, workflow_id, workflow_name, input_text, status, steps_json, created_at
+                FROM runs
+                WHERE id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+        return self._row_to_run(row) if row else None
+
     def _row_to_record(self, row: sqlite3.Row) -> WorkflowRecord:
         return WorkflowRecord(
             id=row["id"],
@@ -119,4 +190,15 @@ class WorkflowStore:
             nodes=json.loads(row["nodes_json"]),
             edges=json.loads(row["edges_json"]),
             updated_at=row["updated_at"],
+        )
+
+    def _row_to_run(self, row: sqlite3.Row) -> RunRecord:
+        return RunRecord(
+            id=row["id"],
+            workflow_id=row["workflow_id"],
+            workflow_name=row["workflow_name"],
+            input_text=row["input_text"],
+            status=row["status"],
+            steps=json.loads(row["steps_json"]),
+            created_at=row["created_at"],
         )
