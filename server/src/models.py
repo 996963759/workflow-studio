@@ -45,6 +45,7 @@ class RunStep(BaseModel):
     output: str
     variable: str | None = None
     provider: str | None = None
+    error: str | None = None
 
 
 class RunResponse(BaseModel):

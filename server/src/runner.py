@@ -48,6 +48,13 @@ def extract_response_text(response: Any) -> str:
     return str(response)
 
 
+def summarize_error(error: Exception) -> str:
+    message = str(error).strip().replace("\n", " ")
+    if len(message) > 220:
+        message = f"{message[:217]}..."
+    return f"{error.__class__.__name__}: {message}" if message else error.__class__.__name__
+
+
 def select_deepseek_model(configured_model: Any) -> str:
     model = str(configured_model or "").strip()
     if model.startswith("deepseek-"):
@@ -93,7 +100,7 @@ def run_openai_node(data: dict[str, Any], system_prompt: str, prompt: str) -> tu
     return output or "OpenAI 没有返回文本内容。", model
 
 
-def run_llm_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, str, str | None]:
+def run_llm_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, str, str | None, str | None]:
     system_prompt = render_template(data.get("systemPrompt"), context)
     prompt = render_template(data.get("prompt"), context)
     step_input = "\n\n".join(part for part in [system_prompt, prompt] if part) or "未配置提示词"
@@ -101,24 +108,26 @@ def run_llm_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, st
     if os.getenv("DEEPSEEK_API_KEY"):
         try:
             output, model = run_deepseek_node(data, system_prompt, prompt)
-            return output, step_input, f"DeepSeek - {model}"
+            return output, step_input, f"DeepSeek - {model}", None
         except (OpenAIError, RuntimeError) as error:
             model = select_deepseek_model(data.get("model"))
-            output = f"DeepSeek {model} 调用失败，已回退模拟草稿：{prompt[:120]}（{error.__class__.__name__}）"
-            return output, step_input, "模拟输出"
+            reason = summarize_error(error)
+            output = f"DeepSeek {model} 调用失败，已回退模拟草稿：{prompt[:120]}"
+            return output, step_input, "模拟输出", reason
 
     if os.getenv("OPENAI_API_KEY"):
         try:
             output, model = run_openai_node(data, system_prompt, prompt)
-            return output, step_input, f"OpenAI - {model}"
+            return output, step_input, f"OpenAI - {model}", None
         except (OpenAIError, RuntimeError) as error:
             model = str(data.get("model") or DEFAULT_OPENAI_MODEL)
-            output = f"OpenAI {model} 调用失败，已回退模拟草稿：{prompt[:120]}（{error.__class__.__name__}）"
-            return output, step_input, "模拟输出"
+            reason = summarize_error(error)
+            output = f"OpenAI {model} 调用失败，已回退模拟草稿：{prompt[:120]}"
+            return output, step_input, "模拟输出", reason
 
     model = str(data.get("model") or DEFAULT_OPENAI_MODEL)
     output = f"模型 {model} 生成模拟草稿：{prompt[:120]}"
-    return output, step_input, "模拟输出"
+    return output, step_input, "模拟输出", None
 
 
 def simulate_run(workflow: WorkflowPayload, input_text: str) -> RunResponse:
@@ -132,6 +141,7 @@ def simulate_run(workflow: WorkflowPayload, input_text: str) -> RunResponse:
         output_key = data.get("outputKey")
         title = f"{index}. {node_label(node)}"
         provider = None
+        error = None
 
         if kind == "input":
             output = input_text or data.get("sampleInput") or ""
@@ -142,7 +152,7 @@ def simulate_run(workflow: WorkflowPayload, input_text: str) -> RunResponse:
             output = f"围绕「{query or input_text}」检索到 {top_k} 段相关内容。"
             step_input = query or "未配置检索语句"
         elif kind == "llm":
-            output, step_input, provider = run_llm_node(data, context)
+            output, step_input, provider, error = run_llm_node(data, context)
         elif kind == "tool":
             params = render_template(data.get("toolParams"), context)
             output = f"{data.get('toolName') or '未命名工具'} 返回模拟结果。"
@@ -173,6 +183,7 @@ def simulate_run(workflow: WorkflowPayload, input_text: str) -> RunResponse:
                 output=output,
                 variable=variable,
                 provider=provider,
+                error=error,
             )
         )
 

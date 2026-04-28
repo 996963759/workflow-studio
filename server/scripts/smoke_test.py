@@ -110,6 +110,8 @@ def main() -> None:
         or str(step.get("provider", "")).startswith("DeepSeek")
         for step in run["steps"]
     )
+    llm_step = next(step for step in run["steps"] if step.get("provider"))
+    assert "error" in llm_step or llm_step.get("provider") != "模拟输出"
     assert len(workflow_runs) >= 1
     assert all(run["workflow_id"] == created["id"] for run in workflow_runs)
     assert delete_single_result == {}
@@ -129,7 +131,8 @@ def main() -> None:
                 "created_id": created["id"],
                 "run_status": run["status"],
                 "step_count": len(run["steps"]),
-                "llm_provider": next((step.get("provider") for step in run["steps"] if step.get("provider")), None),
+                "llm_provider": llm_step.get("provider"),
+                "llm_error": llm_step.get("error"),
                 "stored_run_id": stored_run["id"],
                 "run_count": len(runs),
                 "workflow_run_count": len(workflow_runs),

@@ -76,6 +76,7 @@ type RunStep = {
   output: string
   variable?: string
   provider?: string
+  error?: string
 }
 
 type WorkflowDefinition = {
@@ -1957,6 +1958,12 @@ function App() {
                         <div>
                           <dt>来源</dt>
                           <dd>{step.provider}</dd>
+                        </div>
+                      )}
+                      {step.error && (
+                        <div className="run-error-detail">
+                          <dt>错误原因</dt>
+                          <dd>{step.error}</dd>
                         </div>
                       )}
                     </dl>

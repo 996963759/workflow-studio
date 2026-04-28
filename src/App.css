@@ -859,6 +859,18 @@ textarea:focus {
   margin: 0;
 }
 
+.run-error-detail {
+  border: 1px solid #fecaca;
+  border-radius: 7px;
+  background: #fff7f7;
+  padding: 7px;
+}
+
+.run-error-detail dt,
+.run-error-detail dd {
+  color: #b91c1c;
+}
+
 .empty-run {
   grid-template-columns: 18px 1fr;
   align-items: center;
