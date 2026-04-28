@@ -40,6 +40,7 @@ DeepSeek is preferred when `DEEPSEEK_API_KEY` is present. Without DeepSeek or Op
 ## Endpoints
 
 - `GET /api/health`
+- `GET /api/provider-status`
 - `GET /api/workflows`
 - `POST /api/workflows/validate`
 - `POST /api/workflows`

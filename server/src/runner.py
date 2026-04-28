@@ -22,6 +22,16 @@ def node_label(node: dict[str, Any]) -> str:
     return str(node.get("data", {}).get("label") or node.get("id") or "未命名节点")
 
 
+def get_provider_status() -> dict[str, str | bool]:
+    return {
+        "deepseek_configured": bool(os.getenv("DEEPSEEK_API_KEY")),
+        "deepseek_model": os.getenv("DEEPSEEK_MODEL") or DEFAULT_DEEPSEEK_MODEL,
+        "deepseek_base_url": os.getenv("DEEPSEEK_BASE_URL") or DEEPSEEK_BASE_URL,
+        "openai_configured": bool(os.getenv("OPENAI_API_KEY")),
+        "openai_default_model": DEFAULT_OPENAI_MODEL,
+    }
+
+
 def create_openai_client(api_key_env: str, base_url: str | None = None) -> OpenAI | None:
     api_key = os.getenv(api_key_env)
     if not api_key:

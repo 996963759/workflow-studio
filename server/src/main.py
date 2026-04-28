@@ -10,7 +10,7 @@ from .models import (
     WorkflowRunRequest,
     WorkflowValidationResult,
 )
-from .runner import simulate_run
+from .runner import get_provider_status, simulate_run
 from .storage import WorkflowStore
 from .validation import validate_workflow
 
@@ -30,6 +30,11 @@ app.add_middleware(
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/provider-status")
+def provider_status() -> dict[str, str | bool]:
+    return get_provider_status()
 
 
 @app.get("/api/workflows", response_model=list[WorkflowRecord])
