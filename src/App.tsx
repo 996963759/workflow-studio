@@ -845,6 +845,21 @@ function App() {
     return errors.length > 0
   }
 
+  const copyText = async (label: string, value: string | undefined) => {
+    const content = value?.trim()
+    if (!content) {
+      setNotice(`${label}为空，无法复制。`)
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(content)
+      setNotice(`已复制${label}。`)
+    } catch {
+      setNotice('复制失败：当前浏览器不允许访问剪贴板。')
+    }
+  }
+
   const refreshProviderStatus = async (showNotice = true) => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/provider-status`)
@@ -1995,11 +2010,23 @@ function App() {
                     <strong>{step.title}</strong>
                     <dl>
                       <div>
-                        <dt>输入</dt>
+                        <dt>
+                          输入
+                          <button type="button" onClick={() => copyText('节点输入', step.input)}>
+                            <Copy size={12} />
+                            复制
+                          </button>
+                        </dt>
                         <dd>{step.input}</dd>
                       </div>
                       <div>
-                        <dt>输出</dt>
+                        <dt>
+                          输出
+                          <button type="button" onClick={() => copyText('节点输出', step.output)}>
+                            <Copy size={12} />
+                            复制
+                          </button>
+                        </dt>
                         <dd>{step.output}</dd>
                       </div>
                       {step.variable && (
@@ -2016,7 +2043,13 @@ function App() {
                       )}
                       {step.error && (
                         <div className="run-error-detail">
-                          <dt>错误原因</dt>
+                          <dt>
+                            错误原因
+                            <button type="button" onClick={() => copyText('错误原因', step.error)}>
+                              <Copy size={12} />
+                              复制
+                            </button>
+                          </dt>
                           <dd>{step.error}</dd>
                         </div>
                       )}
