@@ -93,6 +93,29 @@
   gap: 8px;
 }
 
+.validation-source {
+  border: 1px solid #d8ded4;
+  border-radius: 6px;
+  background: #f8faf5;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 4px 6px;
+}
+
+.validation-source.backend {
+  border-color: #bbdcc3;
+  background: #eef8ef;
+  color: #166534;
+}
+
+.validation-source.checking {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+}
+
 .node-library {
   display: grid;
   gap: 8px;

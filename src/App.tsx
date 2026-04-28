@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import {
   Background,
   Controls,
@@ -121,6 +121,25 @@ type WorkflowIssue = {
   level: 'error' | 'warning'
   message: string
   nodeId?: string
+}
+
+type ServerWorkflowIssue = {
+  id: string
+  level: 'error' | 'warning'
+  message: string
+  node_id?: string | null
+}
+
+type WorkflowValidationResult = {
+  errors: ServerWorkflowIssue[]
+  warnings: ServerWorkflowIssue[]
+  valid: boolean
+}
+
+type RemoteValidationState = {
+  issues: WorkflowIssue[]
+  key: string
+  status: 'checking' | 'backend' | 'local'
 }
 
 const LEGACY_STORAGE_KEY = 'workflow-studio.current-workflow'
@@ -310,6 +329,25 @@ const workflowToServerPayload = (workflow: WorkflowRecord) => ({
   nodes: workflow.nodes,
   edges: workflow.edges,
 })
+
+const createValidationKey = (workflow: WorkflowRecord) =>
+  JSON.stringify(workflowToServerPayload(workflow))
+
+const serverIssueToWorkflowIssue = (issue: ServerWorkflowIssue): WorkflowIssue => ({
+  id: issue.id,
+  level: issue.level,
+  message: issue.message,
+  nodeId: issue.node_id ?? undefined,
+})
+
+const readValidationError = async (response: Response) => {
+  try {
+    const body = (await response.json()) as { detail?: WorkflowValidationResult }
+    return body.detail
+  } catch {
+    return undefined
+  }
+}
 
 const loadStoredWorkflow = (): WorkflowDefinition | null => {
   try {
@@ -612,6 +650,7 @@ function App() {
   const [runInput, setRunInput] = useState(examples[0])
   const [notice, setNotice] = useState('已加载本地工作流列表。')
   const [backendStatus, setBackendStatus] = useState<'unknown' | 'online' | 'offline'>('unknown')
+  const [remoteValidation, setRemoteValidation] = useState<RemoteValidationState | null>(null)
   const [lastBackendSyncAt, setLastBackendSyncAt] = useState('')
   const nextNodeId = useRef(1)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -661,7 +700,12 @@ function App() {
     [nodes],
   )
 
-  const workflowIssues = useMemo(() => validateWorkflow(nodes, edges), [nodes, edges])
+  const localWorkflowIssues = useMemo(() => validateWorkflow(nodes, edges), [nodes, edges])
+  const validationKey = useMemo(() => createValidationKey(activeWorkflow), [activeWorkflow])
+  const workflowIssues =
+    remoteValidation && remoteValidation.key === validationKey ? remoteValidation.issues : localWorkflowIssues
+  const validationSource =
+    remoteValidation && remoteValidation.key === validationKey ? remoteValidation.status : 'checking'
   const blockingIssues = workflowIssues.filter((issue) => issue.level === 'error')
   const nodeIssueLevels = useMemo(() => {
     const levels = new Map<string, 'error' | 'warning'>()
@@ -685,6 +729,75 @@ function App() {
       })),
     [nodeIssueLevels, nodes],
   )
+
+  useEffect(() => {
+    const controller = new AbortController()
+    const currentKey = validationKey
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/workflows/validate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(workflowToServerPayload(activeWorkflow)),
+          signal: controller.signal,
+        })
+        if (!response.ok) throw new Error('validate failed')
+        const result = (await response.json()) as WorkflowValidationResult
+        const issues = [...result.errors, ...result.warnings].map(serverIssueToWorkflowIssue)
+        setRemoteValidation({ issues, key: currentKey, status: 'backend' })
+        setBackendStatus('online')
+      } catch (error) {
+        if (controller.signal.aborted) return
+        setRemoteValidation({ issues: localWorkflowIssues, key: currentKey, status: 'local' })
+        setBackendStatus('offline')
+        if (!(error instanceof TypeError)) return
+      }
+    }, 350)
+
+    return () => {
+      controller.abort()
+      window.clearTimeout(timer)
+    }
+  }, [activeWorkflow, localWorkflowIssues, validationKey])
+
+  const validateActiveWorkflow = async () => {
+    const currentKey = validationKey
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/workflows/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(workflowToServerPayload(activeWorkflow)),
+      })
+      if (!response.ok) throw new Error('validate failed')
+      const result = (await response.json()) as WorkflowValidationResult
+      const issues = [...result.errors, ...result.warnings].map(serverIssueToWorkflowIssue)
+      setRemoteValidation({ issues, key: currentKey, status: 'backend' })
+      setBackendStatus('online')
+      return issues
+    } catch {
+      setRemoteValidation({ issues: localWorkflowIssues, key: currentKey, status: 'local' })
+      setBackendStatus('offline')
+      return localWorkflowIssues
+    }
+  }
+
+  const showBlockingIssues = (issues: WorkflowIssue[], action: string) => {
+    const errors = issues.filter((issue) => issue.level === 'error')
+    if (errors.length === 0) return false
+
+    setRunSteps(
+      errors.map((issue, index) => ({
+        nodeId: issue.nodeId ?? issue.id,
+        title: `${index + 1}. ${action}前校验失败`,
+        status: 'error',
+        input: '当前工作流定义',
+        output: issue.message,
+      })),
+    )
+    setNotice(`发现 ${errors.length} 个严重问题，已阻止${action}。`)
+    return errors.length > 0
+  }
 
   const onNodesChange = (changes: NodeChange<WorkflowNode>[]) => {
     updateActiveNodes((current) => applyNodeChanges(changes, current))
@@ -754,7 +867,8 @@ function App() {
       const response = await fetch(`${API_BASE_URL}/api/health`)
       if (!response.ok) throw new Error('health check failed')
       setBackendStatus('online')
-      setNotice('后端在线，可以同步。')
+      await validateActiveWorkflow()
+      setNotice('后端在线，工作流检查已切换到后端校验。')
     } catch {
       setBackendStatus('offline')
       setNotice('后端离线，当前仍可使用浏览器本地保存。')
@@ -762,6 +876,9 @@ function App() {
   }
 
   const syncActiveWorkflowToBackend = async () => {
+    const issues = await validateActiveWorkflow()
+    if (showBlockingIssues(issues, '同步')) return
+
     try {
       const method = activeWorkflow.serverId ? 'PUT' : 'POST'
       const url = activeWorkflow.serverId
@@ -772,7 +889,16 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(workflowToServerPayload(activeWorkflow)),
       })
-      if (!response.ok) throw new Error('sync failed')
+      if (!response.ok) {
+        const validation = await readValidationError(response)
+        if (validation) {
+          const issues = [...validation.errors, ...validation.warnings].map(serverIssueToWorkflowIssue)
+          setRemoteValidation({ issues, key: validationKey, status: 'backend' })
+          showBlockingIssues(issues, '同步')
+          return
+        }
+        throw new Error('sync failed')
+      }
       const saved = (await response.json()) as ServerWorkflowRecord
       const syncedAt = new Date().toISOString()
       const next = {
@@ -843,13 +969,25 @@ function App() {
       return
     }
 
+    const issues = await validateActiveWorkflow()
+    if (showBlockingIssues(issues, '后端运行')) return
+
     try {
       const response = await fetch(`${API_BASE_URL}/api/workflows/${activeWorkflow.serverId}/runs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ input_text: runInput }),
       })
-      if (!response.ok) throw new Error('backend run failed')
+      if (!response.ok) {
+        const validation = await readValidationError(response)
+        if (validation) {
+          const issues = [...validation.errors, ...validation.warnings].map(serverIssueToWorkflowIssue)
+          setRemoteValidation({ issues, key: validationKey, status: 'backend' })
+          showBlockingIssues(issues, '后端运行')
+          return
+        }
+        throw new Error('backend run failed')
+      }
       const run = (await response.json()) as ServerRunRecord
       setRunSteps(run.steps)
       setRunHistory((current) => [run, ...current.filter((item) => item.id !== run.id)])
@@ -954,20 +1092,9 @@ function App() {
     setNotice('已删除当前工作流。')
   }
 
-  const runWorkflow = () => {
-    if (blockingIssues.length > 0) {
-      setRunSteps(
-        blockingIssues.map((issue, index) => ({
-          nodeId: issue.nodeId ?? issue.id,
-          title: `${index + 1}. 运行前校验失败`,
-          status: 'error',
-          input: '当前工作流定义',
-          output: issue.message,
-        })),
-      )
-      setNotice(`发现 ${blockingIssues.length} 个严重问题，已阻止运行。`)
-      return
-    }
+  const runWorkflow = async () => {
+    const issues = await validateActiveWorkflow()
+    if (showBlockingIssues(issues, '运行')) return
 
     const order = createExecutionOrder(nodes, edges)
     if (!order) {
@@ -1244,9 +1371,16 @@ function App() {
         </section>
 
         <section className="panel validation-panel">
-          <div className="panel-title">
-            <AlertTriangle size={16} />
-            <span>工作流检查</span>
+          <div className="panel-title between">
+            <span>
+              <AlertTriangle size={16} />
+              工作流检查
+            </span>
+            <small className={clsx('validation-source', validationSource)}>
+              {validationSource === 'backend' && '后端校验'}
+              {validationSource === 'checking' && '后端校验中'}
+              {validationSource === 'local' && '本地校验'}
+            </small>
           </div>
           <div className="issue-summary">
             <span className={clsx(blockingIssues.length > 0 ? 'bad' : 'good')}>
