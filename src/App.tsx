@@ -143,6 +143,14 @@ type RemoteValidationState = {
   status: 'checking' | 'backend' | 'local'
 }
 
+type ProviderStatus = {
+  deepseek_configured: boolean
+  deepseek_model: string
+  deepseek_base_url: string
+  openai_configured: boolean
+  openai_default_model: string
+}
+
 const LEGACY_STORAGE_KEY = 'workflow-studio.current-workflow'
 const WORKFLOWS_STORAGE_KEY = 'workflow-studio.workflows'
 const ACTIVE_WORKFLOW_STORAGE_KEY = 'workflow-studio.active-workflow-id'
@@ -652,6 +660,8 @@ function App() {
   const [notice, setNotice] = useState('已加载本地工作流列表。')
   const [backendStatus, setBackendStatus] = useState<'unknown' | 'online' | 'offline'>('unknown')
   const [remoteValidation, setRemoteValidation] = useState<RemoteValidationState | null>(null)
+  const [providerStatus, setProviderStatus] = useState<ProviderStatus | null>(null)
+  const [providerStatusCheckedAt, setProviderStatusCheckedAt] = useState('')
   const [lastBackendSyncAt, setLastBackendSyncAt] = useState('')
   const nextNodeId = useRef(1)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -731,6 +741,13 @@ function App() {
     [nodeIssueLevels, nodes],
   )
 
+  const hasRealModelProvider = Boolean(providerStatus?.deepseek_configured || providerStatus?.openai_configured)
+  const activeProviderLabel = providerStatus?.deepseek_configured
+    ? `DeepSeek - ${providerStatus.deepseek_model}`
+    : providerStatus?.openai_configured
+      ? `OpenAI - ${providerStatus.openai_default_model}`
+      : '模拟输出'
+
   useEffect(() => {
     const controller = new AbortController()
     const currentKey = validationKey
@@ -798,6 +815,32 @@ function App() {
     )
     setNotice(`发现 ${errors.length} 个严重问题，已阻止${action}。`)
     return errors.length > 0
+  }
+
+  const refreshProviderStatus = async (showNotice = true) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/provider-status`)
+      if (!response.ok) throw new Error('provider status failed')
+      const status = (await response.json()) as ProviderStatus
+      setProviderStatus(status)
+      setProviderStatusCheckedAt(new Date().toISOString())
+      setBackendStatus('online')
+      if (showNotice) {
+        const label = status.deepseek_configured
+          ? `DeepSeek 已启用，默认模型：${status.deepseek_model}。`
+          : status.openai_configured
+            ? `OpenAI 已启用，默认模型：${status.openai_default_model}。`
+            : '未检测到模型 Key，后端运行会使用模拟输出。'
+        setNotice(label)
+      }
+      return status
+    } catch {
+      setProviderStatus(null)
+      setProviderStatusCheckedAt('')
+      setBackendStatus('offline')
+      if (showNotice) setNotice('模型状态读取失败：请确认后端在线。')
+      return null
+    }
   }
 
   const onNodesChange = (changes: NodeChange<WorkflowNode>[]) => {
@@ -868,6 +911,7 @@ function App() {
       const response = await fetch(`${API_BASE_URL}/api/health`)
       if (!response.ok) throw new Error('health check failed')
       setBackendStatus('online')
+      await refreshProviderStatus(false)
       await validateActiveWorkflow()
       setNotice('后端在线，工作流检查已切换到后端校验。')
     } catch {
@@ -968,6 +1012,11 @@ function App() {
     if (!activeWorkflow.serverId) {
       setNotice('请先点击“同步到后端”，再使用后端运行。')
       return
+    }
+
+    const status = await refreshProviderStatus(false)
+    if (status && !status.deepseek_configured && !status.openai_configured) {
+      setNotice('未检测到 DeepSeek 或 OpenAI Key，本次后端运行会使用模拟输出。')
     }
 
     const issues = await validateActiveWorkflow()
@@ -1769,6 +1818,52 @@ function App() {
               placeholder="可选"
             />
           </label>
+        </section>
+
+        <section className="panel model-status-panel">
+          <div className="panel-title between">
+            <span>
+              <Bot size={16} />
+              模型状态
+            </span>
+            <button type="button" className="mini-action" onClick={() => refreshProviderStatus()}>
+              刷新
+            </button>
+          </div>
+          <div className="model-status-current">
+            <span className={clsx('model-status-dot', hasRealModelProvider ? 'ready' : 'fallback')} />
+            <strong>{activeProviderLabel}</strong>
+          </div>
+          <div className="model-status-grid">
+            <div>
+              <span>DeepSeek</span>
+              <strong className={clsx(providerStatus?.deepseek_configured ? 'ready' : 'fallback')}>
+                {providerStatus?.deepseek_configured ? '已配置' : '未配置'}
+              </strong>
+            </div>
+            <div>
+              <span>默认模型</span>
+              <strong>{providerStatus?.deepseek_model ?? '未读取'}</strong>
+            </div>
+            <div>
+              <span>OpenAI</span>
+              <strong className={clsx(providerStatus?.openai_configured ? 'ready' : 'fallback')}>
+                {providerStatus?.openai_configured ? '已配置' : '未配置'}
+              </strong>
+            </div>
+            <div>
+              <span>后端状态</span>
+              <strong>{backendStatus === 'online' ? '在线' : backendStatus === 'offline' ? '离线' : '未检查'}</strong>
+            </div>
+          </div>
+          <p className="model-status-note">
+            {hasRealModelProvider ? '后端运行会优先使用真实模型。' : '未配置模型 Key 时，后端运行会自动使用模拟输出。'}
+          </p>
+          {providerStatusCheckedAt && (
+            <time className="model-status-time">
+              更新：{new Date(providerStatusCheckedAt).toLocaleString('zh-CN')}
+            </time>
+          )}
         </section>
 
         <section className="panel runner">

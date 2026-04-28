@@ -101,7 +101,7 @@ def run_llm_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, st
     if os.getenv("DEEPSEEK_API_KEY"):
         try:
             output, model = run_deepseek_node(data, system_prompt, prompt)
-            return output, step_input, f"DeepSeek · {model}"
+            return output, step_input, f"DeepSeek - {model}"
         except (OpenAIError, RuntimeError) as error:
             model = select_deepseek_model(data.get("model"))
             output = f"DeepSeek {model} 调用失败，已回退模拟草稿：{prompt[:120]}（{error.__class__.__name__}）"
@@ -110,7 +110,7 @@ def run_llm_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, st
     if os.getenv("OPENAI_API_KEY"):
         try:
             output, model = run_openai_node(data, system_prompt, prompt)
-            return output, step_input, f"OpenAI · {model}"
+            return output, step_input, f"OpenAI - {model}"
         except (OpenAIError, RuntimeError) as error:
             model = str(data.get("model") or DEFAULT_OPENAI_MODEL)
             output = f"OpenAI {model} 调用失败，已回退模拟草稿：{prompt[:120]}（{error.__class__.__name__}）"

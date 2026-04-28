@@ -614,6 +614,81 @@ textarea:focus {
   margin-bottom: 12px;
 }
 
+.model-status-current {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #dfe4db;
+  border-radius: 7px;
+  background: #fbfcf8;
+  color: #111827;
+  font-size: 13px;
+  padding: 9px;
+}
+
+.model-status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #94a3b8;
+}
+
+.model-status-dot.ready {
+  background: #16a34a;
+}
+
+.model-status-dot.fallback {
+  background: #d97706;
+}
+
+.model-status-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.model-status-grid div {
+  display: grid;
+  gap: 3px;
+  border: 1px solid #e1e7dc;
+  border-radius: 7px;
+  background: #ffffff;
+  padding: 8px;
+}
+
+.model-status-grid span,
+.model-status-time {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.model-status-grid strong {
+  overflow-wrap: anywhere;
+  color: #334155;
+  font-size: 12px;
+}
+
+.model-status-grid strong.ready {
+  color: #166534;
+}
+
+.model-status-grid strong.fallback {
+  color: #92400e;
+}
+
+.model-status-note {
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 9px 0 0;
+}
+
+.model-status-time {
+  display: block;
+  margin-top: 7px;
+}
+
 .example-picker button {
   min-height: 42px;
   padding: 8px 10px;
