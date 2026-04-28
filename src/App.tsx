@@ -88,6 +88,17 @@ type WorkflowDefinition = {
 
 type WorkflowRecord = Required<Pick<WorkflowDefinition, 'id' | 'name' | 'version' | 'nodes' | 'edges'>> & {
   updatedAt: string
+  serverId?: string
+  syncedAt?: string
+}
+
+type ServerWorkflowRecord = {
+  id: string
+  name: string
+  version: string
+  nodes: WorkflowNode[]
+  edges: Edge[]
+  updated_at: string
 }
 
 type WorkflowStore = {
@@ -105,6 +116,7 @@ type WorkflowIssue = {
 const LEGACY_STORAGE_KEY = 'workflow-studio.current-workflow'
 const WORKFLOWS_STORAGE_KEY = 'workflow-studio.workflows'
 const ACTIVE_WORKFLOW_STORAGE_KEY = 'workflow-studio.active-workflow-id'
+const API_BASE_URL = 'http://127.0.0.1:8000'
 
 const nodeMeta: Record<
   NodeKind,
@@ -271,6 +283,24 @@ const isWorkflowDefinition = (value: unknown): value is WorkflowDefinition => {
   return Array.isArray(candidate.nodes) && Array.isArray(candidate.edges)
 }
 
+const serverToWorkflowRecord = (workflow: ServerWorkflowRecord): WorkflowRecord => ({
+  id: crypto.randomUUID(),
+  serverId: workflow.id,
+  name: workflow.name,
+  version: workflow.version || '0.2.0',
+  nodes: workflow.nodes,
+  edges: workflow.edges,
+  updatedAt: workflow.updated_at,
+  syncedAt: new Date().toISOString(),
+})
+
+const workflowToServerPayload = (workflow: WorkflowRecord) => ({
+  name: workflow.name,
+  version: workflow.version,
+  nodes: workflow.nodes,
+  edges: workflow.edges,
+})
+
 const loadStoredWorkflow = (): WorkflowDefinition | null => {
   try {
     const raw = window.localStorage.getItem(LEGACY_STORAGE_KEY)
@@ -295,11 +325,13 @@ const loadWorkflowStore = (): WorkflowStore => {
       const workflows = (parsed as { workflows: WorkflowRecord[] }).workflows.filter(isWorkflowDefinition).map(
         (workflow) => ({
           id: workflow.id ?? crypto.randomUUID(),
+          serverId: workflow.serverId,
           name: workflow.name || '未命名工作流',
           version: workflow.version || '0.2.0',
           nodes: workflow.nodes,
           edges: workflow.edges,
           updatedAt: workflow.updatedAt ?? new Date().toISOString(),
+          syncedAt: workflow.syncedAt,
         }),
       )
       if (workflows.length > 0) {
@@ -567,6 +599,8 @@ function App() {
   const [runSteps, setRunSteps] = useState<RunStep[]>([])
   const [runInput, setRunInput] = useState(examples[0])
   const [notice, setNotice] = useState('已加载本地工作流列表。')
+  const [backendStatus, setBackendStatus] = useState<'unknown' | 'online' | 'offline'>('unknown')
+  const [lastBackendSyncAt, setLastBackendSyncAt] = useState('')
   const nextNodeId = useRef(1)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -701,6 +735,94 @@ function App() {
     setSelectedNodeId(nodes[0]?.id ?? '')
     setRunSteps([])
     setNotice('')
+  }
+
+  const checkBackendStatus = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/health`)
+      if (!response.ok) throw new Error('health check failed')
+      setBackendStatus('online')
+      setNotice('后端在线，可以同步。')
+    } catch {
+      setBackendStatus('offline')
+      setNotice('后端离线，当前仍可使用浏览器本地保存。')
+    }
+  }
+
+  const syncActiveWorkflowToBackend = async () => {
+    try {
+      const method = activeWorkflow.serverId ? 'PUT' : 'POST'
+      const url = activeWorkflow.serverId
+        ? `${API_BASE_URL}/api/workflows/${activeWorkflow.serverId}`
+        : `${API_BASE_URL}/api/workflows`
+      const response = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(workflowToServerPayload(activeWorkflow)),
+      })
+      if (!response.ok) throw new Error('sync failed')
+      const saved = (await response.json()) as ServerWorkflowRecord
+      const syncedAt = new Date().toISOString()
+      const next = {
+        ...workflowStore,
+        workflows: workflowStore.workflows.map((workflow) =>
+          workflow.id === activeWorkflow.id
+            ? {
+                ...workflow,
+                serverId: saved.id,
+                name: saved.name,
+                version: saved.version,
+                nodes: saved.nodes,
+                edges: saved.edges,
+                updatedAt: saved.updated_at,
+                syncedAt,
+              }
+            : workflow,
+        ),
+      }
+      setWorkflowStore(next)
+      persistWorkflowStore(next)
+      setBackendStatus('online')
+      setLastBackendSyncAt(syncedAt)
+      setNotice('当前工作流已同步到后端。')
+    } catch {
+      setBackendStatus('offline')
+      setNotice('同步失败：后端不可用或请求失败。')
+    }
+  }
+
+  const loadWorkflowsFromBackend = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/workflows`)
+      if (!response.ok) throw new Error('load failed')
+      const serverWorkflows = (await response.json()) as ServerWorkflowRecord[]
+      const imported = serverWorkflows.map(serverToWorkflowRecord)
+      if (imported.length === 0) {
+        setBackendStatus('online')
+        setNotice('后端在线，但还没有保存的工作流。')
+        return
+      }
+      const existingServerIds = new Set(workflowStore.workflows.map((workflow) => workflow.serverId).filter(Boolean))
+      const merged = [
+        ...workflowStore.workflows,
+        ...imported.filter((workflow) => !existingServerIds.has(workflow.serverId)),
+      ]
+      const next = {
+        activeWorkflowId: imported[0].id,
+        workflows: merged,
+      }
+      setWorkflowStore(next)
+      persistWorkflowStore(next)
+      setSelectedNodeId(imported[0].nodes[0]?.id ?? '')
+      setRunSteps([])
+      const syncedAt = new Date().toISOString()
+      setBackendStatus('online')
+      setLastBackendSyncAt(syncedAt)
+      setNotice(`已从后端加载 ${imported.length} 个工作流。`)
+    } catch {
+      setBackendStatus('offline')
+      setNotice('加载失败：后端不可用或请求失败。')
+    }
   }
 
   const switchWorkflow = (workflowId: string) => {
@@ -1089,6 +1211,21 @@ function App() {
               onChange={(event) => updateActiveWorkflow({ name: event.target.value })}
               aria-label="工作流名称"
             />
+            <div className="backend-status-row">
+              <span className={clsx('backend-dot', backendStatus)} />
+              <span>
+                后端
+                {backendStatus === 'online' && '在线'}
+                {backendStatus === 'offline' && '离线'}
+                {backendStatus === 'unknown' && '未检查'}
+              </span>
+              {activeWorkflow.serverId && <span>后端 ID：{activeWorkflow.serverId.slice(0, 8)}</span>}
+              {(lastBackendSyncAt || activeWorkflow.syncedAt) && (
+                <span>
+                  同步：{new Date(lastBackendSyncAt || activeWorkflow.syncedAt || '').toLocaleString('zh-CN')}
+                </span>
+              )}
+            </div>
           </div>
           <div className="toolbar">
             <input
@@ -1113,6 +1250,15 @@ function App() {
             <button type="button" className="ghost" onClick={saveWorkflow}>
               <Save size={17} />
               保存
+            </button>
+            <button type="button" className="ghost" onClick={checkBackendStatus}>
+              检查后端
+            </button>
+            <button type="button" className="ghost" onClick={syncActiveWorkflowToBackend}>
+              同步到后端
+            </button>
+            <button type="button" className="ghost" onClick={loadWorkflowsFromBackend}>
+              从后端加载
             </button>
             <button type="button" className="primary" onClick={runWorkflow}>
               <Play size={17} />
