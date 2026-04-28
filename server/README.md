@@ -90,3 +90,10 @@ With the API server running:
 ```powershell
 server\.venv\Scripts\python.exe server/scripts/smoke_test.py
 ```
+
+If the API is running on another port:
+
+```powershell
+$env:BASE_URL="http://127.0.0.1:8001"
+server\.venv\Scripts\python.exe server/scripts/smoke_test.py
+```

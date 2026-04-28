@@ -1,9 +1,10 @@
 import urllib.request
 import json
+import os
 from urllib.error import HTTPError
 
 
-BASE_URL = "http://127.0.0.1:8000"
+BASE_URL = os.getenv("BASE_URL", "http://127.0.0.1:8000")
 
 
 def request(path: str, method: str = "GET", body: dict | None = None) -> dict | list:
@@ -35,12 +36,12 @@ def main() -> None:
         "nodes": [
             {
                 "id": "input-1",
-                "position": {"x": 0, "y": 0},
+                "position": {"x": 600, "y": 0},
                 "data": {"kind": "input", "label": "用户输入", "outputKey": "user_request"},
             },
             {
                 "id": "llm-1",
-                "position": {"x": 150, "y": 0},
+                "position": {"x": 300, "y": 0},
                 "data": {
                     "kind": "llm",
                     "label": "大模型草稿",
@@ -52,7 +53,7 @@ def main() -> None:
             },
             {
                 "id": "output-1",
-                "position": {"x": 300, "y": 0},
+                "position": {"x": 0, "y": 0},
                 "data": {
                     "kind": "output",
                     "label": "最终回答",
@@ -104,6 +105,7 @@ def main() -> None:
     assert invalid_create_body["detail"]["valid"] is False
     assert invalid_run_status == 400
     assert invalid_run_body["detail"]["valid"] is False
+    assert [step["node_id"] for step in run["steps"]] == ["input-1", "llm-1", "output-1"]
     assert any(
         step.get("provider") == "模拟输出"
         or str(step.get("provider", "")).startswith("OpenAI")

@@ -1,4 +1,5 @@
 import os
+from collections import defaultdict, deque
 from typing import Any
 
 from openai import OpenAI, OpenAIError
@@ -20,6 +21,44 @@ def render_template(template: str | None, context: dict[str, str]) -> str:
 
 def node_label(node: dict[str, Any]) -> str:
     return str(node.get("data", {}).get("label") or node.get("id") or "未命名节点")
+
+
+def node_id(node: dict[str, Any]) -> str:
+    return str(node.get("id") or "")
+
+
+def create_execution_order(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    node_by_id = {node_id(node): node for node in nodes}
+    indegree = {item: 0 for item in node_by_id}
+    outgoing: dict[str, list[str]] = defaultdict(list)
+
+    for edge in edges:
+        source = str(edge.get("source") or "")
+        target = str(edge.get("target") or "")
+        if source not in node_by_id or target not in node_by_id:
+            continue
+        indegree[target] += 1
+        outgoing[source].append(target)
+
+    queue = deque(
+        sorted(
+            [item for item, degree in indegree.items() if degree == 0],
+            key=lambda item: node_by_id[item].get("position", {}).get("x", 0),
+        )
+    )
+    ordered_ids: list[str] = []
+
+    while queue:
+        current = queue.popleft()
+        ordered_ids.append(current)
+        for target in outgoing[current]:
+            indegree[target] -= 1
+            if indegree[target] == 0:
+                queue.append(target)
+
+    if len(ordered_ids) != len(node_by_id):
+        return None
+    return [node_by_id[item] for item in ordered_ids]
 
 
 def get_provider_status() -> dict[str, str | bool]:
@@ -132,7 +171,21 @@ def run_llm_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, st
 
 def simulate_run(workflow: WorkflowPayload, input_text: str) -> RunResponse:
     context: dict[str, str] = {}
-    nodes = sorted(workflow.nodes, key=lambda node: node.get("position", {}).get("x", 0))
+    nodes = create_execution_order(workflow.nodes, workflow.edges)
+    if nodes is None:
+        return RunResponse(
+            status="error",
+            steps=[
+                RunStep(
+                    node_id="workflow-order-error",
+                    title="执行顺序计算失败",
+                    status="error",
+                    input="当前工作流连线",
+                    output="工作流存在环形依赖或无效结构，后端无法计算执行顺序。",
+                    error="无法根据连线计算拓扑执行顺序。",
+                )
+            ],
+        )
     steps: list[RunStep] = []
 
     for index, node in enumerate(nodes, start=1):
