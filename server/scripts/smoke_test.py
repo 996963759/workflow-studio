@@ -104,7 +104,12 @@ def main() -> None:
     assert invalid_create_body["detail"]["valid"] is False
     assert invalid_run_status == 400
     assert invalid_run_body["detail"]["valid"] is False
-    assert any(step.get("provider") in {"OpenAI", "模拟输出"} for step in run["steps"])
+    assert any(
+        step.get("provider") == "模拟输出"
+        or str(step.get("provider", "")).startswith("OpenAI")
+        or str(step.get("provider", "")).startswith("DeepSeek")
+        for step in run["steps"]
+    )
     assert len(workflow_runs) >= 1
     assert all(run["workflow_id"] == created["id"] for run in workflow_runs)
     assert delete_single_result == {}

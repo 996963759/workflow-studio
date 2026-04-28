@@ -20,7 +20,7 @@
 - 支持通过后端运行工作流并保存运行历史
 - 支持加载并查看后端运行历史
 - 支持按当前工作流筛选、删除和清空后端运行历史
-- 后端运行大模型节点时支持调用 OpenAI，未配置密钥时自动回退模拟输出
+- 后端运行大模型节点时支持调用 DeepSeek 或 OpenAI，未配置密钥时自动回退模拟输出
 - 后端支持工作流结构校验接口
 - 后端会在保存、更新和运行工作流前阻止严重结构问题
 - 前端工作流检查会优先使用后端校验，后端离线时自动回退到本地校验
@@ -58,8 +58,9 @@
 - 点击“同步到后端”会把当前工作流保存到 SQLite。
 - 点击“从后端加载”会把后端工作流导入前端列表。
 - 点击“后端运行”会调用 FastAPI 执行当前已同步工作流，并保存运行历史。
-- 如果后端配置了 `OPENAI_API_KEY`，后端运行里的大模型节点会调用 OpenAI；否则继续使用模拟输出。
-- 运行日志里的“来源”会显示大模型节点来自 `OpenAI` 还是 `模拟输出`。
+- 如果后端配置了 `DEEPSEEK_API_KEY`，后端运行里的大模型节点会优先调用 DeepSeek。
+- 如果没有 DeepSeek Key，但配置了 `OPENAI_API_KEY`，大模型节点会调用 OpenAI；都没有时继续使用模拟输出。
+- 运行日志里的“来源”会显示大模型节点来自 `DeepSeek`、`OpenAI` 还是 `模拟输出`。
 - 点击“加载历史”会读取当前工作流的后端运行历史，点击历史项可查看当次运行步骤。
 - 在运行历史中可以删除单条记录，也可以清空当前工作流的历史。
 - 后端接口 `POST /api/workflows/validate` 可以单独检查工作流结构。
@@ -92,7 +93,20 @@ server\.venv\Scripts\python.exe -m pip install -r server/requirements.txt
 server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 --port 8000
 ```
 
-可选：启用真实大模型节点。
+可选：启用 DeepSeek 大模型节点。
+
+```powershell
+$env:DEEPSEEK_API_KEY="你的 DeepSeek API Key"
+server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 --port 8000
+```
+
+也可以指定 DeepSeek 模型，默认是 `deepseek-v4-flash`。
+
+```powershell
+$env:DEEPSEEK_MODEL="deepseek-v4-pro"
+```
+
+可选：启用 OpenAI 大模型节点。
 
 ```powershell
 $env:OPENAI_API_KEY="你的 OpenAI API Key"
@@ -113,7 +127,7 @@ npm.cmd run build
 
 ## 当前边界
 
-这是全栈 MVP。当前前端运行逻辑已支持变量传递和模拟执行；后端已提供 FastAPI、SQLite 工作流 CRUD、工作流结构校验、运行历史接口，并支持大模型节点最小真实调用。当前还没有用户系统、知识库向量检索和外部工具真实执行器。
+这是全栈 MVP。当前前端运行逻辑已支持变量传递和模拟执行；后端已提供 FastAPI、SQLite 工作流 CRUD、工作流结构校验、运行历史接口，并支持 DeepSeek / OpenAI 大模型节点最小真实调用。当前还没有用户系统、知识库向量检索和外部工具真实执行器。
 
 ## 本地存储
 

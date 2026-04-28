@@ -5,6 +5,10 @@ from openai import OpenAI, OpenAIError
 
 from .models import RunResponse, RunStep, WorkflowPayload
 
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
+DEFAULT_OPENAI_MODEL = "gpt-5.4-mini"
+
 
 def render_template(template: str | None, context: dict[str, str]) -> str:
     value = template or ""
@@ -18,10 +22,13 @@ def node_label(node: dict[str, Any]) -> str:
     return str(node.get("data", {}).get("label") or node.get("id") or "未命名节点")
 
 
-def create_openai_client() -> OpenAI | None:
-    if not os.getenv("OPENAI_API_KEY"):
+def create_openai_client(api_key_env: str, base_url: str | None = None) -> OpenAI | None:
+    api_key = os.getenv(api_key_env)
+    if not api_key:
         return None
-    return OpenAI()
+    if base_url:
+        return OpenAI(api_key=api_key, base_url=base_url)
+    return OpenAI(api_key=api_key)
 
 
 def extract_response_text(response: Any) -> str:
@@ -31,28 +38,77 @@ def extract_response_text(response: Any) -> str:
     return str(response)
 
 
+def select_deepseek_model(configured_model: Any) -> str:
+    model = str(configured_model or "").strip()
+    if model.startswith("deepseek-"):
+        return model
+    return os.getenv("DEEPSEEK_MODEL") or DEFAULT_DEEPSEEK_MODEL
+
+
+def run_deepseek_node(data: dict[str, Any], system_prompt: str, prompt: str) -> tuple[str, str]:
+    model = select_deepseek_model(data.get("model"))
+    client = create_openai_client(
+        "DEEPSEEK_API_KEY",
+        os.getenv("DEEPSEEK_BASE_URL") or DEEPSEEK_BASE_URL,
+    )
+    if not client:
+        raise RuntimeError("DEEPSEEK_API_KEY is not configured")
+
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt or "请根据当前工作流上下文生成回复。"})
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        stream=False,
+    )
+    output = response.choices[0].message.content if response.choices else ""
+    return output or "DeepSeek 没有返回文本内容。", model
+
+
+def run_openai_node(data: dict[str, Any], system_prompt: str, prompt: str) -> tuple[str, str]:
+    model = str(data.get("model") or DEFAULT_OPENAI_MODEL)
+    client = create_openai_client("OPENAI_API_KEY")
+    if not client:
+        raise RuntimeError("OPENAI_API_KEY is not configured")
+
+    response = client.responses.create(
+        model=model,
+        instructions=system_prompt or None,
+        input=prompt or "请根据当前工作流上下文生成回复。",
+    )
+    output = extract_response_text(response).strip()
+    return output or "OpenAI 没有返回文本内容。", model
+
+
 def run_llm_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, str, str | None]:
     system_prompt = render_template(data.get("systemPrompt"), context)
     prompt = render_template(data.get("prompt"), context)
     step_input = "\n\n".join(part for part in [system_prompt, prompt] if part) or "未配置提示词"
-    model = str(data.get("model") or "gpt-5.4-mini")
-    client = create_openai_client()
 
-    if not client:
-        output = f"模型 {model} 生成模拟草稿：{prompt[:120]}"
-        return output, step_input, "模拟输出"
+    if os.getenv("DEEPSEEK_API_KEY"):
+        try:
+            output, model = run_deepseek_node(data, system_prompt, prompt)
+            return output, step_input, f"DeepSeek · {model}"
+        except (OpenAIError, RuntimeError) as error:
+            model = select_deepseek_model(data.get("model"))
+            output = f"DeepSeek {model} 调用失败，已回退模拟草稿：{prompt[:120]}（{error.__class__.__name__}）"
+            return output, step_input, "模拟输出"
 
-    try:
-        response = client.responses.create(
-            model=model,
-            instructions=system_prompt or None,
-            input=prompt or "请根据当前工作流上下文生成回复。",
-        )
-        output = extract_response_text(response).strip()
-        return output or "模型没有返回文本内容。", step_input, "OpenAI"
-    except OpenAIError as error:
-        output = f"模型 {model} 调用失败，已回退模拟草稿：{prompt[:120]}（{error.__class__.__name__}）"
-        return output, step_input, "模拟输出"
+    if os.getenv("OPENAI_API_KEY"):
+        try:
+            output, model = run_openai_node(data, system_prompt, prompt)
+            return output, step_input, f"OpenAI · {model}"
+        except (OpenAIError, RuntimeError) as error:
+            model = str(data.get("model") or DEFAULT_OPENAI_MODEL)
+            output = f"OpenAI {model} 调用失败，已回退模拟草稿：{prompt[:120]}（{error.__class__.__name__}）"
+            return output, step_input, "模拟输出"
+
+    model = str(data.get("model") or DEFAULT_OPENAI_MODEL)
+    output = f"模型 {model} 生成模拟草稿：{prompt[:120]}"
+    return output, step_input, "模拟输出"
 
 
 def simulate_run(workflow: WorkflowPayload, input_text: str) -> RunResponse:

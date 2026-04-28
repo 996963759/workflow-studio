@@ -1,6 +1,6 @@
 # Workflow Studio API
 
-FastAPI backend for Workflow Studio. The current backend stores workflows in a local SQLite database, validates workflow structure, records workflow runs, and can call OpenAI for LLM nodes when `OPENAI_API_KEY` is configured.
+FastAPI backend for Workflow Studio. The current backend stores workflows in a local SQLite database, validates workflow structure, records workflow runs, and can call DeepSeek or OpenAI for LLM nodes when an API key is configured.
 
 ## Setup
 
@@ -15,6 +15,19 @@ server\.venv\Scripts\python.exe -m pip install -r server/requirements.txt
 server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 --port 8000
 ```
 
+Optional DeepSeek runtime:
+
+```powershell
+$env:DEEPSEEK_API_KEY="your DeepSeek API key"
+server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 --port 8000
+```
+
+The default DeepSeek model is `deepseek-v4-flash`. Override it with:
+
+```powershell
+$env:DEEPSEEK_MODEL="deepseek-v4-pro"
+```
+
 Optional OpenAI runtime:
 
 ```powershell
@@ -22,7 +35,7 @@ $env:OPENAI_API_KEY="your OpenAI API key"
 server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 --port 8000
 ```
 
-Without `OPENAI_API_KEY`, LLM nodes keep returning simulated output.
+DeepSeek is preferred when `DEEPSEEK_API_KEY` is present. Without DeepSeek or OpenAI keys, LLM nodes keep returning simulated output.
 
 ## Endpoints
 

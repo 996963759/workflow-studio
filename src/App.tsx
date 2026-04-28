@@ -1580,6 +1580,8 @@ function App() {
                   value={selectedNode.data.model}
                   onChange={(event) => updateSelectedNode({ model: event.target.value })}
                 >
+                  <option>deepseek-v4-flash</option>
+                  <option>deepseek-v4-pro</option>
                   <option>gpt-5.4-mini</option>
                   <option>gpt-5.4</option>
                   <option>gpt-5.3-codex</option>
