@@ -75,6 +75,7 @@ type RunStep = {
   input: string
   output: string
   variable?: string
+  provider?: string
 }
 
 type WorkflowDefinition = {
@@ -1853,6 +1854,12 @@ function App() {
                         <div>
                           <dt>写入</dt>
                           <dd>{step.variable}</dd>
+                        </div>
+                      )}
+                      {step.provider && (
+                        <div>
+                          <dt>来源</dt>
+                          <dd>{step.provider}</dd>
                         </div>
                       )}
                     </dl>

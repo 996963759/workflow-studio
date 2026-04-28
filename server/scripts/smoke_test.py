@@ -39,17 +39,32 @@ def main() -> None:
                 "data": {"kind": "input", "label": "用户输入", "outputKey": "user_request"},
             },
             {
+                "id": "llm-1",
+                "position": {"x": 150, "y": 0},
+                "data": {
+                    "kind": "llm",
+                    "label": "大模型草稿",
+                    "model": "gpt-5.4-mini",
+                    "systemPrompt": "你是测试助手。",
+                    "prompt": "请回复：{{user_request}}",
+                    "outputKey": "draft",
+                },
+            },
+            {
                 "id": "output-1",
                 "position": {"x": 300, "y": 0},
                 "data": {
                     "kind": "output",
                     "label": "最终回答",
-                    "prompt": "收到：{{user_request}}",
+                    "prompt": "收到：{{draft}}",
                     "outputKey": "answer",
                 },
             },
         ],
-        "edges": [{"id": "e1", "source": "input-1", "target": "output-1"}],
+        "edges": [
+            {"id": "e1", "source": "input-1", "target": "llm-1"},
+            {"id": "e2", "source": "llm-1", "target": "output-1"},
+        ],
     }
     invalid_workflow = {
         "name": "Invalid Smoke Test Workflow",
@@ -89,6 +104,7 @@ def main() -> None:
     assert invalid_create_body["detail"]["valid"] is False
     assert invalid_run_status == 400
     assert invalid_run_body["detail"]["valid"] is False
+    assert any(step.get("provider") in {"OpenAI", "模拟输出"} for step in run["steps"])
     assert len(workflow_runs) >= 1
     assert all(run["workflow_id"] == created["id"] for run in workflow_runs)
     assert delete_single_result == {}
@@ -108,6 +124,7 @@ def main() -> None:
                 "created_id": created["id"],
                 "run_status": run["status"],
                 "step_count": len(run["steps"]),
+                "llm_provider": next((step.get("provider") for step in run["steps"] if step.get("provider")), None),
                 "stored_run_id": stored_run["id"],
                 "run_count": len(runs),
                 "workflow_run_count": len(workflow_runs),
