@@ -15,6 +15,19 @@ class WorkflowRecord(WorkflowPayload):
     updated_at: str
 
 
+class WorkflowIssue(BaseModel):
+    id: str
+    level: str
+    message: str
+    node_id: str | None = None
+
+
+class WorkflowValidationResult(BaseModel):
+    errors: list[WorkflowIssue] = Field(default_factory=list)
+    warnings: list[WorkflowIssue] = Field(default_factory=list)
+    valid: bool
+
+
 class RunRequest(BaseModel):
     workflow: WorkflowPayload
     input_text: str = ""

@@ -1,9 +1,18 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from .models import RunRecord, RunRequest, RunResponse, WorkflowPayload, WorkflowRecord, WorkflowRunRequest
+from .models import (
+    RunRecord,
+    RunRequest,
+    RunResponse,
+    WorkflowPayload,
+    WorkflowRecord,
+    WorkflowRunRequest,
+    WorkflowValidationResult,
+)
 from .runner import simulate_run
 from .storage import WorkflowStore
+from .validation import validate_workflow
 
 
 app = FastAPI(title="Workflow Studio API", version="0.1.0")
@@ -28,8 +37,21 @@ def list_workflows() -> list[WorkflowRecord]:
     return store.list_workflows()
 
 
+def raise_on_validation_errors(payload: WorkflowPayload) -> WorkflowValidationResult:
+    result = validate_workflow(payload)
+    if result.errors:
+        raise HTTPException(status_code=400, detail=result.model_dump())
+    return result
+
+
+@app.post("/api/workflows/validate", response_model=WorkflowValidationResult)
+def validate_workflow_payload(payload: WorkflowPayload) -> WorkflowValidationResult:
+    return validate_workflow(payload)
+
+
 @app.post("/api/workflows", response_model=WorkflowRecord, status_code=201)
 def create_workflow(payload: WorkflowPayload) -> WorkflowRecord:
+    raise_on_validation_errors(payload)
     return store.create_workflow(payload)
 
 
@@ -43,6 +65,7 @@ def get_workflow(workflow_id: str) -> WorkflowRecord:
 
 @app.put("/api/workflows/{workflow_id}", response_model=WorkflowRecord)
 def update_workflow(workflow_id: str, payload: WorkflowPayload) -> WorkflowRecord:
+    raise_on_validation_errors(payload)
     workflow = store.update_workflow(workflow_id, payload)
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
@@ -57,6 +80,7 @@ def delete_workflow(workflow_id: str) -> None:
 
 @app.post("/api/runs", response_model=RunResponse)
 def run_workflow(payload: RunRequest) -> RunResponse:
+    raise_on_validation_errors(payload.workflow)
     return simulate_run(payload.workflow, payload.input_text)
 
 
@@ -78,5 +102,6 @@ def run_stored_workflow(workflow_id: str, payload: WorkflowRunRequest) -> RunRec
     workflow = store.get_workflow(workflow_id)
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
+    raise_on_validation_errors(workflow)
     response = simulate_run(workflow, payload.input_text)
     return store.create_run(workflow.id, workflow.name, payload.input_text, response)

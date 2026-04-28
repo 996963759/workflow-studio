@@ -1,5 +1,6 @@
 import urllib.request
 import json
+from urllib.error import HTTPError
 
 
 BASE_URL = "http://127.0.0.1:8000"
@@ -15,6 +16,15 @@ def request(path: str, method: str = "GET", body: dict | None = None) -> dict | 
     with urllib.request.urlopen(req, timeout=10) as response:
         content = response.read().decode("utf-8")
         return json.loads(content) if content else {}
+
+
+def request_error(path: str, method: str = "GET", body: dict | None = None) -> tuple[int, dict]:
+    try:
+        request(path, method, body)
+    except HTTPError as error:
+        content = error.read().decode("utf-8")
+        return error.code, json.loads(content) if content else {}
+    raise AssertionError(f"Expected {method} {path} to fail")
 
 
 def main() -> None:
@@ -41,15 +51,47 @@ def main() -> None:
         ],
         "edges": [{"id": "e1", "source": "input-1", "target": "output-1"}],
     }
+    invalid_workflow = {
+        "name": "Invalid Smoke Test Workflow",
+        "version": "0.2.0",
+        "nodes": [
+            {
+                "id": "output-1",
+                "position": {"x": 0, "y": 0},
+                "data": {"kind": "output", "label": "最终回答", "outputKey": "answer"},
+            }
+        ],
+        "edges": [],
+    }
+    validation = request("/api/workflows/validate", "POST", workflow)
+    invalid_validation = request("/api/workflows/validate", "POST", invalid_workflow)
+    invalid_create_status, invalid_create_body = request_error("/api/workflows", "POST", invalid_workflow)
+    invalid_run_status, invalid_run_body = request_error(
+        "/api/runs",
+        "POST",
+        {"workflow": invalid_workflow, "input_text": "无效运行"},
+    )
     created = request("/api/workflows", "POST", workflow)
     run = request("/api/runs", "POST", {"workflow": workflow, "input_text": "测试输入"})
     stored_run = request(f"/api/workflows/{created['id']}/runs", "POST", {"input_text": "后端历史测试"})
     runs = request("/api/runs")
     fetched_run = request(f"/api/runs/{stored_run['id']}")
+
+    assert validation["valid"] is True
+    assert invalid_validation["valid"] is False
+    assert invalid_create_status == 400
+    assert invalid_create_body["detail"]["valid"] is False
+    assert invalid_run_status == 400
+    assert invalid_run_body["detail"]["valid"] is False
+
     print(
         json.dumps(
             {
                 "health": health,
+                "validation_valid": validation["valid"],
+                "invalid_validation_valid": invalid_validation["valid"],
+                "invalid_create_status": invalid_create_status,
+                "invalid_run_status": invalid_run_status,
                 "created_id": created["id"],
                 "run_status": run["status"],
                 "step_count": len(run["steps"]),

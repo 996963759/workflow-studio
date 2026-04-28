@@ -1,6 +1,6 @@
 # Workflow Studio API
 
-FastAPI backend for Workflow Studio. The current backend stores workflows in a local SQLite database and returns simulated workflow run steps.
+FastAPI backend for Workflow Studio. The current backend stores workflows in a local SQLite database, validates workflow structure, and returns simulated workflow run steps.
 
 ## Setup
 
@@ -19,6 +19,7 @@ server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 
 
 - `GET /api/health`
 - `GET /api/workflows`
+- `POST /api/workflows/validate`
 - `POST /api/workflows`
 - `GET /api/workflows/{workflow_id}`
 - `PUT /api/workflows/{workflow_id}`
@@ -27,6 +28,23 @@ server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 
 - `GET /api/runs`
 - `GET /api/runs/{run_id}`
 - `POST /api/workflows/{workflow_id}/runs`
+
+`POST /api/workflows`, `PUT /api/workflows/{workflow_id}`, `POST /api/runs` and `POST /api/workflows/{workflow_id}/runs` reject workflows with validation errors and return HTTP 400 with the validation result in `detail`.
+
+## Validation Rules
+
+Errors:
+
+- At least one input node is required.
+- At least one output node is required.
+- Cycles are not allowed.
+- Output nodes must have an upstream node.
+- Output variable names must be unique.
+
+Warnings:
+
+- Isolated nodes have no edges.
+- Non-input nodes without upstream input are flagged.
 
 ## Storage
 
