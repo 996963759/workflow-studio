@@ -62,6 +62,20 @@ npm.cmd install
 npm.cmd run dev
 ```
 
+## 后端运行
+
+```powershell
+python -m venv server/.venv
+server\.venv\Scripts\python.exe -m pip install -r server/requirements.txt
+server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 --port 8000
+```
+
+后端健康检查：
+
+```text
+http://127.0.0.1:8000/api/health
+```
+
 ## 构建
 
 ```powershell
@@ -70,7 +84,7 @@ npm.cmd run build
 
 ## 当前边界
 
-这是前端 MVP。当前运行逻辑已支持前端变量传递和模拟执行，但还没有接真实大模型 API、数据库、用户系统和外部工具执行器。确认编辑器形态后，下一步应增加后端 API 层来处理保存、运行和模型调用。
+这是全栈 MVP。当前前端运行逻辑已支持变量传递和模拟执行；后端已提供 FastAPI、SQLite 工作流 CRUD 和模拟运行接口，但还没有接真实大模型 API、用户系统和外部工具执行器。
 
 ## 本地存储
 

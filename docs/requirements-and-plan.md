@@ -41,7 +41,6 @@
 
 - 用户登录和权限
 - 多工作流列表
-- 数据库存储
 - 真实大模型 API 调用
 - 知识库上传和向量检索
 - 外部工具真实执行
@@ -68,7 +67,7 @@
 
 ## 当前实现方案
 
-当前阶段仍保持纯前端：
+当前阶段包含前端工作台和 FastAPI 后端雏形：
 
 1. 使用 React Flow 管理画布、节点和连线。
 2. 使用 React state 管理当前工作流。
@@ -88,6 +87,8 @@
 16. 使用 `workflow-studio.active-workflow-id` 保存当前选中的工作流。
 17. 导入 JSON 时创建新的工作流，而不是覆盖当前工作流。
 18. 旧版 `workflow-studio.current-workflow` 会自动迁移成工作流列表中的一项。
+19. 后端使用 FastAPI 提供工作流 CRUD 和模拟运行接口。
+20. 后端使用 SQLite 文件 `server/data/workflow_studio.db` 存储工作流。
 
 ## 校验规则
 
@@ -139,10 +140,22 @@
 
 ### 第三阶段：后端 API
 
-- `POST /api/workflows` 保存工作流
-- `GET /api/workflows/:id` 读取工作流
-- `POST /api/runs` 执行工作流
-- 服务端校验工作流结构
+已完成基础版本：
+
+- `GET /api/health`
+- `GET /api/workflows`
+- `POST /api/workflows`
+- `GET /api/workflows/{workflow_id}`
+- `PUT /api/workflows/{workflow_id}`
+- `DELETE /api/workflows/{workflow_id}`
+- `POST /api/runs`
+- SQLite 本地文件存储
+
+后续仍可增强：
+
+- 前端同步到后端
+- 服务端工作流结构校验
+- 运行历史记录
 
 ### 第四阶段：真实模型与工具
 
