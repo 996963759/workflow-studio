@@ -143,6 +143,40 @@
   text-align: left;
 }
 
+.template-list {
+  display: grid;
+  gap: 7px;
+}
+
+.template-list button {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #d8ded4;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #1f2937;
+  cursor: pointer;
+  font: inherit;
+  padding: 8px 9px;
+  text-align: left;
+}
+
+.template-list button:hover {
+  border-color: #9aa68f;
+  background: #f7f8f3;
+}
+
+.template-list strong {
+  color: #111827;
+  font-size: 13px;
+}
+
+.template-list small {
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .node-library button:hover,
 .example-picker button:hover,
 .workflow-list button:hover,

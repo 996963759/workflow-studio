@@ -179,6 +179,15 @@ type KnowledgeStatus = {
   chunk_count: number
 }
 
+type WorkflowTemplate = {
+  id: string
+  name: string
+  description: string
+  input: string
+  nodes: WorkflowNode[]
+  edges: Edge[]
+}
+
 const LEGACY_STORAGE_KEY = 'workflow-studio.current-workflow'
 const WORKFLOWS_STORAGE_KEY = 'workflow-studio.workflows'
 const ACTIVE_WORKFLOW_STORAGE_KEY = 'workflow-studio.active-workflow-id'
@@ -323,6 +332,155 @@ const initialEdges: Edge[] = [
   { id: 'e-condition-output', source: 'condition-1', target: 'output-1' },
 ]
 
+const workflowTemplates: WorkflowTemplate[] = [
+  {
+    id: 'support-rag',
+    name: '客服知识库问答',
+    description: '检索本地知识库，生成带依据的客服回复。',
+    input: '退款多久到账？',
+    nodes: initialNodes,
+    edges: initialEdges,
+  },
+  {
+    id: 'http-tool',
+    name: 'HTTP 工具调用',
+    description: '调用本机健康检查接口，并把响应整理为最终输出。',
+    input: '检查后端服务是否在线。',
+    nodes: [
+      {
+        id: 'input-1',
+        type: 'workflow',
+        position: { x: 40, y: 170 },
+        data: { kind: 'input', ...nodeMeta.input.defaults, sampleInput: '检查后端服务是否在线。' },
+      },
+      {
+        id: 'tool-1',
+        type: 'workflow',
+        position: { x: 380, y: 170 },
+        data: { kind: 'tool', ...nodeMeta.tool.defaults, label: '后端健康检查', outputKey: 'health_result' },
+      },
+      {
+        id: 'output-1',
+        type: 'workflow',
+        position: { x: 720, y: 170 },
+        data: {
+          kind: 'output',
+          ...nodeMeta.output.defaults,
+          prompt: '健康检查结果：\n{{health_result}}',
+          outputKey: 'answer',
+        },
+      },
+    ],
+    edges: [
+      { id: 'e-input-tool', source: 'input-1', target: 'tool-1', animated: true },
+      { id: 'e-tool-output', source: 'tool-1', target: 'output-1' },
+    ],
+  },
+  {
+    id: 'branch-review',
+    name: '条件分支审核',
+    description: '根据用户输入是否包含退款，路由到不同回复路径。',
+    input: '我要申请退款，订单用了两天。',
+    nodes: [
+      {
+        id: 'input-1',
+        type: 'workflow',
+        position: { x: 40, y: 180 },
+        data: { kind: 'input', ...nodeMeta.input.defaults, sampleInput: '我要申请退款，订单用了两天。' },
+      },
+      {
+        id: 'condition-1',
+        type: 'workflow',
+        position: { x: 380, y: 180 },
+        data: {
+          kind: 'condition',
+          ...nodeMeta.condition.defaults,
+          label: '是否退款诉求',
+          conditionVariable: 'user_request',
+          conditionOperator: 'contains',
+          conditionValue: '退款',
+        },
+      },
+      {
+        id: 'refund-output',
+        type: 'workflow',
+        position: { x: 740, y: 80 },
+        data: {
+          kind: 'output',
+          ...nodeMeta.output.defaults,
+          label: '退款回复',
+          prompt: '用户是退款诉求，请按退款规则回复：{{user_request}}',
+          outputKey: 'refund_answer',
+        },
+      },
+      {
+        id: 'normal-output',
+        type: 'workflow',
+        position: { x: 740, y: 290 },
+        data: {
+          kind: 'output',
+          ...nodeMeta.output.defaults,
+          label: '普通回复',
+          prompt: '用户不是退款诉求，请转入普通客服流程：{{user_request}}',
+          outputKey: 'normal_answer',
+        },
+      },
+    ],
+    edges: [
+      { id: 'e-input-condition', source: 'input-1', target: 'condition-1', animated: true },
+      { id: 'e-true', source: 'condition-1', sourceHandle: 'true', target: 'refund-output' },
+      { id: 'e-false', source: 'condition-1', sourceHandle: 'false', target: 'normal-output' },
+    ],
+  },
+  {
+    id: 'failure-retry',
+    name: '失败重试处理',
+    description: '演示工具失败后重试，并跳过下游节点。',
+    input: '演示失败重试。',
+    nodes: [
+      {
+        id: 'input-1',
+        type: 'workflow',
+        position: { x: 40, y: 180 },
+        data: { kind: 'input', ...nodeMeta.input.defaults, sampleInput: '演示失败重试。' },
+      },
+      {
+        id: 'tool-1',
+        type: 'workflow',
+        position: { x: 380, y: 180 },
+        data: {
+          kind: 'tool',
+          ...nodeMeta.tool.defaults,
+          label: '故障接口调用',
+          toolName: 'local.missing',
+          toolUrl: 'http://127.0.0.1:8000/api/missing-endpoint',
+          toolMethod: 'GET',
+          toolHeaders: '{}',
+          toolParams: '{}',
+          failurePolicy: 'skip_downstream',
+          retryCount: 1,
+          outputKey: 'tool_result',
+        },
+      },
+      {
+        id: 'output-1',
+        type: 'workflow',
+        position: { x: 720, y: 180 },
+        data: {
+          kind: 'output',
+          ...nodeMeta.output.defaults,
+          prompt: '如果工具成功，会输出：{{tool_result}}',
+          outputKey: 'answer',
+        },
+      },
+    ],
+    edges: [
+      { id: 'e-input-tool', source: 'input-1', target: 'tool-1', animated: true },
+      { id: 'e-tool-output', source: 'tool-1', target: 'output-1' },
+    ],
+  },
+]
+
 const examples = [
   '总结用户反馈，并生成按优先级排序的产品行动项。',
   '根据 CRM 数据和品牌语气，撰写一封新用户欢迎邮件。',
@@ -346,8 +504,8 @@ const createWorkflowRecord = (name = '工作流编辑器演示'): WorkflowRecord
   id: crypto.randomUUID(),
   name,
   version: '0.2.0',
-  nodes: initialNodes,
-  edges: initialEdges,
+  nodes: structuredClone(initialNodes) as WorkflowNode[],
+  edges: structuredClone(initialEdges) as Edge[],
   updatedAt: new Date().toISOString(),
 })
 
@@ -468,6 +626,16 @@ const persistWorkflowStore = (store: WorkflowStore) => {
 
 const cloneNodes = (nodes: WorkflowNode[]) => structuredClone(nodes) as WorkflowNode[]
 const cloneEdges = (edges: Edge[]) => structuredClone(edges) as Edge[]
+
+const createWorkflowFromTemplate = (template: WorkflowTemplate): WorkflowRecord => ({
+  id: crypto.randomUUID(),
+  archived: false,
+  name: template.name,
+  version: '0.2.0',
+  nodes: cloneNodes(template.nodes),
+  edges: cloneEdges(template.edges),
+  updatedAt: new Date().toISOString(),
+})
 
 const renderTemplate = (template: string | undefined, context: Record<string, string>) =>
   (template ?? '').replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (_, key: string) => context[key] ?? '')
@@ -1473,6 +1641,24 @@ function App() {
     setNotice('已新建工作流。')
   }
 
+  const createWorkflowFromSelectedTemplate = (template: WorkflowTemplate) => {
+    const nextWorkflow = {
+      ...createWorkflowFromTemplate(template),
+      name: `${template.name} ${workflowStore.workflows.length + 1}`,
+    }
+    const next = {
+      activeWorkflowId: nextWorkflow.id,
+      workflows: [...workflowStore.workflows, nextWorkflow],
+    }
+    setWorkflowStore(next)
+    persistWorkflowStore(next)
+    setSelectedNodeId(nextWorkflow.nodes[0]?.id ?? '')
+    setRunInput(template.input)
+    setRunSteps([])
+    setSelectedRunId('')
+    setNotice(`已从模板创建「${template.name}」。`)
+  }
+
   const duplicateWorkflow = () => {
     const duplicated: WorkflowRecord = {
       ...activeWorkflow,
@@ -1800,6 +1986,21 @@ function App() {
                 </button>
               )
             })}
+          </div>
+        </section>
+
+        <section className="panel template-panel">
+          <div className="panel-title">
+            <Sparkles size={16} />
+            <span>工作流模板</span>
+          </div>
+          <div className="template-list">
+            {workflowTemplates.map((template) => (
+              <button key={template.id} type="button" onClick={() => createWorkflowFromSelectedTemplate(template)}>
+                <strong>{template.name}</strong>
+                <small>{template.description}</small>
+              </button>
+            ))}
           </div>
         </section>
 
