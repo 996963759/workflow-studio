@@ -34,6 +34,16 @@ def is_allowed_tool_url(value: str) -> bool:
     return parsed.scheme in {"http", "https"} and parsed.hostname in ALLOWED_TOOL_HOSTS
 
 
+def number_in_range(value: Any, minimum: float, maximum: float, integer: bool = False) -> bool:
+    if value is None:
+        return True
+    if integer and not isinstance(value, int):
+        return False
+    if not integer and not isinstance(value, int | float):
+        return False
+    return minimum <= float(value) <= maximum
+
+
 def create_execution_order(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> list[str] | None:
     ids = {node_id(node) for node in nodes}
     indegree = {item: 0 for item in ids}
@@ -122,6 +132,23 @@ def validate_workflow(payload: WorkflowPayload) -> WorkflowValidationResult:
                     message=f"最终回答节点「{node_label(node)}」必须连接上游节点。",
                 )
             )
+
+        if data.get("kind") == "llm":
+            for field, label, minimum, maximum, integer in [
+                ("temperature", "温度", 0, 2, False),
+                ("maxOutputTokens", "最大输出长度", 1, 32000, True),
+                ("timeoutSeconds", "超时时间", 5, 300, True),
+            ]:
+                if number_in_range(data.get(field), minimum, maximum, integer):
+                    continue
+                errors.append(
+                    WorkflowIssue(
+                        id=f"{field}-{current_id}",
+                        level="error",
+                        node_id=current_id,
+                        message=f"大模型节点「{node_label(node)}」的{label}必须在 {minimum} 到 {maximum} 之间。",
+                    )
+                )
 
         if data.get("kind") == "tool":
             tool_url = str(data.get("toolUrl") or "").strip()

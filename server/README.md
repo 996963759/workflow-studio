@@ -37,6 +37,12 @@ server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 
 
 DeepSeek is preferred when `DEEPSEEK_API_KEY` is present. Without DeepSeek or OpenAI keys, LLM nodes keep returning simulated output.
 
+LLM nodes support per-node runtime options:
+
+- `temperature`: 0 to 2
+- `maxOutputTokens`: 1 to 32000
+- `timeoutSeconds`: 5 to 300
+
 HTTP tool nodes can call `localhost`, `127.0.0.1`, or `::1` by default. Other hosts are blocked by validation and runtime checks.
 
 Local knowledge documents live in:
@@ -78,6 +84,7 @@ Errors:
 - Cycles are not allowed.
 - Output nodes must have an upstream node.
 - Output variable names must be unique.
+- LLM node temperature, max output tokens, and timeout must stay within supported ranges.
 - HTTP tool URLs must target `localhost`, `127.0.0.1`, or `::1`.
 - HTTP tool headers and body must be JSON objects when provided.
 

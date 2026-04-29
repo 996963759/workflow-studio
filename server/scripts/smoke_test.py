@@ -168,6 +168,9 @@ def main() -> None:
                     "kind": "llm",
                     "label": "大模型草稿",
                     "model": "gpt-5.4-mini",
+                    "temperature": 0.3,
+                    "maxOutputTokens": 800,
+                    "timeoutSeconds": 30,
                     "systemPrompt": "你是测试助手。",
                     "prompt": "请回复：{{user_request}}",
                     "outputKey": "draft",
@@ -252,6 +255,9 @@ def main() -> None:
     )
     llm_step = next(step for step in run["steps"] if step.get("provider"))
     assert "error" in llm_step or llm_step.get("provider") != "模拟输出"
+    assert "temperature=0.3" in llm_step["input"]
+    assert "max_output_tokens=800" in llm_step["input"]
+    assert "timeout=30s" in llm_step["input"]
     assert len(workflow_runs) >= 1
     assert all(run["workflow_id"] == created["id"] for run in workflow_runs)
     assert delete_single_result == {}

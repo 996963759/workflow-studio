@@ -16,6 +16,9 @@ DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
 DEFAULT_OPENAI_MODEL = "gpt-5.4-mini"
 ALLOWED_TOOL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 TOOL_TIMEOUT_SECONDS = 10
+DEFAULT_TEMPERATURE = 0.4
+DEFAULT_MAX_OUTPUT_TOKENS = 1200
+DEFAULT_LLM_TIMEOUT_SECONDS = 45
 
 
 def render_template(template: str | None, context: dict[str, str]) -> str:
@@ -120,6 +123,30 @@ def summarize_error(error: Exception) -> str:
     return f"{error.__class__.__name__}: {message}" if message else error.__class__.__name__
 
 
+def clamp_number(value: Any, default: float, minimum: float, maximum: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if number < minimum:
+        return minimum
+    if number > maximum:
+        return maximum
+    return number
+
+
+def llm_options(data: dict[str, Any]) -> tuple[float, int, float]:
+    temperature = clamp_number(data.get("temperature"), DEFAULT_TEMPERATURE, 0, 2)
+    max_output_tokens = int(clamp_number(data.get("maxOutputTokens"), DEFAULT_MAX_OUTPUT_TOKENS, 1, 32000))
+    timeout_seconds = clamp_number(data.get("timeoutSeconds"), DEFAULT_LLM_TIMEOUT_SECONDS, 5, 300)
+    return temperature, max_output_tokens, timeout_seconds
+
+
+def format_llm_options(data: dict[str, Any]) -> str:
+    temperature, max_output_tokens, timeout_seconds = llm_options(data)
+    return f"参数：temperature={temperature:g}, max_output_tokens={max_output_tokens}, timeout={timeout_seconds:g}s"
+
+
 def parse_json_object(value: str, fallback: dict[str, Any] | None = None) -> dict[str, Any]:
     if not value.strip():
         return fallback or {}
@@ -203,6 +230,7 @@ def evaluate_condition(data: dict[str, Any], context: dict[str, str]) -> tuple[b
 
 def run_deepseek_node(data: dict[str, Any], system_prompt: str, prompt: str) -> tuple[str, str]:
     model = select_deepseek_model(data.get("model"))
+    temperature, max_output_tokens, timeout_seconds = llm_options(data)
     client = create_openai_client(
         "DEEPSEEK_API_KEY",
         os.getenv("DEEPSEEK_BASE_URL") or DEEPSEEK_BASE_URL,
@@ -218,6 +246,9 @@ def run_deepseek_node(data: dict[str, Any], system_prompt: str, prompt: str) -> 
     response = client.chat.completions.create(
         model=model,
         messages=messages,
+        temperature=temperature,
+        max_tokens=max_output_tokens,
+        timeout=timeout_seconds,
         stream=False,
     )
     output = response.choices[0].message.content if response.choices else ""
@@ -226,6 +257,7 @@ def run_deepseek_node(data: dict[str, Any], system_prompt: str, prompt: str) -> 
 
 def run_openai_node(data: dict[str, Any], system_prompt: str, prompt: str) -> tuple[str, str]:
     model = str(data.get("model") or DEFAULT_OPENAI_MODEL)
+    temperature, max_output_tokens, timeout_seconds = llm_options(data)
     client = create_openai_client("OPENAI_API_KEY")
     if not client:
         raise RuntimeError("OPENAI_API_KEY is not configured")
@@ -234,6 +266,9 @@ def run_openai_node(data: dict[str, Any], system_prompt: str, prompt: str) -> tu
         model=model,
         instructions=system_prompt or None,
         input=prompt or "请根据当前工作流上下文生成回复。",
+        temperature=temperature,
+        max_output_tokens=max_output_tokens,
+        timeout=timeout_seconds,
     )
     output = extract_response_text(response).strip()
     return output or "OpenAI 没有返回文本内容。", model
@@ -242,7 +277,7 @@ def run_openai_node(data: dict[str, Any], system_prompt: str, prompt: str) -> tu
 def run_llm_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, str, str | None, str | None]:
     system_prompt = render_template(data.get("systemPrompt"), context)
     prompt = render_template(data.get("prompt"), context)
-    step_input = "\n\n".join(part for part in [system_prompt, prompt] if part) or "未配置提示词"
+    step_input = "\n\n".join(part for part in [format_llm_options(data), system_prompt, prompt] if part) or "未配置提示词"
 
     if os.getenv("DEEPSEEK_API_KEY"):
         try:
@@ -265,7 +300,7 @@ def run_llm_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, st
             return output, step_input, "模拟输出", reason
 
     model = str(data.get("model") or DEFAULT_OPENAI_MODEL)
-    output = f"模型 {model} 生成模拟草稿：{prompt[:120]}"
+    output = f"模型 {model} 使用 {format_llm_options(data)} 生成模拟草稿：{prompt[:120]}"
     return output, step_input, "模拟输出", None
 
 

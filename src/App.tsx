@@ -53,6 +53,9 @@ type WorkflowNodeData = {
   label: string
   description: string
   model?: string
+  temperature?: number
+  maxOutputTokens?: number
+  timeoutSeconds?: number
   systemPrompt?: string
   prompt?: string
   query?: string
@@ -209,6 +212,9 @@ const nodeMeta: Record<
       label: '大模型草稿',
       description: '调用模型生成结构化回答草稿。',
       model: 'gpt-5.4-mini',
+      temperature: 0.4,
+      maxOutputTokens: 1200,
+      timeoutSeconds: 45,
       systemPrompt: '你是严谨的 AI 工作流助手，回答要结构清晰、可执行。',
       prompt: '根据 {{user_request}} 和检索到的上下文，生成一份简洁回答。',
       outputKey: 'draft',
@@ -599,6 +605,23 @@ const validateNodeFields = (node: WorkflowNode): FieldIssue[] => {
 
   if (data.kind === 'llm' && !data.prompt?.trim()) {
     issues.push({ field: 'prompt', level: 'error', message: '大模型节点需要填写用户提示词。' })
+  }
+  if (data.kind === 'llm') {
+    if (data.temperature !== undefined && (Number.isNaN(data.temperature) || data.temperature < 0 || data.temperature > 2)) {
+      issues.push({ field: 'temperature', level: 'error', message: '温度需要在 0 到 2 之间。' })
+    }
+    if (
+      data.maxOutputTokens !== undefined &&
+      (!Number.isInteger(data.maxOutputTokens) || data.maxOutputTokens < 1 || data.maxOutputTokens > 32000)
+    ) {
+      issues.push({ field: 'maxOutputTokens', level: 'error', message: '最大输出长度需要在 1 到 32000 之间。' })
+    }
+    if (
+      data.timeoutSeconds !== undefined &&
+      (!Number.isInteger(data.timeoutSeconds) || data.timeoutSeconds < 5 || data.timeoutSeconds > 300)
+    ) {
+      issues.push({ field: 'timeoutSeconds', level: 'error', message: '超时时间需要在 5 到 300 秒之间。' })
+    }
   }
 
   if (data.kind === 'knowledge' && !data.query?.trim()) {
@@ -2044,6 +2067,44 @@ function App() {
                   <option>gpt-5.3-codex</option>
                 </select>
               </label>
+              <div className="llm-params-grid">
+                <label>
+                  温度
+                  <input
+                    min={0}
+                    max={2}
+                    step={0.1}
+                    type="number"
+                    value={selectedNode.data.temperature ?? 0.4}
+                    onChange={(event) => updateSelectedNode({ temperature: Number(event.target.value) })}
+                  />
+                  {renderFieldIssues('temperature')}
+                </label>
+                <label>
+                  最大输出
+                  <input
+                    min={1}
+                    max={32000}
+                    step={100}
+                    type="number"
+                    value={selectedNode.data.maxOutputTokens ?? 1200}
+                    onChange={(event) => updateSelectedNode({ maxOutputTokens: Number(event.target.value) })}
+                  />
+                  {renderFieldIssues('maxOutputTokens')}
+                </label>
+                <label>
+                  超时秒数
+                  <input
+                    min={5}
+                    max={300}
+                    step={5}
+                    type="number"
+                    value={selectedNode.data.timeoutSeconds ?? 45}
+                    onChange={(event) => updateSelectedNode({ timeoutSeconds: Number(event.target.value) })}
+                  />
+                  {renderFieldIssues('timeoutSeconds')}
+                </label>
+              </div>
               <label>
                 系统提示词
                 <textarea
