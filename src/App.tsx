@@ -693,6 +693,7 @@ function App() {
   const [lastBackendSyncAt, setLastBackendSyncAt] = useState('')
   const nextNodeId = useRef(1)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const flowInstanceRef = useRef<{ setCenter: (x: number, y: number, options?: { duration?: number; zoom?: number }) => void } | null>(null)
 
   const activeWorkflow =
     workflowStore.workflows.find((workflow) => workflow.id === workflowStore.activeWorkflowId) ??
@@ -858,6 +859,22 @@ function App() {
     } catch {
       setNotice('复制失败：当前浏览器不允许访问剪贴板。')
     }
+  }
+
+  const focusIssueNode = (issue: WorkflowIssue) => {
+    if (!issue.nodeId) return
+    const node = nodes.find((item) => item.id === issue.nodeId)
+    if (!node) {
+      setNotice('没有找到这个问题关联的节点。')
+      return
+    }
+
+    setSelectedNodeId(node.id)
+    flowInstanceRef.current?.setCenter(node.position.x + 118, node.position.y + 60, {
+      duration: 500,
+      zoom: 0.95,
+    })
+    setNotice(`已定位到节点：${node.data.label}`)
   }
 
   const refreshProviderStatus = async (showNotice = true) => {
@@ -1563,8 +1580,17 @@ function App() {
             <ul className="issue-list">
               {workflowIssues.map((issue) => (
                 <li key={issue.id} className={issue.level}>
-                  <strong>{issue.level === 'error' ? '错误' : '提醒'}</strong>
-                  <span>{issue.message}</span>
+                  {issue.nodeId ? (
+                    <button type="button" onClick={() => focusIssueNode(issue)}>
+                      <strong>{issue.level === 'error' ? '错误' : '提醒'}</strong>
+                      <span>{issue.message}</span>
+                    </button>
+                  ) : (
+                    <>
+                      <strong>{issue.level === 'error' ? '错误' : '提醒'}</strong>
+                      <span>{issue.message}</span>
+                    </>
+                  )}
                 </li>
               ))}
             </ul>
@@ -1653,6 +1679,9 @@ function App() {
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             onNodeClick={(_, node) => setSelectedNodeId(node.id)}
+            onInit={(instance) => {
+              flowInstanceRef.current = instance
+            }}
             fitView
             minZoom={0.35}
             maxZoom={1.4}
