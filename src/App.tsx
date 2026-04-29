@@ -107,6 +107,7 @@ type WorkflowRecord = Required<Pick<WorkflowDefinition, 'id' | 'name' | 'version
 }
 
 type WorkflowSortMode = 'updated' | 'name' | 'sync'
+type WorkflowSyncState = 'local' | 'synced' | 'dirty'
 type RunHistoryStatusFilter = 'all' | 'ok' | 'error'
 
 type ServerWorkflowRecord = {
@@ -634,6 +635,18 @@ const persistWorkflowStore = (store: WorkflowStore) => {
   window.localStorage.setItem(ACTIVE_WORKFLOW_STORAGE_KEY, store.activeWorkflowId)
 }
 
+const getWorkflowSyncState = (workflow: WorkflowRecord): WorkflowSyncState => {
+  if (!workflow.serverId) return 'local'
+  if (!workflow.syncedAt) return 'synced'
+  return new Date(workflow.updatedAt).getTime() > new Date(workflow.syncedAt).getTime() ? 'dirty' : 'synced'
+}
+
+const workflowSyncLabels: Record<WorkflowSyncState, string> = {
+  local: '仅本地',
+  synced: '已同步',
+  dirty: '未同步改动',
+}
+
 const mergeBackendWorkflows = (
   current: WorkflowStore,
   imported: WorkflowRecord[],
@@ -1074,7 +1087,8 @@ function App() {
       .toSorted((a, b) => {
         if (workflowSortMode === 'name') return a.name.localeCompare(b.name, 'zh-CN')
         if (workflowSortMode === 'sync') {
-          const syncCompare = Number(Boolean(b.serverId)) - Number(Boolean(a.serverId))
+          const syncRank: Record<WorkflowSyncState, number> = { dirty: 3, local: 2, synced: 1 }
+          const syncCompare = syncRank[getWorkflowSyncState(b)] - syncRank[getWorkflowSyncState(a)]
           return syncCompare || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
         }
         return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
@@ -1100,6 +1114,7 @@ function App() {
   const nodes = activeWorkflow.nodes
   const edges = activeWorkflow.edges
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? nodes[0]
+  const activeWorkflowSyncState = getWorkflowSyncState(activeWorkflow)
   const selectedFieldIssues = selectedNode ? validateNodeFields(selectedNode) : []
   const fieldIssuesByName = selectedFieldIssues.reduce(
     (result, issue) => {
@@ -1765,12 +1780,12 @@ function App() {
 
   const duplicateWorkflow = () => {
     const duplicated: WorkflowRecord = {
-      ...activeWorkflow,
-      archived: false,
       id: crypto.randomUUID(),
       name: `${activeWorkflow.name} 副本`,
+      version: activeWorkflow.version,
       nodes: cloneNodes(activeWorkflow.nodes),
       edges: cloneEdges(activeWorkflow.edges),
+      archived: false,
       updatedAt: new Date().toISOString(),
     }
     const next = {
@@ -2210,22 +2225,30 @@ function App() {
           </div>
           <div className="workflow-list">
             {visibleWorkflows.length > 0 ? (
-              visibleWorkflows.map((workflow) => (
-                <button
-                  key={workflow.id}
-                  type="button"
-                  className={clsx(workflow.id === activeWorkflow.id && 'active', workflow.archived && 'archived')}
-                  onClick={() => switchWorkflow(workflow.id)}
-                >
-                  <span>
-                    {workflow.name}
-                    {workflow.archived && <em>归档</em>}
-                  </span>
-                  <small>
-                    {new Date(workflow.updatedAt).toLocaleString('zh-CN')} · {workflow.serverId ? '已同步' : '仅本地'}
-                  </small>
-                </button>
-              ))
+              visibleWorkflows.map((workflow) => {
+                const syncState = getWorkflowSyncState(workflow)
+                return (
+                  <button
+                    key={workflow.id}
+                    type="button"
+                    className={clsx(
+                      workflow.id === activeWorkflow.id && 'active',
+                      workflow.archived && 'archived',
+                      `sync-${syncState}`,
+                    )}
+                    onClick={() => switchWorkflow(workflow.id)}
+                  >
+                    <span>
+                      {workflow.name}
+                      {workflow.archived && <em>归档</em>}
+                    </span>
+                    <small>
+                      <time>{new Date(workflow.updatedAt).toLocaleString('zh-CN')}</time>
+                      <b className={clsx('workflow-sync-badge', syncState)}>{workflowSyncLabels[syncState]}</b>
+                    </small>
+                  </button>
+                )
+              })
             ) : (
               <p className="workflow-empty">{workflowSearch ? '没有匹配的工作流' : '暂无可显示的工作流'}</p>
             )}
@@ -2315,8 +2338,11 @@ function App() {
               <span>
                 后端
                 {backendStatus === 'online' && '在线'}
-                {backendStatus === 'offline' && '离线'}
-                {backendStatus === 'unknown' && '未检查'}
+              {backendStatus === 'offline' && '离线'}
+              {backendStatus === 'unknown' && '未检查'}
+              </span>
+              <span className={clsx('topbar-sync-state', activeWorkflowSyncState)}>
+                {workflowSyncLabels[activeWorkflowSyncState]}
               </span>
               {activeWorkflow.serverId && <span>后端 ID：{activeWorkflow.serverId.slice(0, 8)}</span>}
               {(lastBackendSyncAt || activeWorkflow.syncedAt) && (
