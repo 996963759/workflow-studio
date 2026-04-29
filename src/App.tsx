@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import {
   Background,
   Controls,
@@ -133,6 +133,8 @@ type WorkflowStore = {
   activeWorkflowId: string
   workflows: WorkflowRecord[]
 }
+
+type BackendWorkflowLoadMode = 'manual' | 'startup'
 
 type WorkflowIssue = {
   id: string
@@ -632,6 +634,43 @@ const persistWorkflowStore = (store: WorkflowStore) => {
   window.localStorage.setItem(ACTIVE_WORKFLOW_STORAGE_KEY, store.activeWorkflowId)
 }
 
+const mergeBackendWorkflows = (
+  current: WorkflowStore,
+  imported: WorkflowRecord[],
+  syncedAt: string,
+): { store: WorkflowStore; firstLoaded: WorkflowRecord; appendedCount: number; updatedCount: number } => {
+  const importedByServerId = new Map(imported.map((workflow) => [workflow.serverId, workflow]))
+  const existingServerIds = new Set(current.workflows.map((workflow) => workflow.serverId).filter(Boolean))
+  let updatedCount = 0
+  const updatedExisting = current.workflows.map((workflow) => {
+    const importedWorkflow = workflow.serverId ? importedByServerId.get(workflow.serverId) : undefined
+    if (!importedWorkflow) return workflow
+    updatedCount += 1
+    return {
+      ...workflow,
+      name: importedWorkflow.name,
+      version: importedWorkflow.version,
+      nodes: importedWorkflow.nodes,
+      edges: importedWorkflow.edges,
+      archived: importedWorkflow.archived ?? false,
+      updatedAt: importedWorkflow.updatedAt,
+      syncedAt,
+    }
+  })
+  const appended = imported.filter((workflow) => !existingServerIds.has(workflow.serverId))
+  const merged = [...updatedExisting, ...appended]
+  const firstLoaded = merged.find((workflow) => workflow.serverId === imported[0].serverId) ?? appended[0] ?? merged[0]
+  return {
+    store: {
+      activeWorkflowId: firstLoaded.id,
+      workflows: merged,
+    },
+    firstLoaded,
+    appendedCount: appended.length,
+    updatedCount,
+  }
+}
+
 const cloneNodes = (nodes: WorkflowNode[]) => structuredClone(nodes) as WorkflowNode[]
 const cloneEdges = (edges: Edge[]) => structuredClone(edges) as Edge[]
 
@@ -1022,6 +1061,7 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const knowledgeFileInputRef = useRef<HTMLInputElement | null>(null)
   const flowInstanceRef = useRef<{ setCenter: (x: number, y: number, options?: { duration?: number; zoom?: number }) => void } | null>(null)
+  const didAutoLoadBackendRef = useRef(false)
 
   const activeWorkflow =
     workflowStore.workflows.find((workflow) => workflow.id === workflowStore.activeWorkflowId) ??
@@ -1516,7 +1556,7 @@ function App() {
     }
   }
 
-  const loadWorkflowsFromBackend = async () => {
+  const loadWorkflowsFromBackend = useCallback(async (mode: BackendWorkflowLoadMode = 'manual') => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/workflows`)
       if (!response.ok) throw new Error('load failed')
@@ -1524,45 +1564,41 @@ function App() {
       const imported = serverWorkflows.map(serverToWorkflowRecord)
       if (imported.length === 0) {
         setBackendStatus('online')
-        setNotice('后端在线，但还没有保存的工作流。')
+        if (mode === 'manual') {
+          setNotice('后端在线，但还没有保存的工作流。')
+        }
         return
       }
       const syncedAt = new Date().toISOString()
-      const importedByServerId = new Map(imported.map((workflow) => [workflow.serverId, workflow]))
-      const existingServerIds = new Set(workflowStore.workflows.map((workflow) => workflow.serverId).filter(Boolean))
-      const updatedExisting = workflowStore.workflows.map((workflow) => {
-        const importedWorkflow = workflow.serverId ? importedByServerId.get(workflow.serverId) : undefined
-        if (!importedWorkflow) return workflow
-        return {
-          ...workflow,
-          name: importedWorkflow.name,
-          version: importedWorkflow.version,
-          nodes: importedWorkflow.nodes,
-          edges: importedWorkflow.edges,
-          archived: importedWorkflow.archived ?? false,
-          updatedAt: importedWorkflow.updatedAt,
-          syncedAt,
-        }
-      })
-      const appended = imported.filter((workflow) => !existingServerIds.has(workflow.serverId))
-      const merged = [...updatedExisting, ...appended]
-      const firstLoaded = merged.find((workflow) => workflow.serverId === imported[0].serverId) ?? appended[0] ?? merged[0]
-      const next = {
-        activeWorkflowId: firstLoaded.id,
-        workflows: merged,
-      }
+      const { store: next, firstLoaded, appendedCount, updatedCount } = mergeBackendWorkflows(
+        workflowStore,
+        imported,
+        syncedAt,
+      )
       setWorkflowStore(next)
       persistWorkflowStore(next)
       setSelectedNodeId(firstLoaded.nodes[0]?.id ?? '')
       setRunSteps([])
       setBackendStatus('online')
       setLastBackendSyncAt(syncedAt)
-      setNotice(`已从后端加载 ${imported.length} 个工作流。`)
+      setNotice(
+        mode === 'startup'
+          ? `已自动从后端加载 ${imported.length} 个工作流：新增 ${appendedCount} 个，更新 ${updatedCount} 个，本地未同步工作流已保留。`
+          : `已从后端加载 ${imported.length} 个工作流：新增 ${appendedCount} 个，更新 ${updatedCount} 个。`,
+      )
     } catch {
       setBackendStatus('offline')
-      setNotice('加载失败：后端不可用或请求失败。')
+      if (mode === 'manual') {
+        setNotice('加载失败：后端不可用或请求失败。')
+      }
     }
-  }
+  }, [workflowStore])
+
+  useEffect(() => {
+    if (didAutoLoadBackendRef.current) return
+    didAutoLoadBackendRef.current = true
+    void loadWorkflowsFromBackend('startup')
+  }, [loadWorkflowsFromBackend])
 
   const runWorkflowOnBackend = async () => {
     if (!activeWorkflow.serverId) {
@@ -2320,7 +2356,7 @@ function App() {
             <button type="button" className="ghost" onClick={syncActiveWorkflowToBackend}>
               同步到后端
             </button>
-            <button type="button" className="ghost" onClick={loadWorkflowsFromBackend}>
+            <button type="button" className="ghost" onClick={() => loadWorkflowsFromBackend()}>
               从后端加载
             </button>
             <button type="button" className="primary" onClick={runWorkflow}>
