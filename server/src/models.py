@@ -28,6 +28,11 @@ class WorkflowValidationResult(BaseModel):
     valid: bool
 
 
+class KnowledgeDocumentPayload(BaseModel):
+    filename: str = Field(min_length=1)
+    content: str = Field(default="")
+
+
 class RunRequest(BaseModel):
     workflow: WorkflowPayload
     input_text: str = ""

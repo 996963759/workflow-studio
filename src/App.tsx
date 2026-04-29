@@ -179,6 +179,12 @@ type KnowledgeStatus = {
   chunk_count: number
 }
 
+type KnowledgeDocument = {
+  name: string
+  size: number
+  chunk_count: number
+}
+
 type WorkflowTemplate = {
   id: string
   name: string
@@ -1008,9 +1014,11 @@ function App() {
   const [providerStatus, setProviderStatus] = useState<ProviderStatus | null>(null)
   const [providerStatusCheckedAt, setProviderStatusCheckedAt] = useState('')
   const [knowledgeStatus, setKnowledgeStatus] = useState<KnowledgeStatus | null>(null)
+  const [knowledgeDocuments, setKnowledgeDocuments] = useState<KnowledgeDocument[]>([])
   const [lastBackendSyncAt, setLastBackendSyncAt] = useState('')
   const nextNodeId = useRef(1)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const knowledgeFileInputRef = useRef<HTMLInputElement | null>(null)
   const flowInstanceRef = useRef<{ setCenter: (x: number, y: number, options?: { duration?: number; zoom?: number }) => void } | null>(null)
 
   const activeWorkflow =
@@ -1295,6 +1303,10 @@ function App() {
       if (!response.ok) throw new Error('knowledge status failed')
       const status = (await response.json()) as KnowledgeStatus
       setKnowledgeStatus(status)
+      const documentsResponse = await fetch(`${API_BASE_URL}/api/knowledge/documents`)
+      if (documentsResponse.ok) {
+        setKnowledgeDocuments((await documentsResponse.json()) as KnowledgeDocument[])
+      }
       setBackendStatus('online')
       if (showNotice) {
         setNotice(`本地知识库已加载 ${status.document_count} 个文档，${status.chunk_count} 个片段。`)
@@ -1302,9 +1314,48 @@ function App() {
       return status
     } catch {
       setKnowledgeStatus(null)
+      setKnowledgeDocuments([])
       setBackendStatus('offline')
       if (showNotice) setNotice('知识库状态读取失败：请确认后端在线。')
       return null
+    }
+  }
+
+  const uploadKnowledgeDocument = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    if (!/\.(md|txt)$/i.test(file.name)) {
+      setNotice('知识库只支持上传 .md 或 .txt 文件。')
+      return
+    }
+
+    try {
+      const content = await file.text()
+      const response = await fetch(`${API_BASE_URL}/api/knowledge/documents`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, content }),
+      })
+      if (!response.ok) throw new Error('upload knowledge failed')
+      await refreshKnowledgeStatus(false)
+      setNotice(`已上传知识文档：${file.name}`)
+    } catch {
+      setBackendStatus('offline')
+      setNotice('上传知识文档失败：请确认后端在线，且文件小于 1MB。')
+    }
+  }
+
+  const deleteKnowledgeDocument = async (name: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/knowledge/documents/${encodeURIComponent(name)}`, {
+        method: 'DELETE',
+      })
+      if (!response.ok) throw new Error('delete knowledge failed')
+      await refreshKnowledgeStatus(false)
+      setNotice(`已删除知识文档：${name}`)
+    } catch {
+      setNotice('删除知识文档失败：请确认后端在线。')
     }
   }
 
@@ -2631,9 +2682,21 @@ function App() {
               <Search size={16} />
               知识库
             </span>
-            <button type="button" className="mini-action" onClick={() => refreshKnowledgeStatus()}>
-              刷新
-            </button>
+            <div className="knowledge-actions">
+              <input
+                ref={knowledgeFileInputRef}
+                type="file"
+                accept=".md,.txt,text/markdown,text/plain"
+                className="file-input"
+                onChange={uploadKnowledgeDocument}
+              />
+              <button type="button" className="mini-action" onClick={() => knowledgeFileInputRef.current?.click()}>
+                上传
+              </button>
+              <button type="button" className="mini-action" onClick={() => refreshKnowledgeStatus()}>
+                刷新
+              </button>
+            </div>
           </div>
           <div className="model-status-current">
             <span className={clsx('model-status-dot', knowledgeStatus?.document_count ? 'ready' : 'fallback')} />
@@ -2642,6 +2705,25 @@ function App() {
           <p className="model-status-note">
             知识检索节点会读取后端本地 knowledge 目录中的 Markdown 和 TXT 文档。
           </p>
+          <div className="knowledge-document-list">
+            {knowledgeDocuments.length === 0 ? (
+              <p>暂无已加载文档。</p>
+            ) : (
+              knowledgeDocuments.map((document) => (
+                <div key={document.name}>
+                  <span>
+                    <strong>{document.name}</strong>
+                    <small>
+                      {document.chunk_count} 个片段 · {Math.max(1, Math.round(document.size / 1024))} KB
+                    </small>
+                  </span>
+                  <button type="button" aria-label={`删除 ${document.name}`} onClick={() => deleteKnowledgeDocument(document.name)}>
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
           {knowledgeStatus && <time className="model-status-time">{knowledgeStatus.directory}</time>}
         </section>
 

@@ -191,6 +191,16 @@ def failing_tool_workflow(policy: str) -> dict:
 def main() -> None:
     health = request("/api/health")
     knowledge_status = request("/api/knowledge/status")
+    initial_knowledge_documents = request("/api/knowledge/documents")
+    uploaded_document = request(
+        "/api/knowledge/documents",
+        "POST",
+        {
+            "filename": "smoke-test.md",
+            "content": "# Smoke Test\n\n烟雾测试文档用于验证知识库上传和删除。",
+        },
+    )
+    knowledge_documents_after_upload = request("/api/knowledge/documents")
     workflow = {
         "name": "Smoke Test Workflow",
         "version": "0.2.0",
@@ -264,6 +274,7 @@ def main() -> None:
     workflow_runs = request(f"/api/runs?workflow_id={created['id']}")
     fetched_run = request(f"/api/runs/{stored_run['id']}")
     delete_single_result = request(f"/api/runs/{stored_run['id']}", "DELETE")
+    delete_knowledge_result = request("/api/knowledge/documents/smoke-test.md", "DELETE")
     deleted_single_status, _ = request_error(f"/api/runs/{stored_run['id']}")
     second_stored_run = request(f"/api/workflows/{created['id']}/runs", "POST", {"input_text": "清理历史测试"})
     delete_workflow_runs_result = request(f"/api/runs?workflow_id={created['id']}", "DELETE")
@@ -288,6 +299,9 @@ def main() -> None:
     assert knowledge_status["document_count"] >= 1
     assert knowledge_step["provider"] == "本地知识库"
     assert "退款" in knowledge_step["output"]
+    assert isinstance(initial_knowledge_documents, list)
+    assert uploaded_document["name"] == "smoke-test.md"
+    assert any(document["name"] == "smoke-test.md" for document in knowledge_documents_after_upload)
     failed_tool_step = next(step for step in skip_failed_run["steps"] if step["node_id"] == "tool-1")
     skipped_output_step = next(step for step in skip_failed_run["steps"] if step["node_id"] == "output-1")
     assert skip_failed_run["status"] == "ok"
@@ -310,6 +324,7 @@ def main() -> None:
     assert len(workflow_runs) >= 1
     assert all(run["workflow_id"] == created["id"] for run in workflow_runs)
     assert delete_single_result == {}
+    assert delete_knowledge_result == {}
     assert deleted_single_status == 404
     assert second_stored_run["workflow_id"] == created["id"]
     assert delete_workflow_runs_result == {}
@@ -333,6 +348,7 @@ def main() -> None:
                 "tool_provider": tool_step.get("provider"),
                 "knowledge_documents": knowledge_status["document_count"],
                 "knowledge_provider": knowledge_step.get("provider"),
+                "uploaded_knowledge_document": uploaded_document["name"],
                 "skip_failed_status": [step["status"] for step in skip_failed_run["steps"]],
                 "stop_failed_status": stop_failed_run["status"],
                 "stored_run_id": stored_run["id"],

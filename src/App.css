@@ -896,6 +896,75 @@ textarea:focus {
   margin-top: 7px;
 }
 
+.knowledge-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.knowledge-document-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.knowledge-document-list p {
+  color: #64748b;
+  font-size: 12px;
+  margin: 0;
+}
+
+.knowledge-document-list div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #e1e7dc;
+  border-radius: 7px;
+  background: #ffffff;
+  padding: 7px;
+}
+
+.knowledge-document-list span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.knowledge-document-list strong,
+.knowledge-document-list small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-document-list strong {
+  color: #334155;
+  font-size: 12px;
+}
+
+.knowledge-document-list small {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.knowledge-document-list button {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.knowledge-document-list button:hover {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #b91c1c;
+}
+
 .example-picker button {
   min-height: 42px;
   padding: 8px 10px;

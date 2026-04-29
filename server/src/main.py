@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from .models import (
+    KnowledgeDocumentPayload,
     RunRecord,
     RunRequest,
     RunResponse,
@@ -10,7 +11,7 @@ from .models import (
     WorkflowRunRequest,
     WorkflowValidationResult,
 )
-from .knowledge import knowledge_status
+from .knowledge import delete_knowledge_document, knowledge_status, list_knowledge_documents, save_knowledge_document
 from .runner import get_provider_status, simulate_run
 from .storage import WorkflowStore
 from .validation import validate_workflow
@@ -41,6 +42,29 @@ def provider_status() -> dict[str, str | bool]:
 @app.get("/api/knowledge/status")
 def get_knowledge_status() -> dict[str, int | str]:
     return knowledge_status()
+
+
+@app.get("/api/knowledge/documents")
+def get_knowledge_documents() -> list[dict[str, int | str]]:
+    return list_knowledge_documents()
+
+
+@app.post("/api/knowledge/documents", status_code=201)
+def upload_knowledge_document(payload: KnowledgeDocumentPayload) -> dict[str, int | str]:
+    try:
+        return save_knowledge_document(payload.filename, payload.content)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.delete("/api/knowledge/documents/{filename}", status_code=204)
+def remove_knowledge_document(filename: str) -> None:
+    try:
+        deleted = delete_knowledge_document(filename)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Knowledge document not found")
 
 
 @app.get("/api/workflows", response_model=list[WorkflowRecord])

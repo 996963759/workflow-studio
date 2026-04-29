@@ -15,6 +15,28 @@ class KnowledgeChunk:
     score: int
 
 
+def safe_document_name(filename: str) -> str:
+    name = Path(filename).name.strip()
+    if not name:
+        raise ValueError("Document filename is required")
+    suffix = Path(name).suffix.lower()
+    if suffix not in SUPPORTED_EXTENSIONS:
+        raise ValueError("Only .md and .txt documents are supported")
+    safe_name = re.sub(r"[^A-Za-z0-9._\-\u4e00-\u9fff]+", "-", name)
+    if safe_name in {".", ".."}:
+        raise ValueError("Invalid document filename")
+    return safe_name
+
+
+def document_path(filename: str) -> Path:
+    safe_name = safe_document_name(filename)
+    path = (KNOWLEDGE_DIR / safe_name).resolve()
+    root = KNOWLEDGE_DIR.resolve()
+    if root not in path.parents and path != root:
+        raise ValueError("Invalid document path")
+    return path
+
+
 def tokenize(value: str) -> list[str]:
     tokens: list[str] = []
     for item in re.findall(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]+", value):
@@ -59,6 +81,46 @@ def read_knowledge_documents() -> list[tuple[str, str]]:
         if content:
             documents.append((path.relative_to(KNOWLEDGE_DIR).as_posix(), content))
     return documents
+
+
+def list_knowledge_documents() -> list[dict[str, int | str]]:
+    documents: list[dict[str, int | str]] = []
+    if not KNOWLEDGE_DIR.exists():
+        return documents
+
+    for path in sorted(KNOWLEDGE_DIR.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            continue
+        content = path.read_text(encoding="utf-8", errors="ignore")
+        documents.append(
+            {
+                "name": path.name,
+                "size": path.stat().st_size,
+                "chunk_count": len(split_document(content)),
+            }
+        )
+    return documents
+
+
+def save_knowledge_document(filename: str, content: str) -> dict[str, int | str]:
+    if len(content.encode("utf-8")) > 1_000_000:
+        raise ValueError("Document is too large")
+    path = document_path(filename)
+    KNOWLEDGE_DIR.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return {
+        "name": path.name,
+        "size": path.stat().st_size,
+        "chunk_count": len(split_document(content)),
+    }
+
+
+def delete_knowledge_document(filename: str) -> bool:
+    path = document_path(filename)
+    if not path.exists() or not path.is_file():
+        return False
+    path.unlink()
+    return True
 
 
 def score_chunk(query_tokens: list[str], text: str) -> int:

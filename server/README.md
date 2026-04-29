@@ -63,6 +63,9 @@ Supported file types are `.md` and `.txt`. Knowledge nodes use simple local keyw
 - `GET /api/health`
 - `GET /api/provider-status`
 - `GET /api/knowledge/status`
+- `GET /api/knowledge/documents`
+- `POST /api/knowledge/documents`
+- `DELETE /api/knowledge/documents/{filename}`
 - `GET /api/workflows`
 - `POST /api/workflows/validate`
 - `POST /api/workflows`
