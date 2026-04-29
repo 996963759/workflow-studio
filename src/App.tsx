@@ -647,6 +647,11 @@ const workflowSyncLabels: Record<WorkflowSyncState, string> = {
   dirty: '未同步改动',
 }
 
+const isServerWorkflowNewer = (workflow: WorkflowRecord, serverWorkflow: ServerWorkflowRecord) => {
+  if (!workflow.syncedAt) return false
+  return new Date(serverWorkflow.updated_at).getTime() > new Date(workflow.syncedAt).getTime()
+}
+
 const mergeBackendWorkflows = (
   current: WorkflowStore,
   imported: WorkflowRecord[],
@@ -1516,59 +1521,130 @@ function App() {
     }
   }
 
+  const syncWorkflowToBackend = async (workflow: WorkflowRecord): Promise<WorkflowRecord> => {
+    if (workflow.serverId) {
+      const latestResponse = await fetch(`${API_BASE_URL}/api/workflows/${workflow.serverId}`)
+      if (latestResponse.ok) {
+        const latest = (await latestResponse.json()) as ServerWorkflowRecord
+        if (isServerWorkflowNewer(workflow, latest)) {
+          throw new Error('remote_newer')
+        }
+      } else if (latestResponse.status !== 404) {
+        throw new Error('sync failed')
+      }
+    }
+
+    const method = workflow.serverId ? 'PUT' : 'POST'
+    const url = workflow.serverId ? `${API_BASE_URL}/api/workflows/${workflow.serverId}` : `${API_BASE_URL}/api/workflows`
+    const response = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(workflowToServerPayload(workflow)),
+    })
+    if (!response.ok) {
+      const validation = await readValidationError(response)
+      if (validation) {
+        const issues = [...validation.errors, ...validation.warnings].map(serverIssueToWorkflowIssue)
+        setRemoteValidation({ issues, key: createValidationKey(workflow), status: 'backend' })
+        showBlockingIssues(issues, '同步')
+        throw new Error('validation failed')
+      }
+      throw new Error('sync failed')
+    }
+
+    const saved = (await response.json()) as ServerWorkflowRecord
+    const syncedAt = new Date().toISOString()
+    return {
+      ...workflow,
+      serverId: saved.id,
+      name: saved.name,
+      version: saved.version,
+      nodes: saved.nodes,
+      edges: saved.edges,
+      archived: saved.archived ?? false,
+      updatedAt: saved.updated_at,
+      syncedAt,
+    }
+  }
+
   const syncActiveWorkflowToBackend = async () => {
     const issues = await validateActiveWorkflow()
     if (showBlockingIssues(issues, '同步')) return
 
     try {
-      const method = activeWorkflow.serverId ? 'PUT' : 'POST'
-      const url = activeWorkflow.serverId
-        ? `${API_BASE_URL}/api/workflows/${activeWorkflow.serverId}`
-        : `${API_BASE_URL}/api/workflows`
-      const response = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(workflowToServerPayload(activeWorkflow)),
-      })
-      if (!response.ok) {
-        const validation = await readValidationError(response)
-        if (validation) {
-          const issues = [...validation.errors, ...validation.warnings].map(serverIssueToWorkflowIssue)
-          setRemoteValidation({ issues, key: validationKey, status: 'backend' })
-          showBlockingIssues(issues, '同步')
-          return
-        }
-        throw new Error('sync failed')
-      }
-      const saved = (await response.json()) as ServerWorkflowRecord
-      const syncedAt = new Date().toISOString()
+      const syncedWorkflow = await syncWorkflowToBackend(activeWorkflow)
       const next = {
         ...workflowStore,
         workflows: workflowStore.workflows.map((workflow) =>
-          workflow.id === activeWorkflow.id
-            ? {
-                ...workflow,
-                serverId: saved.id,
-                name: saved.name,
-                version: saved.version,
-                nodes: saved.nodes,
-                edges: saved.edges,
-                archived: saved.archived ?? false,
-                updatedAt: saved.updated_at,
-                syncedAt,
-              }
-            : workflow,
+          workflow.id === activeWorkflow.id ? syncedWorkflow : workflow,
         ),
       }
       setWorkflowStore(next)
       persistWorkflowStore(next)
       setBackendStatus('online')
-      setLastBackendSyncAt(syncedAt)
+      setLastBackendSyncAt(syncedWorkflow.syncedAt ?? new Date().toISOString())
       setNotice('当前工作流已同步到后端。')
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.message === 'remote_newer') {
+        setBackendStatus('online')
+        setNotice('后端版本比本地更新，已停止覆盖。请先点击“从后端加载”确认最新内容。')
+        return
+      }
+      if (error instanceof Error && error.message === 'validation failed') return
       setBackendStatus('offline')
       setNotice('同步失败：后端不可用或请求失败。')
     }
+  }
+
+  const syncPendingWorkflowsToBackend = async () => {
+    const pendingWorkflows = workflowStore.workflows.filter(
+      (workflow) => !workflow.archived && getWorkflowSyncState(workflow) !== 'synced',
+    )
+    if (pendingWorkflows.length === 0) {
+      setNotice('没有需要同步的未归档工作流。')
+      return
+    }
+
+    const nextWorkflows = [...workflowStore.workflows]
+    let syncedCount = 0
+    let conflictCount = 0
+    let failedCount = 0
+
+    for (const workflow of pendingWorkflows) {
+      const issues = validateWorkflow(workflow.nodes, workflow.edges)
+      if (issues.some((issue) => issue.level === 'error')) {
+        failedCount += 1
+        continue
+      }
+
+      try {
+        const syncedWorkflow = await syncWorkflowToBackend(workflow)
+        const index = nextWorkflows.findIndex((item) => item.id === workflow.id)
+        if (index >= 0) nextWorkflows[index] = syncedWorkflow
+        syncedCount += 1
+      } catch (error) {
+        if (error instanceof Error && error.message === 'remote_newer') {
+          conflictCount += 1
+        } else {
+          failedCount += 1
+        }
+      }
+    }
+
+    const next = {
+      ...workflowStore,
+      workflows: nextWorkflows,
+    }
+    setWorkflowStore(next)
+    persistWorkflowStore(next)
+    const syncedAt = new Date().toISOString()
+    setLastBackendSyncAt(syncedAt)
+    setBackendStatus(failedCount > 0 ? 'offline' : 'online')
+    setNotice(
+      `批量同步完成：成功 ${syncedCount} 个，冲突 ${conflictCount} 个，失败 ${failedCount} 个。${
+        conflictCount > 0 ? ' 有冲突的工作流请先从后端加载后再同步。' : ''
+      }`,
+    )
   }
 
   const loadWorkflowsFromBackend = useCallback(async (mode: BackendWorkflowLoadMode = 'manual') => {
@@ -1618,6 +1694,10 @@ function App() {
   const runWorkflowOnBackend = async () => {
     if (!activeWorkflow.serverId) {
       setNotice('请先点击“同步到后端”，再使用后端运行。')
+      return
+    }
+    if (activeWorkflowSyncState === 'dirty') {
+      setNotice('当前工作流有未同步改动。请先点击“同步到后端”，再使用后端运行。')
       return
     }
 
@@ -2381,6 +2461,9 @@ function App() {
             </button>
             <button type="button" className="ghost" onClick={syncActiveWorkflowToBackend}>
               同步到后端
+            </button>
+            <button type="button" className="ghost" onClick={syncPendingWorkflowsToBackend}>
+              同步全部
             </button>
             <button type="button" className="ghost" onClick={() => loadWorkflowsFromBackend()}>
               从后端加载
