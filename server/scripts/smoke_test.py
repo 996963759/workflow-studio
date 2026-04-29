@@ -149,6 +149,45 @@ def knowledge_workflow() -> dict:
     }
 
 
+def failing_tool_workflow(policy: str) -> dict:
+    return {
+        "name": f"Failing Tool {policy}",
+        "version": "0.2.0",
+        "nodes": [
+            {
+                "id": "input-1",
+                "position": {"x": 0, "y": 0},
+                "data": {"kind": "input", "label": "用户输入", "outputKey": "user_request"},
+            },
+            {
+                "id": "tool-1",
+                "position": {"x": 240, "y": 0},
+                "data": {
+                    "kind": "tool",
+                    "label": "失败工具",
+                    "toolName": "local.missing",
+                    "toolUrl": f"{BASE_URL}/api/missing-endpoint",
+                    "toolMethod": "GET",
+                    "toolHeaders": "{}",
+                    "toolParams": "{}",
+                    "failurePolicy": policy,
+                    "retryCount": 1,
+                    "outputKey": "tool_result",
+                },
+            },
+            {
+                "id": "output-1",
+                "position": {"x": 520, "y": 0},
+                "data": {"kind": "output", "label": "最终回答", "prompt": "{{tool_result}}", "outputKey": "answer"},
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "input-1", "target": "tool-1"},
+            {"id": "e2", "source": "tool-1", "target": "output-1"},
+        ],
+    }
+
+
 def main() -> None:
     health = request("/api/health")
     knowledge_status = request("/api/knowledge/status")
@@ -218,6 +257,8 @@ def main() -> None:
     branch_false_run = request("/api/runs", "POST", {"workflow": branch_workflow(), "input_text": "我要咨询"})
     tool_run = request("/api/runs", "POST", {"workflow": http_tool_workflow(), "input_text": "检查后端"})
     knowledge_run = request("/api/runs", "POST", {"workflow": knowledge_workflow(), "input_text": "退款多久到账"})
+    skip_failed_run = request("/api/runs", "POST", {"workflow": failing_tool_workflow("skip_downstream"), "input_text": "失败"})
+    stop_failed_run = request("/api/runs", "POST", {"workflow": failing_tool_workflow("stop"), "input_text": "失败"})
     stored_run = request(f"/api/workflows/{created['id']}/runs", "POST", {"input_text": "后端历史测试"})
     runs = request("/api/runs")
     workflow_runs = request(f"/api/runs?workflow_id={created['id']}")
@@ -247,6 +288,14 @@ def main() -> None:
     assert knowledge_status["document_count"] >= 1
     assert knowledge_step["provider"] == "本地知识库"
     assert "退款" in knowledge_step["output"]
+    failed_tool_step = next(step for step in skip_failed_run["steps"] if step["node_id"] == "tool-1")
+    skipped_output_step = next(step for step in skip_failed_run["steps"] if step["node_id"] == "output-1")
+    assert skip_failed_run["status"] == "ok"
+    assert failed_tool_step["status"] == "error"
+    assert "共尝试 2 次" in failed_tool_step["input"]
+    assert skipped_output_step["status"] == "skipped"
+    assert stop_failed_run["status"] == "error"
+    assert [step["node_id"] for step in stop_failed_run["steps"]] == ["input-1", "tool-1"]
     assert any(
         step.get("provider") == "模拟输出"
         or str(step.get("provider", "")).startswith("OpenAI")
@@ -284,6 +333,8 @@ def main() -> None:
                 "tool_provider": tool_step.get("provider"),
                 "knowledge_documents": knowledge_status["document_count"],
                 "knowledge_provider": knowledge_step.get("provider"),
+                "skip_failed_status": [step["status"] for step in skip_failed_run["steps"]],
+                "stop_failed_status": stop_failed_run["status"],
                 "stored_run_id": stored_run["id"],
                 "run_count": len(runs),
                 "workflow_run_count": len(workflow_runs),

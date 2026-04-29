@@ -47,6 +47,7 @@ import './App.css'
 
 type NodeKind = 'input' | 'llm' | 'knowledge' | 'tool' | 'condition' | 'output'
 type ConditionOperator = 'contains' | 'equals' | 'not_empty'
+type FailurePolicy = 'stop' | 'continue' | 'skip_downstream'
 
 type WorkflowNodeData = {
   kind: NodeKind
@@ -71,6 +72,8 @@ type WorkflowNodeData = {
   conditionValue?: string
   sampleInput?: string
   outputKey?: string
+  failurePolicy?: FailurePolicy
+  retryCount?: number
   issueLevel?: 'error' | 'warning'
 }
 
@@ -247,6 +250,8 @@ const nodeMeta: Record<
       toolHeaders: '{\n  "Content-Type": "application/json"\n}',
       toolParams: '{\n  "query": "{{user_request}}"\n}',
       outputKey: 'tool_result',
+      failurePolicy: 'continue',
+      retryCount: 0,
     },
   },
   condition: {
@@ -659,6 +664,16 @@ const validateNodeFields = (node: WorkflowNode): FieldIssue[] => {
         issues.push({ field: 'toolParams', level: 'error', message: '请求体必须是合法 JSON。' })
       }
     }
+  }
+
+  if (data.failurePolicy && !['stop', 'continue', 'skip_downstream'].includes(data.failurePolicy)) {
+    issues.push({ field: 'failurePolicy', level: 'error', message: '失败策略不支持。' })
+  }
+  if (
+    data.retryCount !== undefined &&
+    (!Number.isInteger(data.retryCount) || data.retryCount < 0 || data.retryCount > 5)
+  ) {
+    issues.push({ field: 'retryCount', level: 'error', message: '重试次数需要在 0 到 5 之间。' })
   }
 
   if (data.kind === 'condition') {
@@ -2333,6 +2348,34 @@ function App() {
             />
             {renderFieldIssues('outputKey')}
           </label>
+          {selectedNode.data.kind !== 'input' && (
+            <div className="failure-policy-grid">
+              <label>
+                失败策略
+                <select
+                  value={selectedNode.data.failurePolicy ?? 'stop'}
+                  onChange={(event) => updateSelectedNode({ failurePolicy: event.target.value as FailurePolicy })}
+                >
+                  <option value="stop">终止运行</option>
+                  <option value="continue">记录错误并继续</option>
+                  <option value="skip_downstream">跳过下游节点</option>
+                </select>
+                {renderFieldIssues('failurePolicy')}
+              </label>
+              <label>
+                重试次数
+                <input
+                  min={0}
+                  max={5}
+                  step={1}
+                  type="number"
+                  value={selectedNode.data.retryCount ?? 0}
+                  onChange={(event) => updateSelectedNode({ retryCount: Number(event.target.value) })}
+                />
+                {renderFieldIssues('retryCount')}
+              </label>
+            </div>
+          )}
         </section>
 
         <section className="panel model-status-panel">

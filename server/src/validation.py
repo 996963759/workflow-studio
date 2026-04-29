@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 from .models import WorkflowIssue, WorkflowPayload, WorkflowValidationResult
 
 ALLOWED_TOOL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+FAILURE_POLICIES = {"stop", "continue", "skip_downstream"}
 
 
 def node_id(node: dict[str, Any]) -> str:
@@ -149,6 +150,28 @@ def validate_workflow(payload: WorkflowPayload) -> WorkflowValidationResult:
                         message=f"大模型节点「{node_label(node)}」的{label}必须在 {minimum} 到 {maximum} 之间。",
                     )
                 )
+
+        failure_policy = data.get("failurePolicy")
+        if failure_policy is not None and failure_policy not in FAILURE_POLICIES:
+            errors.append(
+                WorkflowIssue(
+                    id=f"failure-policy-{current_id}",
+                    level="error",
+                    node_id=current_id,
+                    message=f"节点「{node_label(node)}」的失败策略不支持。",
+                )
+            )
+
+        retry_count = data.get("retryCount")
+        if retry_count is not None and (not isinstance(retry_count, int) or retry_count < 0 or retry_count > 5):
+            errors.append(
+                WorkflowIssue(
+                    id=f"retry-count-{current_id}",
+                    level="error",
+                    node_id=current_id,
+                    message=f"节点「{node_label(node)}」的重试次数必须在 0 到 5 之间。",
+                )
+            )
 
         if data.get("kind") == "tool":
             tool_url = str(data.get("toolUrl") or "").strip()

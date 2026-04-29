@@ -736,6 +736,12 @@
   gap: 9px;
 }
 
+.failure-policy-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px;
+  gap: 9px;
+}
+
 .condition-form label:first-child,
 .condition-form label:nth-child(3),
 .condition-form .insert-row {

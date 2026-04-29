@@ -43,6 +43,11 @@ LLM nodes support per-node runtime options:
 - `maxOutputTokens`: 1 to 32000
 - `timeoutSeconds`: 5 to 300
 
+Executable nodes support failure handling options:
+
+- `failurePolicy`: `stop`, `continue`, or `skip_downstream`
+- `retryCount`: 0 to 5
+
 HTTP tool nodes can call `localhost`, `127.0.0.1`, or `::1` by default. Other hosts are blocked by validation and runtime checks.
 
 Local knowledge documents live in:
@@ -85,6 +90,7 @@ Errors:
 - Output nodes must have an upstream node.
 - Output variable names must be unique.
 - LLM node temperature, max output tokens, and timeout must stay within supported ranges.
+- Node failure policy and retry count must stay within supported ranges.
 - HTTP tool URLs must target `localhost`, `127.0.0.1`, or `::1`.
 - HTTP tool headers and body must be JSON objects when provided.
 

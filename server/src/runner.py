@@ -19,6 +19,7 @@ TOOL_TIMEOUT_SECONDS = 10
 DEFAULT_TEMPERATURE = 0.4
 DEFAULT_MAX_OUTPUT_TOKENS = 1200
 DEFAULT_LLM_TIMEOUT_SECONDS = 45
+FAILURE_POLICIES = {"stop", "continue", "skip_downstream"}
 
 
 def render_template(template: str | None, context: dict[str, str]) -> str:
@@ -145,6 +146,29 @@ def llm_options(data: dict[str, Any]) -> tuple[float, int, float]:
 def format_llm_options(data: dict[str, Any]) -> str:
     temperature, max_output_tokens, timeout_seconds = llm_options(data)
     return f"参数：temperature={temperature:g}, max_output_tokens={max_output_tokens}, timeout={timeout_seconds:g}s"
+
+
+def retry_count(data: dict[str, Any]) -> int:
+    try:
+        value = int(data.get("retryCount") or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(value, 5))
+
+
+def failure_policy(data: dict[str, Any]) -> str:
+    policy = str(data.get("failurePolicy") or "stop")
+    return policy if policy in FAILURE_POLICIES else "stop"
+
+
+def run_with_retries(action: Any, attempts: int) -> tuple[Any, int, Exception | None]:
+    last_error: Exception | None = None
+    for attempt in range(attempts + 1):
+        try:
+            return action(), attempt + 1, None
+        except Exception as error:  # noqa: BLE001 - errors are converted into workflow run state.
+            last_error = error
+    return None, attempts + 1, last_error
 
 
 def parse_json_object(value: str, fallback: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -348,6 +372,7 @@ def simulate_run(workflow: WorkflowPayload, input_text: str) -> RunResponse:
         title = f"{index}. {node_label(node)}"
         provider = None
         error = None
+        status = "done"
 
         if current_id in skipped_by_branch:
             steps.append(
@@ -369,15 +394,26 @@ def simulate_run(workflow: WorkflowPayload, input_text: str) -> RunResponse:
         elif kind == "llm":
             output, step_input, provider, error = run_llm_node(data, context)
         elif kind == "tool":
-            try:
-                output, step_input, error = run_http_tool_node(data, context)
-                provider = "HTTP 工具" if data.get("toolUrl") else "模拟输出"
-            except (ValueError, RuntimeError, TimeoutError) as run_error:
+            provider = "HTTP 工具" if data.get("toolUrl") else "模拟输出"
+            def run_tool_once() -> tuple[str, str, str | None]:
+                result = run_http_tool_node(data, context)
+                if result[2]:
+                    raise RuntimeError(result[2])
+                return result
+
+            result, attempts, run_error = run_with_retries(run_tool_once, retry_count(data))
+            if run_error or result is None:
                 rendered_body = render_template(data.get("toolParams"), context)
                 output = f"{data.get('toolName') or '未命名工具'} 调用失败。"
                 step_input = rendered_body or "未配置请求体"
-                provider = "HTTP 工具"
                 error = summarize_error(run_error)
+                status = "error"
+            else:
+                output, step_input, error = result
+                if error:
+                    status = "error"
+            if attempts > 1:
+                step_input = f"{step_input}\n重试：共尝试 {attempts} 次。"
         elif kind == "condition":
             passed, detail = evaluate_condition(data, context)
             branch_edges = [
@@ -403,14 +439,14 @@ def simulate_run(workflow: WorkflowPayload, input_text: str) -> RunResponse:
             step_input = template or "未配置输出模板"
 
         variable = f"{{{{{output_key}}}}}" if output_key else None
-        if output_key:
+        if output_key and status != "error":
             context[str(output_key)] = output
 
         steps.append(
             RunStep(
                 node_id=str(node.get("id") or f"node-{index}"),
                 title=title,
-                status="done",
+                status=status,
                 input=step_input,
                 output=output,
                 variable=variable,
@@ -418,5 +454,12 @@ def simulate_run(workflow: WorkflowPayload, input_text: str) -> RunResponse:
                 error=error,
             )
         )
+
+        if status == "error":
+            policy = failure_policy(data)
+            if policy == "stop":
+                return RunResponse(status="error", steps=steps)
+            if policy == "skip_downstream":
+                skipped_by_branch.update(get_reachable_node_ids([current_id], workflow.edges) - {current_id})
 
     return RunResponse(status="ok", steps=steps)
