@@ -1,6 +1,6 @@
 # Workflow Studio API
 
-FastAPI backend for Workflow Studio. The current backend stores workflows in a local SQLite database, validates workflow structure, records workflow runs, and can call DeepSeek or OpenAI for LLM nodes when an API key is configured.
+FastAPI backend for Workflow Studio. The current backend stores workflows in a local SQLite database, validates workflow structure, records workflow runs, can call DeepSeek or OpenAI for LLM nodes when an API key is configured, and can execute localhost HTTP tool nodes.
 
 ## Setup
 
@@ -37,6 +37,8 @@ server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 
 
 DeepSeek is preferred when `DEEPSEEK_API_KEY` is present. Without DeepSeek or OpenAI keys, LLM nodes keep returning simulated output.
 
+HTTP tool nodes can call `localhost`, `127.0.0.1`, or `::1` by default. Other hosts are blocked by validation and runtime checks.
+
 ## Endpoints
 
 - `GET /api/health`
@@ -67,6 +69,8 @@ Errors:
 - Cycles are not allowed.
 - Output nodes must have an upstream node.
 - Output variable names must be unique.
+- HTTP tool URLs must target `localhost`, `127.0.0.1`, or `::1`.
+- HTTP tool headers and body must be JSON objects when provided.
 
 Warnings:
 

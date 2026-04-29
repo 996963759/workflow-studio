@@ -1,6 +1,10 @@
 import os
+import json
 from collections import defaultdict, deque
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 from openai import OpenAI, OpenAIError
 
@@ -9,6 +13,8 @@ from .models import RunResponse, RunStep, WorkflowPayload
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
 DEFAULT_OPENAI_MODEL = "gpt-5.4-mini"
+ALLOWED_TOOL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+TOOL_TIMEOUT_SECONDS = 10
 
 
 def render_template(template: str | None, context: dict[str, str]) -> str:
@@ -111,6 +117,65 @@ def summarize_error(error: Exception) -> str:
     if len(message) > 220:
         message = f"{message[:217]}..."
     return f"{error.__class__.__name__}: {message}" if message else error.__class__.__name__
+
+
+def parse_json_object(value: str, fallback: dict[str, Any] | None = None) -> dict[str, Any]:
+    if not value.strip():
+        return fallback or {}
+    parsed = json.loads(value)
+    if not isinstance(parsed, dict):
+        raise ValueError("JSON value must be an object")
+    return parsed
+
+
+def is_allowed_tool_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.scheme in {"http", "https"} and parsed.hostname in ALLOWED_TOOL_HOSTS
+
+
+def run_http_tool_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, str, str | None]:
+    tool_url = render_template(data.get("toolUrl"), context).strip()
+    method = str(data.get("toolMethod") or "GET").upper()
+    headers_text = render_template(data.get("toolHeaders"), context)
+    body_text = render_template(data.get("toolParams"), context)
+
+    if not tool_url:
+        tool_name = data.get("toolName") or "未命名工具"
+        return f"{tool_name} 返回模拟结果。", body_text or "未配置请求体", None
+
+    if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+        raise ValueError(f"Unsupported HTTP method: {method}")
+
+    if not is_allowed_tool_url(tool_url):
+        raise ValueError("Tool URL is blocked. Only localhost and 127.0.0.1 are allowed by default.")
+
+    headers = {str(key): str(value) for key, value in parse_json_object(headers_text).items()}
+    data_bytes = None
+    if method not in {"GET", "DELETE"} and body_text.strip():
+        parse_json_object(body_text)
+        data_bytes = body_text.encode("utf-8")
+        headers.setdefault("Content-Type", "application/json")
+
+    request = Request(tool_url, data=data_bytes, headers=headers, method=method)
+    step_input = "\n".join(
+        [
+            f"{method} {tool_url}",
+            f"Headers: {json.dumps(headers, ensure_ascii=False)}",
+            f"Body: {body_text.strip() or '(empty)'}",
+        ]
+    )
+
+    try:
+        with urlopen(request, timeout=TOOL_TIMEOUT_SECONDS) as response:
+            response_body = response.read().decode("utf-8", errors="replace")
+            output = f"HTTP {response.status} {response.reason}\n{response_body}"
+            return output.strip(), step_input, None
+    except HTTPError as error:
+        response_body = error.read().decode("utf-8", errors="replace")
+        output = f"HTTP {error.code} {error.reason}\n{response_body}"
+        return output.strip(), step_input, summarize_error(error)
+    except URLError as error:
+        raise RuntimeError(str(error.reason)) from error
 
 
 def select_deepseek_model(configured_model: Any) -> str:
@@ -255,9 +320,15 @@ def simulate_run(workflow: WorkflowPayload, input_text: str) -> RunResponse:
         elif kind == "llm":
             output, step_input, provider, error = run_llm_node(data, context)
         elif kind == "tool":
-            params = render_template(data.get("toolParams"), context)
-            output = f"{data.get('toolName') or '未命名工具'} 返回模拟结果。"
-            step_input = params or "未配置请求参数"
+            try:
+                output, step_input, error = run_http_tool_node(data, context)
+                provider = "HTTP 工具" if data.get("toolUrl") else "模拟输出"
+            except (ValueError, RuntimeError, TimeoutError) as run_error:
+                rendered_body = render_template(data.get("toolParams"), context)
+                output = f"{data.get('toolName') or '未命名工具'} 调用失败。"
+                step_input = rendered_body or "未配置请求体"
+                provider = "HTTP 工具"
+                error = summarize_error(run_error)
         elif kind == "condition":
             passed, detail = evaluate_condition(data, context)
             branch_edges = [

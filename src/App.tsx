@@ -58,6 +58,9 @@ type WorkflowNodeData = {
   query?: string
   topK?: number
   toolName?: string
+  toolUrl?: string
+  toolMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+  toolHeaders?: string
   toolParams?: string
   condition?: string
   conditionVariable?: string
@@ -226,7 +229,10 @@ const nodeMeta: Record<
     defaults: {
       label: '工具调用',
       description: '调用连接器、API、脚本或内部动作。',
-      toolName: 'webhook.lookup',
+      toolName: '本地接口调用',
+      toolUrl: 'http://127.0.0.1:8000/api/health',
+      toolMethod: 'GET',
+      toolHeaders: '{\n  "Content-Type": "application/json"\n}',
       toolParams: '{\n  "query": "{{user_request}}"\n}',
       outputKey: 'tool_result',
     },
@@ -597,11 +603,31 @@ const validateNodeFields = (node: WorkflowNode): FieldIssue[] => {
     if (!data.toolName?.trim()) {
       issues.push({ field: 'toolName', level: 'warning', message: '建议填写工具名称，方便识别运行日志。' })
     }
+    if (data.toolUrl?.trim()) {
+      try {
+        const url = new URL(data.toolUrl.trim())
+        if (!['http:', 'https:'].includes(url.protocol)) {
+          issues.push({ field: 'toolUrl', level: 'error', message: '请求地址只支持 HTTP 或 HTTPS。' })
+        }
+      } catch {
+        issues.push({ field: 'toolUrl', level: 'error', message: '请求地址必须是合法 URL。' })
+      }
+    }
+    if (data.toolHeaders?.trim()) {
+      try {
+        const parsed = JSON.parse(data.toolHeaders)
+        if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+          issues.push({ field: 'toolHeaders', level: 'error', message: '请求头必须是 JSON 对象。' })
+        }
+      } catch {
+        issues.push({ field: 'toolHeaders', level: 'error', message: '请求头必须是合法 JSON。' })
+      }
+    }
     if (data.toolParams?.trim()) {
       try {
         JSON.parse(data.toolParams)
       } catch {
-        issues.push({ field: 'toolParams', level: 'error', message: '请求参数必须是合法 JSON。' })
+        issues.push({ field: 'toolParams', level: 'error', message: '请求体必须是合法 JSON。' })
       }
     }
   }
@@ -1092,7 +1118,10 @@ function App() {
     setNotice(`已恢复「${selectedNode.data.label}」的默认配置。`)
   }
 
-  const appendToSelectedField = (field: 'prompt' | 'systemPrompt' | 'query' | 'toolParams' | 'conditionValue', variable: string) => {
+  const appendToSelectedField = (
+    field: 'prompt' | 'systemPrompt' | 'query' | 'toolUrl' | 'toolHeaders' | 'toolParams' | 'conditionValue',
+    variable: string,
+  ) => {
     const current = selectedNode.data[field] ?? ''
     updateSelectedNode({ [field]: `${current}${current ? ' ' : ''}{{${variable}}}` })
   }
@@ -2060,7 +2089,45 @@ function App() {
                 {renderFieldIssues('toolName')}
               </label>
               <label>
-                请求参数
+                请求地址
+                <input
+                  value={selectedNode.data.toolUrl ?? ''}
+                  placeholder="http://127.0.0.1:8000/api/health"
+                  onChange={(event) => updateSelectedNode({ toolUrl: event.target.value })}
+                />
+                {renderFieldIssues('toolUrl')}
+              </label>
+              <label>
+                请求方法
+                <select
+                  value={selectedNode.data.toolMethod ?? 'GET'}
+                  onChange={(event) => updateSelectedNode({ toolMethod: event.target.value as WorkflowNodeData['toolMethod'] })}
+                >
+                  <option value="GET">GET</option>
+                  <option value="POST">POST</option>
+                  <option value="PUT">PUT</option>
+                  <option value="PATCH">PATCH</option>
+                  <option value="DELETE">DELETE</option>
+                </select>
+              </label>
+              <label>
+                请求头 JSON
+                <textarea
+                  rows={4}
+                  value={selectedNode.data.toolHeaders ?? ''}
+                  onChange={(event) => updateSelectedNode({ toolHeaders: event.target.value })}
+                />
+                {renderFieldIssues('toolHeaders')}
+              </label>
+              <div className="insert-row">
+                {variableKeys.map((variable) => (
+                  <button key={variable} type="button" onClick={() => appendToSelectedField('toolHeaders', variable)}>
+                    {`{{${variable}}}`}
+                  </button>
+                ))}
+              </div>
+              <label>
+                请求体 JSON
                 <textarea
                   rows={5}
                   value={selectedNode.data.toolParams ?? ''}

@@ -78,6 +78,43 @@ def branch_workflow() -> dict:
     }
 
 
+def http_tool_workflow() -> dict:
+    return {
+        "name": "HTTP Tool Smoke Test Workflow",
+        "version": "0.2.0",
+        "nodes": [
+            {
+                "id": "input-1",
+                "position": {"x": 0, "y": 0},
+                "data": {"kind": "input", "label": "用户输入", "outputKey": "user_request"},
+            },
+            {
+                "id": "tool-1",
+                "position": {"x": 240, "y": 0},
+                "data": {
+                    "kind": "tool",
+                    "label": "健康检查",
+                    "toolName": "health.check",
+                    "toolUrl": f"{BASE_URL}/api/health",
+                    "toolMethod": "GET",
+                    "toolHeaders": "{}",
+                    "toolParams": "{}",
+                    "outputKey": "tool_result",
+                },
+            },
+            {
+                "id": "output-1",
+                "position": {"x": 520, "y": 0},
+                "data": {"kind": "output", "label": "最终回答", "prompt": "{{tool_result}}", "outputKey": "answer"},
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "input-1", "target": "tool-1"},
+            {"id": "e2", "source": "tool-1", "target": "output-1"},
+        ],
+    }
+
+
 def main() -> None:
     health = request("/api/health")
     workflow = {
@@ -141,6 +178,7 @@ def main() -> None:
     run = request("/api/runs", "POST", {"workflow": workflow, "input_text": "测试输入"})
     branch_true_run = request("/api/runs", "POST", {"workflow": branch_workflow(), "input_text": "我要退款"})
     branch_false_run = request("/api/runs", "POST", {"workflow": branch_workflow(), "input_text": "我要咨询"})
+    tool_run = request("/api/runs", "POST", {"workflow": http_tool_workflow(), "input_text": "检查后端"})
     stored_run = request(f"/api/workflows/{created['id']}/runs", "POST", {"input_text": "后端历史测试"})
     runs = request("/api/runs")
     workflow_runs = request(f"/api/runs?workflow_id={created['id']}")
@@ -162,6 +200,10 @@ def main() -> None:
     assert next(step for step in branch_true_run["steps"] if step["node_id"] == "false-output")["status"] == "skipped"
     assert next(step for step in branch_false_run["steps"] if step["node_id"] == "true-output")["status"] == "skipped"
     assert next(step for step in branch_false_run["steps"] if step["node_id"] == "false-output")["status"] == "done"
+    tool_step = next(step for step in tool_run["steps"] if step["node_id"] == "tool-1")
+    assert tool_step["provider"] == "HTTP 工具"
+    assert "HTTP 200" in tool_step["output"]
+    assert '"status":"ok"' in tool_step["output"].replace(" ", "")
     assert any(
         step.get("provider") == "模拟输出"
         or str(step.get("provider", "")).startswith("OpenAI")
@@ -193,6 +235,7 @@ def main() -> None:
                 "llm_error": llm_step.get("error"),
                 "branch_true_status": [step["status"] for step in branch_true_run["steps"]],
                 "branch_false_status": [step["status"] for step in branch_false_run["steps"]],
+                "tool_provider": tool_step.get("provider"),
                 "stored_run_id": stored_run["id"],
                 "run_count": len(runs),
                 "workflow_run_count": len(workflow_runs),

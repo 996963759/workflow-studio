@@ -1,7 +1,11 @@
+import json
 from collections import defaultdict, deque
 from typing import Any
+from urllib.parse import urlparse
 
 from .models import WorkflowIssue, WorkflowPayload, WorkflowValidationResult
+
+ALLOWED_TOOL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 def node_id(node: dict[str, Any]) -> str:
@@ -15,6 +19,19 @@ def node_data(node: dict[str, Any]) -> dict[str, Any]:
 
 def node_label(node: dict[str, Any]) -> str:
     return str(node_data(node).get("label") or node_id(node) or "未命名节点")
+
+
+def parse_json_object(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return True
+    parsed = json.loads(text)
+    return isinstance(parsed, dict)
+
+
+def is_allowed_tool_url(value: str) -> bool:
+    parsed = urlparse(value)
+    return parsed.scheme in {"http", "https"} and parsed.hostname in ALLOWED_TOOL_HOSTS
 
 
 def create_execution_order(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> list[str] | None:
@@ -105,6 +122,44 @@ def validate_workflow(payload: WorkflowPayload) -> WorkflowValidationResult:
                     message=f"最终回答节点「{node_label(node)}」必须连接上游节点。",
                 )
             )
+
+        if data.get("kind") == "tool":
+            tool_url = str(data.get("toolUrl") or "").strip()
+            method = str(data.get("toolMethod") or "GET").upper()
+
+            if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+                errors.append(
+                    WorkflowIssue(
+                        id=f"tool-method-{current_id}",
+                        level="error",
+                        node_id=current_id,
+                        message=f"工具节点「{node_label(node)}」的请求方法不支持。",
+                    )
+                )
+
+            if tool_url and not is_allowed_tool_url(tool_url):
+                errors.append(
+                    WorkflowIssue(
+                        id=f"tool-url-{current_id}",
+                        level="error",
+                        node_id=current_id,
+                        message=f"工具节点「{node_label(node)}」只允许请求 localhost、127.0.0.1 或 ::1。",
+                    )
+                )
+
+            for field, label in [("toolHeaders", "请求头"), ("toolParams", "请求体")]:
+                try:
+                    if not parse_json_object(data.get(field)):
+                        raise ValueError("JSON must be an object")
+                except (json.JSONDecodeError, ValueError):
+                    errors.append(
+                        WorkflowIssue(
+                            id=f"{field}-{current_id}",
+                            level="error",
+                            node_id=current_id,
+                            message=f"工具节点「{node_label(node)}」的{label}必须是合法 JSON 对象。",
+                        )
+                    )
 
     owners: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for node in nodes:
