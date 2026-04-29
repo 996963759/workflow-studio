@@ -36,10 +36,17 @@ class WorkflowStore:
                     version TEXT NOT NULL,
                     nodes_json TEXT NOT NULL,
                     edges_json TEXT NOT NULL,
+                    archived INTEGER NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL
                 )
                 """
             )
+            columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(workflows)").fetchall()
+            }
+            if "archived" not in columns:
+                connection.execute("ALTER TABLE workflows ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS runs (
@@ -58,7 +65,7 @@ class WorkflowStore:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT id, name, version, nodes_json, edges_json, updated_at
+                SELECT id, name, version, nodes_json, edges_json, archived, updated_at
                 FROM workflows
                 ORDER BY updated_at DESC
                 """
@@ -69,7 +76,7 @@ class WorkflowStore:
         with self._connect() as connection:
             row = connection.execute(
                 """
-                SELECT id, name, version, nodes_json, edges_json, updated_at
+                SELECT id, name, version, nodes_json, edges_json, archived, updated_at
                 FROM workflows
                 WHERE id = ?
                 """,
@@ -83,8 +90,8 @@ class WorkflowStore:
         with self._connect() as connection:
             connection.execute(
                 """
-                INSERT INTO workflows (id, name, version, nodes_json, edges_json, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO workflows (id, name, version, nodes_json, edges_json, archived, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     workflow_id,
@@ -92,6 +99,7 @@ class WorkflowStore:
                     payload.version,
                     json.dumps(payload.nodes, ensure_ascii=False),
                     json.dumps(payload.edges, ensure_ascii=False),
+                    int(payload.archived),
                     updated_at,
                 ),
             )
@@ -103,7 +111,7 @@ class WorkflowStore:
             cursor = connection.execute(
                 """
                 UPDATE workflows
-                SET name = ?, version = ?, nodes_json = ?, edges_json = ?, updated_at = ?
+                SET name = ?, version = ?, nodes_json = ?, edges_json = ?, archived = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 (
@@ -111,6 +119,7 @@ class WorkflowStore:
                     payload.version,
                     json.dumps(payload.nodes, ensure_ascii=False),
                     json.dumps(payload.edges, ensure_ascii=False),
+                    int(payload.archived),
                     updated_at,
                     workflow_id,
                 ),
@@ -213,6 +222,7 @@ class WorkflowStore:
             version=row["version"],
             nodes=json.loads(row["nodes_json"]),
             edges=json.loads(row["edges_json"]),
+            archived=bool(row["archived"]),
             updated_at=row["updated_at"],
         )
 

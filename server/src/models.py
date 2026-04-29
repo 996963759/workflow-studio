@@ -8,6 +8,7 @@ class WorkflowPayload(BaseModel):
     version: str = "0.2.0"
     nodes: list[dict[str, Any]] = Field(default_factory=list)
     edges: list[dict[str, Any]] = Field(default_factory=list)
+    archived: bool = False
 
 
 class WorkflowRecord(WorkflowPayload):

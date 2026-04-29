@@ -262,6 +262,10 @@ def main() -> None:
         {"workflow": invalid_workflow, "input_text": "无效运行"},
     )
     created = request("/api/workflows", "POST", workflow)
+    archived_payload = {**workflow, "archived": True}
+    archived_workflow = request(f"/api/workflows/{created['id']}", "PUT", archived_payload)
+    fetched_workflow = request(f"/api/workflows/{created['id']}")
+    workflows_after_archive = request("/api/workflows")
     run = request("/api/runs", "POST", {"workflow": workflow, "input_text": "测试输入"})
     branch_true_run = request("/api/runs", "POST", {"workflow": branch_workflow(), "input_text": "我要退款"})
     branch_false_run = request("/api/runs", "POST", {"workflow": branch_workflow(), "input_text": "我要咨询"})
@@ -286,6 +290,10 @@ def main() -> None:
     assert invalid_create_body["detail"]["valid"] is False
     assert invalid_run_status == 400
     assert invalid_run_body["detail"]["valid"] is False
+    assert created["archived"] is False
+    assert archived_workflow["archived"] is True
+    assert fetched_workflow["archived"] is True
+    assert any(item["id"] == created["id"] and item["archived"] is True for item in workflows_after_archive)
     assert [step["node_id"] for step in run["steps"]] == ["input-1", "llm-1", "output-1"]
     assert next(step for step in branch_true_run["steps"] if step["node_id"] == "true-output")["status"] == "done"
     assert next(step for step in branch_true_run["steps"] if step["node_id"] == "false-output")["status"] == "skipped"
@@ -339,6 +347,7 @@ def main() -> None:
                 "invalid_create_status": invalid_create_status,
                 "invalid_run_status": invalid_run_status,
                 "created_id": created["id"],
+                "archived_workflow": archived_workflow["archived"],
                 "run_status": run["status"],
                 "step_count": len(run["steps"]),
                 "llm_provider": llm_step.get("provider"),

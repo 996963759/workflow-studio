@@ -115,6 +115,7 @@ type ServerWorkflowRecord = {
   version: string
   nodes: WorkflowNode[]
   edges: Edge[]
+  archived?: boolean
   updated_at: string
 }
 
@@ -523,7 +524,7 @@ const isWorkflowDefinition = (value: unknown): value is WorkflowDefinition => {
 
 const serverToWorkflowRecord = (workflow: ServerWorkflowRecord): WorkflowRecord => ({
   id: crypto.randomUUID(),
-  archived: false,
+  archived: workflow.archived ?? false,
   serverId: workflow.id,
   name: workflow.name,
   version: workflow.version || '0.2.0',
@@ -538,6 +539,7 @@ const workflowToServerPayload = (workflow: WorkflowRecord) => ({
   version: workflow.version,
   nodes: workflow.nodes,
   edges: workflow.edges,
+  archived: workflow.archived ?? false,
 })
 
 const createValidationKey = (workflow: WorkflowRecord) =>
@@ -1496,6 +1498,7 @@ function App() {
                 version: saved.version,
                 nodes: saved.nodes,
                 edges: saved.edges,
+                archived: saved.archived ?? false,
                 updatedAt: saved.updated_at,
                 syncedAt,
               }
@@ -1524,20 +1527,34 @@ function App() {
         setNotice('后端在线，但还没有保存的工作流。')
         return
       }
+      const syncedAt = new Date().toISOString()
+      const importedByServerId = new Map(imported.map((workflow) => [workflow.serverId, workflow]))
       const existingServerIds = new Set(workflowStore.workflows.map((workflow) => workflow.serverId).filter(Boolean))
-      const merged = [
-        ...workflowStore.workflows,
-        ...imported.filter((workflow) => !existingServerIds.has(workflow.serverId)),
-      ]
+      const updatedExisting = workflowStore.workflows.map((workflow) => {
+        const importedWorkflow = workflow.serverId ? importedByServerId.get(workflow.serverId) : undefined
+        if (!importedWorkflow) return workflow
+        return {
+          ...workflow,
+          name: importedWorkflow.name,
+          version: importedWorkflow.version,
+          nodes: importedWorkflow.nodes,
+          edges: importedWorkflow.edges,
+          archived: importedWorkflow.archived ?? false,
+          updatedAt: importedWorkflow.updatedAt,
+          syncedAt,
+        }
+      })
+      const appended = imported.filter((workflow) => !existingServerIds.has(workflow.serverId))
+      const merged = [...updatedExisting, ...appended]
+      const firstLoaded = merged.find((workflow) => workflow.serverId === imported[0].serverId) ?? appended[0] ?? merged[0]
       const next = {
-        activeWorkflowId: imported[0].id,
+        activeWorkflowId: firstLoaded.id,
         workflows: merged,
       }
       setWorkflowStore(next)
       persistWorkflowStore(next)
-      setSelectedNodeId(imported[0].nodes[0]?.id ?? '')
+      setSelectedNodeId(firstLoaded.nodes[0]?.id ?? '')
       setRunSteps([])
-      const syncedAt = new Date().toISOString()
       setBackendStatus('online')
       setLastBackendSyncAt(syncedAt)
       setNotice(`已从后端加载 ${imported.length} 个工作流。`)
@@ -1754,7 +1771,7 @@ function App() {
     setNotice('已删除当前工作流。')
   }
 
-  const archiveActiveWorkflow = () => {
+  const archiveActiveWorkflow = async () => {
     const isArchiving = !activeWorkflow.archived
     const activeAvailableCount = workflowStore.workflows.filter((workflow) => !workflow.archived).length
 
@@ -1779,6 +1796,43 @@ function App() {
     setSelectedNodeId(nextActive.nodes[0]?.id ?? '')
     setRunSteps([])
     setNotice(isArchiving ? '已归档当前工作流。' : '已恢复当前工作流。')
+
+    if (!toggledWorkflow?.serverId) return
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/workflows/${toggledWorkflow.serverId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(workflowToServerPayload(toggledWorkflow)),
+      })
+      if (!response.ok) throw new Error('archive sync failed')
+      const saved = (await response.json()) as ServerWorkflowRecord
+      const syncedAt = new Date().toISOString()
+      const syncedNext = {
+        activeWorkflowId: next.activeWorkflowId,
+        workflows: next.workflows.map((workflow) =>
+          workflow.id === toggledWorkflow.id
+            ? {
+                ...workflow,
+                archived: saved.archived ?? toggledWorkflow.archived,
+                updatedAt: saved.updated_at,
+                syncedAt,
+              }
+            : workflow,
+        ),
+      }
+      setWorkflowStore(syncedNext)
+      persistWorkflowStore(syncedNext)
+      setBackendStatus('online')
+      setLastBackendSyncAt(syncedAt)
+    } catch {
+      setBackendStatus('offline')
+      setNotice(
+        isArchiving
+          ? '已在本地归档当前工作流，但后端归档状态同步失败。'
+          : '已在本地恢复当前工作流，但后端归档状态同步失败。',
+      )
+    }
   }
 
   const runWorkflow = async () => {

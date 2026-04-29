@@ -1,6 +1,6 @@
 # Workflow Studio API
 
-FastAPI backend for Workflow Studio. The current backend stores workflows in a local SQLite database, validates workflow structure, records workflow runs, searches local Markdown/TXT knowledge documents, can call DeepSeek or OpenAI for LLM nodes when an API key is configured, and can execute localhost HTTP tool nodes.
+FastAPI backend for Workflow Studio. The current backend stores workflows and archive status in a local SQLite database, validates workflow structure, records workflow runs, searches local Markdown/TXT knowledge documents, can call DeepSeek or OpenAI for LLM nodes when an API key is configured, and can execute localhost HTTP tool nodes.
 
 ## Setup
 
@@ -125,6 +125,8 @@ server/data/workflow_studio.db
 ```
 
 The database file is ignored by Git.
+
+Saved workflow records include `name`, `version`, `nodes`, `edges`, `archived`, and `updated_at`.
 
 ## Smoke Test
 
