@@ -11,6 +11,20 @@ server\.venv\Scripts\python.exe -m pip install -r server/requirements.txt
 
 ## Run
 
+From the repo root, recommended:
+
+```powershell
+.\scripts\start-dev.ps1
+```
+
+If PowerShell blocks script execution:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-dev.ps1
+```
+
+Manual backend run:
+
 ```powershell
 server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 --port 8000
 ```
@@ -113,6 +127,18 @@ server/data/workflow_studio.db
 The database file is ignored by Git.
 
 ## Smoke Test
+
+From the repo root, recommended:
+
+```powershell
+.\scripts\test-all.ps1
+```
+
+If PowerShell blocks script execution:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\test-all.ps1
+```
 
 With the API server running:
 

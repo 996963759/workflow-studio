@@ -122,12 +122,34 @@
 
 ## 本地运行
 
+推荐新手直接运行：
+
+```powershell
+.\scripts\start-dev.ps1
+```
+
+如果 PowerShell 提示禁止运行脚本，使用：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-dev.ps1
+```
+
+脚本会检查依赖，启动后端和前端。启动后访问：
+
+```text
+http://127.0.0.1:5173
+```
+
+手动启动前端：
+
 ```powershell
 npm.cmd install
 npm.cmd run dev
 ```
 
 ## 后端运行
+
+如果使用 `scripts/start-dev.ps1`，通常不需要手动执行下面命令。
 
 ```powershell
 python -m venv server/.venv
@@ -182,6 +204,22 @@ server/data/knowledge/customer-support.md
 ```powershell
 npm.cmd run build
 ```
+
+## 回归测试
+
+推荐使用统一测试脚本：
+
+```powershell
+.\scripts\test-all.ps1
+```
+
+如果 PowerShell 提示禁止运行脚本，使用：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\test-all.ps1
+```
+
+脚本会执行前端 lint、前端构建、Python 编译，并启动临时后端运行 smoke test。
 
 ## 当前边界
 
