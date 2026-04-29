@@ -174,6 +174,45 @@
   gap: 7px;
 }
 
+.workflow-tools {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 9px;
+}
+
+.workflow-search {
+  position: relative;
+  display: block;
+}
+
+.workflow-search svg {
+  position: absolute;
+  top: 50%;
+  left: 9px;
+  color: #64748b;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.workflow-search input {
+  padding-left: 30px;
+}
+
+.archive-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #475569;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.archive-toggle input {
+  width: 14px;
+  height: 14px;
+  accent-color: #193f34;
+}
+
 .workflow-list button {
   display: grid;
   gap: 4px;
@@ -192,7 +231,16 @@
   background: #eef4ec;
 }
 
+.workflow-list button.archived {
+  background: #f8fafc;
+  color: #64748b;
+}
+
 .workflow-list span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   overflow: hidden;
   color: #111827;
   font-size: 13px;
@@ -201,9 +249,30 @@
   white-space: nowrap;
 }
 
+.workflow-list em {
+  flex: 0 0 auto;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  color: #64748b;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+  padding: 1px 5px;
+}
+
 .workflow-list small {
   color: #64748b;
   font-size: 11px;
+}
+
+.workflow-empty {
+  border: 1px dashed #d8ded4;
+  border-radius: 7px;
+  color: #64748b;
+  font-size: 12px;
+  margin: 0;
+  padding: 10px;
+  text-align: center;
 }
 
 .workflow-actions {

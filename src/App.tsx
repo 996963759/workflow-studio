@@ -18,6 +18,7 @@ import {
 } from '@xyflow/react'
 import {
   AlertTriangle,
+  Archive,
   Bot,
   Braces,
   ChevronRight,
@@ -30,6 +31,7 @@ import {
   MessageSquareText,
   Play,
   Plus,
+  RotateCcw,
   Save,
   Search,
   Settings2,
@@ -89,10 +91,13 @@ type WorkflowDefinition = {
 }
 
 type WorkflowRecord = Required<Pick<WorkflowDefinition, 'id' | 'name' | 'version' | 'nodes' | 'edges'>> & {
+  archived?: boolean
   updatedAt: string
   serverId?: string
   syncedAt?: string
 }
+
+type WorkflowSortMode = 'updated' | 'name' | 'sync'
 
 type ServerWorkflowRecord = {
   id: string
@@ -330,6 +335,7 @@ const isWorkflowDefinition = (value: unknown): value is WorkflowDefinition => {
 
 const serverToWorkflowRecord = (workflow: ServerWorkflowRecord): WorkflowRecord => ({
   id: crypto.randomUUID(),
+  archived: false,
   serverId: workflow.id,
   name: workflow.name,
   version: workflow.version || '0.2.0',
@@ -389,6 +395,7 @@ const loadWorkflowStore = (): WorkflowStore => {
       const workflows = (parsed as { workflows: WorkflowRecord[] }).workflows.filter(isWorkflowDefinition).map(
         (workflow) => ({
           id: workflow.id ?? crypto.randomUUID(),
+          archived: workflow.archived ?? false,
           serverId: workflow.serverId,
           name: workflow.name || '未命名工作流',
           version: workflow.version || '0.2.0',
@@ -416,6 +423,7 @@ const loadWorkflowStore = (): WorkflowStore => {
   if (legacy) {
     const migrated: WorkflowRecord = {
       id: crypto.randomUUID(),
+      archived: false,
       name: legacy.name || '迁移的工作流',
       version: legacy.version || '0.2.0',
       nodes: legacy.nodes,
@@ -752,6 +760,9 @@ function App() {
   const [runInput, setRunInput] = useState(examples[0])
   const [notice, setNotice] = useState('已加载本地工作流列表。')
   const [backendStatus, setBackendStatus] = useState<'unknown' | 'online' | 'offline'>('unknown')
+  const [workflowSearch, setWorkflowSearch] = useState('')
+  const [workflowSortMode, setWorkflowSortMode] = useState<WorkflowSortMode>('updated')
+  const [showArchivedWorkflows, setShowArchivedWorkflows] = useState(false)
   const [remoteValidation, setRemoteValidation] = useState<RemoteValidationState | null>(null)
   const [providerStatus, setProviderStatus] = useState<ProviderStatus | null>(null)
   const [providerStatusCheckedAt, setProviderStatusCheckedAt] = useState('')
@@ -763,6 +774,20 @@ function App() {
   const activeWorkflow =
     workflowStore.workflows.find((workflow) => workflow.id === workflowStore.activeWorkflowId) ??
     workflowStore.workflows[0]
+  const visibleWorkflows = useMemo(() => {
+    const keyword = workflowSearch.trim().toLowerCase()
+    return workflowStore.workflows
+      .filter((workflow) => showArchivedWorkflows || !workflow.archived)
+      .filter((workflow) => !keyword || workflow.name.toLowerCase().includes(keyword))
+      .toSorted((a, b) => {
+        if (workflowSortMode === 'name') return a.name.localeCompare(b.name, 'zh-CN')
+        if (workflowSortMode === 'sync') {
+          const syncCompare = Number(Boolean(b.serverId)) - Number(Boolean(a.serverId))
+          return syncCompare || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+        }
+        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+      })
+  }, [showArchivedWorkflows, workflowSearch, workflowSortMode, workflowStore.workflows])
   const nodes = activeWorkflow.nodes
   const edges = activeWorkflow.edges
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? nodes[0]
@@ -1308,6 +1333,7 @@ function App() {
   const duplicateWorkflow = () => {
     const duplicated: WorkflowRecord = {
       ...activeWorkflow,
+      archived: false,
       id: crypto.randomUUID(),
       name: `${activeWorkflow.name} 副本`,
       nodes: cloneNodes(activeWorkflow.nodes),
@@ -1330,8 +1356,13 @@ function App() {
       setNotice('至少保留一个工作流，不能删除最后一个。')
       return
     }
+    const activeAvailableCount = workflowStore.workflows.filter((workflow) => !workflow.archived).length
+    if (!activeWorkflow.archived && activeAvailableCount <= 1) {
+      setNotice('至少保留一个未归档工作流，不能删除最后一个可用工作流。')
+      return
+    }
     const remaining = workflowStore.workflows.filter((workflow) => workflow.id !== activeWorkflow.id)
-    const nextActive = remaining[0]
+    const nextActive = remaining.find((workflow) => !workflow.archived) ?? remaining[0]
     const next = {
       activeWorkflowId: nextActive.id,
       workflows: remaining,
@@ -1341,6 +1372,33 @@ function App() {
     setSelectedNodeId(nextActive.nodes[0]?.id ?? '')
     setRunSteps([])
     setNotice('已删除当前工作流。')
+  }
+
+  const archiveActiveWorkflow = () => {
+    const isArchiving = !activeWorkflow.archived
+    const activeAvailableCount = workflowStore.workflows.filter((workflow) => !workflow.archived).length
+
+    if (isArchiving && activeAvailableCount <= 1) {
+      setNotice('至少保留一个未归档工作流，不能归档最后一个可用工作流。')
+      return
+    }
+
+    const updatedAt = new Date().toISOString()
+    const nextWorkflows = workflowStore.workflows.map((workflow) =>
+      workflow.id === activeWorkflow.id ? { ...workflow, archived: isArchiving, updatedAt } : workflow,
+    )
+    const toggledWorkflow = nextWorkflows.find((workflow) => workflow.id === activeWorkflow.id)
+    const fallbackWorkflow = nextWorkflows.find((workflow) => !workflow.archived) ?? toggledWorkflow ?? nextWorkflows[0]
+    const nextActive = isArchiving ? fallbackWorkflow : toggledWorkflow ?? fallbackWorkflow
+    const next = {
+      activeWorkflowId: nextActive.id,
+      workflows: nextWorkflows,
+    }
+    setWorkflowStore(next)
+    persistWorkflowStore(next)
+    setSelectedNodeId(nextActive.nodes[0]?.id ?? '')
+    setRunSteps([])
+    setNotice(isArchiving ? '已归档当前工作流。' : '已恢复当前工作流。')
   }
 
   const runWorkflow = async () => {
@@ -1611,23 +1669,71 @@ function App() {
               新建
             </button>
           </div>
+          <div className="workflow-tools">
+            <label className="workflow-search">
+              <Search size={14} />
+              <input
+                type="search"
+                value={workflowSearch}
+                onChange={(event) => setWorkflowSearch(event.target.value)}
+                placeholder="搜索工作流"
+              />
+            </label>
+            <select
+              value={workflowSortMode}
+              aria-label="工作流排序"
+              onChange={(event) => setWorkflowSortMode(event.target.value as WorkflowSortMode)}
+            >
+              <option value="updated">最近更新</option>
+              <option value="name">名称</option>
+              <option value="sync">同步状态</option>
+            </select>
+            <label className="archive-toggle">
+              <input
+                type="checkbox"
+                checked={showArchivedWorkflows}
+                onChange={(event) => {
+                  const checked = event.target.checked
+                  setShowArchivedWorkflows(checked)
+                  if (!checked && activeWorkflow.archived) {
+                    const nextVisibleWorkflow = workflowStore.workflows.find((workflow) => !workflow.archived)
+                    if (nextVisibleWorkflow) switchWorkflow(nextVisibleWorkflow.id)
+                  }
+                }}
+              />
+              显示归档
+            </label>
+          </div>
           <div className="workflow-list">
-            {workflowStore.workflows.map((workflow) => (
-              <button
-                key={workflow.id}
-                type="button"
-                className={clsx(workflow.id === activeWorkflow.id && 'active')}
-                onClick={() => switchWorkflow(workflow.id)}
-              >
-                <span>{workflow.name}</span>
-                <small>{new Date(workflow.updatedAt).toLocaleString('zh-CN')}</small>
-              </button>
-            ))}
+            {visibleWorkflows.length > 0 ? (
+              visibleWorkflows.map((workflow) => (
+                <button
+                  key={workflow.id}
+                  type="button"
+                  className={clsx(workflow.id === activeWorkflow.id && 'active', workflow.archived && 'archived')}
+                  onClick={() => switchWorkflow(workflow.id)}
+                >
+                  <span>
+                    {workflow.name}
+                    {workflow.archived && <em>归档</em>}
+                  </span>
+                  <small>
+                    {new Date(workflow.updatedAt).toLocaleString('zh-CN')} · {workflow.serverId ? '已同步' : '仅本地'}
+                  </small>
+                </button>
+              ))
+            ) : (
+              <p className="workflow-empty">{workflowSearch ? '没有匹配的工作流' : '暂无可显示的工作流'}</p>
+            )}
           </div>
           <div className="workflow-actions">
             <button type="button" onClick={duplicateWorkflow}>
               <Copy size={14} />
               复制
+            </button>
+            <button type="button" onClick={archiveActiveWorkflow}>
+              {activeWorkflow.archived ? <RotateCcw size={14} /> : <Archive size={14} />}
+              {activeWorkflow.archived ? '恢复' : '归档'}
             </button>
             <button type="button" onClick={deleteWorkflow}>
               <Trash2 size={14} />
