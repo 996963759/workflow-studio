@@ -652,28 +652,58 @@ const isServerWorkflowNewer = (workflow: WorkflowRecord, serverWorkflow: ServerW
   return new Date(serverWorkflow.updated_at).getTime() > new Date(workflow.syncedAt).getTime()
 }
 
+const applyServerWorkflowToLocalRecord = (
+  workflow: WorkflowRecord,
+  serverWorkflow: ServerWorkflowRecord,
+  syncedAt: string,
+): WorkflowRecord => ({
+  ...workflow,
+  serverId: serverWorkflow.id,
+  name: serverWorkflow.name,
+  version: serverWorkflow.version || '0.2.0',
+  nodes: serverWorkflow.nodes,
+  edges: serverWorkflow.edges,
+  archived: serverWorkflow.archived ?? false,
+  updatedAt: serverWorkflow.updated_at,
+  syncedAt,
+})
+
 const mergeBackendWorkflows = (
   current: WorkflowStore,
   imported: WorkflowRecord[],
   syncedAt: string,
-): { store: WorkflowStore; firstLoaded: WorkflowRecord; appendedCount: number; updatedCount: number } => {
+): {
+  store: WorkflowStore
+  firstLoaded: WorkflowRecord
+  appendedCount: number
+  updatedCount: number
+  conflictCount: number
+} => {
   const importedByServerId = new Map(imported.map((workflow) => [workflow.serverId, workflow]))
   const existingServerIds = new Set(current.workflows.map((workflow) => workflow.serverId).filter(Boolean))
   let updatedCount = 0
+  let conflictCount = 0
   const updatedExisting = current.workflows.map((workflow) => {
     const importedWorkflow = workflow.serverId ? importedByServerId.get(workflow.serverId) : undefined
     if (!importedWorkflow) return workflow
-    updatedCount += 1
-    return {
-      ...workflow,
-      name: importedWorkflow.name,
-      version: importedWorkflow.version,
-      nodes: importedWorkflow.nodes,
-      edges: importedWorkflow.edges,
-      archived: importedWorkflow.archived ?? false,
-      updatedAt: importedWorkflow.updatedAt,
-      syncedAt,
+    if (getWorkflowSyncState(workflow) === 'dirty' && new Date(importedWorkflow.updatedAt).getTime() > new Date(workflow.syncedAt ?? 0).getTime()) {
+      conflictCount += 1
+      return workflow
     }
+    updatedCount += 1
+    return applyServerWorkflowToLocalRecord(
+      workflow,
+      {
+        id: importedWorkflow.serverId ?? '',
+        name: importedWorkflow.name,
+        version: importedWorkflow.version,
+        nodes: importedWorkflow.nodes,
+        edges: importedWorkflow.edges,
+        archived: importedWorkflow.archived,
+        updated_at: importedWorkflow.updatedAt,
+      },
+      syncedAt,
+    )
   })
   const appended = imported.filter((workflow) => !existingServerIds.has(workflow.serverId))
   const merged = [...updatedExisting, ...appended]
@@ -681,11 +711,12 @@ const mergeBackendWorkflows = (
   return {
     store: {
       activeWorkflowId: firstLoaded.id,
-      workflows: merged,
+    workflows: merged,
     },
     firstLoaded,
     appendedCount: appended.length,
     updatedCount,
+    conflictCount,
   }
 }
 
@@ -1522,6 +1553,7 @@ function App() {
   }
 
   const syncWorkflowToBackend = async (workflow: WorkflowRecord): Promise<WorkflowRecord> => {
+    let targetWorkflow = workflow
     if (workflow.serverId) {
       const latestResponse = await fetch(`${API_BASE_URL}/api/workflows/${workflow.serverId}`)
       if (latestResponse.ok) {
@@ -1529,17 +1561,29 @@ function App() {
         if (isServerWorkflowNewer(workflow, latest)) {
           throw new Error('remote_newer')
         }
+      } else if (latestResponse.status === 404) {
+        targetWorkflow = {
+          id: workflow.id,
+          name: workflow.name,
+          version: workflow.version,
+          nodes: workflow.nodes,
+          edges: workflow.edges,
+          archived: workflow.archived,
+          updatedAt: workflow.updatedAt,
+        }
       } else if (latestResponse.status !== 404) {
         throw new Error('sync failed')
       }
     }
 
-    const method = workflow.serverId ? 'PUT' : 'POST'
-    const url = workflow.serverId ? `${API_BASE_URL}/api/workflows/${workflow.serverId}` : `${API_BASE_URL}/api/workflows`
+    const method = targetWorkflow.serverId ? 'PUT' : 'POST'
+    const url = targetWorkflow.serverId
+      ? `${API_BASE_URL}/api/workflows/${targetWorkflow.serverId}`
+      : `${API_BASE_URL}/api/workflows`
     const response = await fetch(url, {
       method,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(workflowToServerPayload(workflow)),
+      body: JSON.stringify(workflowToServerPayload(targetWorkflow)),
     })
     if (!response.ok) {
       const validation = await readValidationError(response)
@@ -1554,17 +1598,7 @@ function App() {
 
     const saved = (await response.json()) as ServerWorkflowRecord
     const syncedAt = new Date().toISOString()
-    return {
-      ...workflow,
-      serverId: saved.id,
-      name: saved.name,
-      version: saved.version,
-      nodes: saved.nodes,
-      edges: saved.edges,
-      archived: saved.archived ?? false,
-      updatedAt: saved.updated_at,
-      syncedAt,
-    }
+    return applyServerWorkflowToLocalRecord(workflow, saved, syncedAt)
   }
 
   const syncActiveWorkflowToBackend = async () => {
@@ -1647,6 +1681,41 @@ function App() {
     )
   }
 
+  const refreshActiveWorkflowFromServerRecord = (serverWorkflow: ServerWorkflowRecord) => {
+    const syncedAt = new Date().toISOString()
+    const next = {
+      ...workflowStore,
+      workflows: workflowStore.workflows.map((workflow) =>
+        workflow.id === activeWorkflow.id
+          ? applyServerWorkflowToLocalRecord(workflow, serverWorkflow, syncedAt)
+          : workflow,
+      ),
+    }
+    setWorkflowStore(next)
+    persistWorkflowStore(next)
+    setSelectedNodeId(serverWorkflow.nodes[0]?.id ?? '')
+    setRunSteps([])
+    setBackendStatus('online')
+    setLastBackendSyncAt(syncedAt)
+  }
+
+  const ensureActiveWorkflowMatchesBackend = async () => {
+    if (!activeWorkflow.serverId) return true
+    const response = await fetch(`${API_BASE_URL}/api/workflows/${activeWorkflow.serverId}`)
+    if (response.status === 404) {
+      throw new Error('remote_missing')
+    }
+    if (!response.ok) {
+      throw new Error('remote_check_failed')
+    }
+    const latest = (await response.json()) as ServerWorkflowRecord
+    if (isServerWorkflowNewer(activeWorkflow, latest)) {
+      refreshActiveWorkflowFromServerRecord(latest)
+      throw new Error('remote_newer')
+    }
+    return true
+  }
+
   const loadWorkflowsFromBackend = useCallback(async (mode: BackendWorkflowLoadMode = 'manual') => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/workflows`)
@@ -1661,7 +1730,7 @@ function App() {
         return
       }
       const syncedAt = new Date().toISOString()
-      const { store: next, firstLoaded, appendedCount, updatedCount } = mergeBackendWorkflows(
+      const { store: next, firstLoaded, appendedCount, updatedCount, conflictCount } = mergeBackendWorkflows(
         workflowStore,
         imported,
         syncedAt,
@@ -1674,8 +1743,8 @@ function App() {
       setLastBackendSyncAt(syncedAt)
       setNotice(
         mode === 'startup'
-          ? `已自动从后端加载 ${imported.length} 个工作流：新增 ${appendedCount} 个，更新 ${updatedCount} 个，本地未同步工作流已保留。`
-          : `已从后端加载 ${imported.length} 个工作流：新增 ${appendedCount} 个，更新 ${updatedCount} 个。`,
+          ? `已自动从后端加载 ${imported.length} 个工作流：新增 ${appendedCount} 个，更新 ${updatedCount} 个，冲突保留 ${conflictCount} 个，本地未同步工作流已保留。`
+          : `已从后端加载 ${imported.length} 个工作流：新增 ${appendedCount} 个，更新 ${updatedCount} 个，冲突保留 ${conflictCount} 个。`,
       )
     } catch {
       setBackendStatus('offline')
@@ -1698,6 +1767,22 @@ function App() {
     }
     if (activeWorkflowSyncState === 'dirty') {
       setNotice('当前工作流有未同步改动。请先点击“同步到后端”，再使用后端运行。')
+      return
+    }
+
+    try {
+      await ensureActiveWorkflowMatchesBackend()
+    } catch (error) {
+      if (error instanceof Error && error.message === 'remote_newer') {
+        setNotice('后端版本已更新，已自动刷新当前工作流。请确认后再后端运行。')
+        return
+      }
+      if (error instanceof Error && error.message === 'remote_missing') {
+        setNotice('后端记录已不存在。请先点击“同步到后端”重新保存，再后端运行。')
+        return
+      }
+      setBackendStatus('offline')
+      setNotice('后端版本检查失败：请确认后端在线。')
       return
     }
 
