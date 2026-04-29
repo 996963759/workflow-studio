@@ -125,6 +125,12 @@ type WorkflowIssue = {
   nodeId?: string
 }
 
+type FieldIssue = {
+  field: keyof WorkflowNodeData
+  level: 'error' | 'warning'
+  message: string
+}
+
 type ServerWorkflowIssue = {
   id: string
   level: 'error' | 'warning'
@@ -557,6 +563,56 @@ const getReachableNodeIds = (startIds: string[], edges: Edge[]) => {
   return reachable
 }
 
+const validateNodeFields = (node: WorkflowNode): FieldIssue[] => {
+  const issues: FieldIssue[] = []
+  const { data } = node
+  const outputKey = data.outputKey?.trim()
+
+  if (!data.label.trim()) {
+    issues.push({ field: 'label', level: 'error', message: '名称不能为空。' })
+  }
+
+  if (outputKey && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(outputKey)) {
+    issues.push({ field: 'outputKey', level: 'error', message: '输出变量名只能包含字母、数字和下划线，并且不能以数字开头。' })
+  }
+
+  if (data.kind === 'llm' && !data.prompt?.trim()) {
+    issues.push({ field: 'prompt', level: 'error', message: '大模型节点需要填写用户提示词。' })
+  }
+
+  if (data.kind === 'knowledge' && !data.query?.trim()) {
+    issues.push({ field: 'query', level: 'warning', message: '建议填写检索语句，否则会使用运行输入兜底。' })
+  }
+
+  if (data.kind === 'tool') {
+    if (!data.toolName?.trim()) {
+      issues.push({ field: 'toolName', level: 'warning', message: '建议填写工具名称，方便识别运行日志。' })
+    }
+    if (data.toolParams?.trim()) {
+      try {
+        JSON.parse(data.toolParams)
+      } catch {
+        issues.push({ field: 'toolParams', level: 'error', message: '请求参数必须是合法 JSON。' })
+      }
+    }
+  }
+
+  if (data.kind === 'condition') {
+    if (!data.conditionVariable?.trim()) {
+      issues.push({ field: 'conditionVariable', level: 'error', message: '条件分支需要选择判断变量。' })
+    }
+    if (data.conditionOperator !== 'not_empty' && !data.conditionValue?.trim()) {
+      issues.push({ field: 'conditionValue', level: 'warning', message: '判断值为空时，包含判断会默认通过。' })
+    }
+  }
+
+  if (data.kind === 'output' && !data.prompt?.trim()) {
+    issues.push({ field: 'prompt', level: 'error', message: '最终回答节点需要填写输出模板。' })
+  }
+
+  return issues
+}
+
 const validateWorkflow = (nodes: WorkflowNode[], edges: Edge[]) => {
   const issues: WorkflowIssue[] = []
   const nodeById = new Map(nodes.map((node) => [node.id, node]))
@@ -582,6 +638,15 @@ const validateWorkflow = (nodes: WorkflowNode[], edges: Edge[]) => {
   }
 
   nodes.forEach((node) => {
+    validateNodeFields(node).forEach((issue) => {
+      issues.push({
+        id: `field-${node.id}-${String(issue.field)}`,
+        level: issue.level,
+        nodeId: node.id,
+        message: `节点「${node.data.label || node.id}」：${issue.message}`,
+      })
+    })
+
     const hasIncoming = (incoming.get(node.id) ?? 0) > 0
     const hasOutgoing = (outgoing.get(node.id) ?? 0) > 0
     if (!hasIncoming && !hasOutgoing && nodes.length > 1) {
@@ -701,6 +766,14 @@ function App() {
   const nodes = activeWorkflow.nodes
   const edges = activeWorkflow.edges
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? nodes[0]
+  const selectedFieldIssues = selectedNode ? validateNodeFields(selectedNode) : []
+  const fieldIssuesByName = selectedFieldIssues.reduce(
+    (result, issue) => {
+      result[issue.field] = [...(result[issue.field] ?? []), issue]
+      return result
+    },
+    {} as Partial<Record<keyof WorkflowNodeData, FieldIssue[]>>,
+  )
 
   const updateActiveWorkflow = (patch: Partial<WorkflowRecord>) => {
     const updatedAt = new Date().toISOString()
@@ -927,6 +1000,25 @@ function App() {
       ),
     )
     setNotice('')
+  }
+
+  const renderFieldIssues = (field: keyof WorkflowNodeData) => {
+    const issues = fieldIssuesByName[field] ?? []
+    if (issues.length === 0) return null
+    return (
+      <div className="field-issues">
+        {issues.map((issue) => (
+          <span key={`${String(field)}-${issue.message}`} className={issue.level}>
+            {issue.message}
+          </span>
+        ))}
+      </div>
+    )
+  }
+
+  const restoreSelectedNodeDefaults = () => {
+    updateSelectedNode({ ...nodeMeta[selectedNode.data.kind].defaults })
+    setNotice(`已恢复「${selectedNode.data.label}」的默认配置。`)
   }
 
   const appendToSelectedField = (field: 'prompt' | 'systemPrompt' | 'query' | 'toolParams' | 'conditionValue', variable: string) => {
@@ -1704,6 +1796,9 @@ function App() {
               <Trash2 size={16} />
             </button>
           </div>
+          <button type="button" className="restore-defaults-button" onClick={restoreSelectedNodeDefaults}>
+            恢复默认配置
+          </button>
 
           <label>
             名称
@@ -1711,6 +1806,7 @@ function App() {
               value={selectedNode.data.label}
               onChange={(event) => updateSelectedNode({ label: event.target.value })}
             />
+            {renderFieldIssues('label')}
           </label>
           <label>
             用途说明
@@ -1757,6 +1853,7 @@ function App() {
                   value={selectedNode.data.prompt}
                   onChange={(event) => updateSelectedNode({ prompt: event.target.value })}
                 />
+                {renderFieldIssues('prompt')}
               </label>
               <div className="insert-row">
                 {variableKeys.map((variable) => (
@@ -1776,6 +1873,7 @@ function App() {
                   value={selectedNode.data.query}
                   onChange={(event) => updateSelectedNode({ query: event.target.value })}
                 />
+                {renderFieldIssues('query')}
               </label>
               <div className="insert-row">
                 {variableKeys.map((variable) => (
@@ -1805,6 +1903,7 @@ function App() {
                   value={selectedNode.data.toolName}
                   onChange={(event) => updateSelectedNode({ toolName: event.target.value })}
                 />
+                {renderFieldIssues('toolName')}
               </label>
               <label>
                 请求参数
@@ -1813,6 +1912,7 @@ function App() {
                   value={selectedNode.data.toolParams ?? ''}
                   onChange={(event) => updateSelectedNode({ toolParams: event.target.value })}
                 />
+                {renderFieldIssues('toolParams')}
               </label>
               <div className="insert-row">
                 {variableKeys.map((variable) => (
@@ -1839,6 +1939,7 @@ function App() {
                     </option>
                   ))}
                 </select>
+                {renderFieldIssues('conditionVariable')}
               </label>
               <label>
                 判断方式
@@ -1861,6 +1962,7 @@ function App() {
                       value={selectedNode.data.conditionValue ?? ''}
                       onChange={(event) => updateSelectedNode({ conditionValue: event.target.value })}
                     />
+                    {renderFieldIssues('conditionValue')}
                   </label>
                   <div className="insert-row">
                     {variableKeys.map((variable) => (
@@ -1898,6 +2000,7 @@ function App() {
                   value={selectedNode.data.prompt ?? ''}
                   onChange={(event) => updateSelectedNode({ prompt: event.target.value })}
                 />
+                {renderFieldIssues('prompt')}
               </label>
               <div className="insert-row">
                 {variableKeys.map((variable) => (
@@ -1916,6 +2019,7 @@ function App() {
               onChange={(event) => updateSelectedNode({ outputKey: event.target.value })}
               placeholder="可选"
             />
+            {renderFieldIssues('outputKey')}
           </label>
         </section>
 

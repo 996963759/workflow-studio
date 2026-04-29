@@ -592,6 +592,47 @@
   margin-bottom: 11px;
 }
 
+.restore-defaults-button {
+  width: 100%;
+  border: 1px solid #d8ded4;
+  border-radius: 7px;
+  background: #f8faf5;
+  color: #334155;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  margin: -2px 0 12px;
+  padding: 7px 9px;
+}
+
+.restore-defaults-button:hover {
+  border-color: #9aa68f;
+  background: #eef4ec;
+}
+
+.field-issues {
+  display: grid;
+  gap: 4px;
+}
+
+.field-issues span {
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.35;
+  padding: 5px 7px;
+}
+
+.field-issues .error {
+  background: #fff1f2;
+  color: #b91c1c;
+}
+
+.field-issues .warning {
+  background: #fffbeb;
+  color: #92400e;
+}
+
 .insert-row {
   display: flex;
   flex-wrap: wrap;
