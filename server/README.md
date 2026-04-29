@@ -97,6 +97,8 @@ Supported file types are `.md` and `.txt`. Knowledge nodes use simple local keyw
 
 `POST /api/workflows`, `PUT /api/workflows/{workflow_id}`, `POST /api/runs` and `POST /api/workflows/{workflow_id}/runs` reject workflows with validation errors and return HTTP 400 with the validation result in `detail`.
 
+`DELETE /api/workflows/{workflow_id}` also deletes stored runs for that workflow.
+
 ## Validation Rules
 
 Errors:

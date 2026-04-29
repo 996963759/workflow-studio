@@ -1748,7 +1748,7 @@ function App() {
     setNotice('已复制当前工作流。')
   }
 
-  const deleteWorkflow = () => {
+  const deleteWorkflow = async () => {
     if (workflowStore.workflows.length === 1) {
       setNotice('至少保留一个工作流，不能删除最后一个。')
       return
@@ -1760,6 +1760,21 @@ function App() {
     }
     const remaining = workflowStore.workflows.filter((workflow) => workflow.id !== activeWorkflow.id)
     const nextActive = remaining.find((workflow) => !workflow.archived) ?? remaining[0]
+
+    if (activeWorkflow.serverId) {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/workflows/${activeWorkflow.serverId}`, {
+          method: 'DELETE',
+        })
+        if (!response.ok && response.status !== 404) throw new Error('delete failed')
+        setBackendStatus('online')
+      } catch {
+        setBackendStatus('offline')
+        setNotice('删除失败：后端不可用或请求失败，本地工作流已保留。')
+        return
+      }
+    }
+
     const next = {
       activeWorkflowId: nextActive.id,
       workflows: remaining,
@@ -1768,7 +1783,9 @@ function App() {
     persistWorkflowStore(next)
     setSelectedNodeId(nextActive.nodes[0]?.id ?? '')
     setRunSteps([])
-    setNotice('已删除当前工作流。')
+    setRunHistory([])
+    setSelectedRunId('')
+    setNotice(activeWorkflow.serverId ? '已删除当前工作流，并同步删除后端记录。' : '已删除当前本地工作流。')
   }
 
   const archiveActiveWorkflow = async () => {

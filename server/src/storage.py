@@ -131,6 +131,8 @@ class WorkflowStore:
     def delete_workflow(self, workflow_id: str) -> bool:
         with self._connect() as connection:
             cursor = connection.execute("DELETE FROM workflows WHERE id = ?", (workflow_id,))
+            if cursor.rowcount > 0:
+                connection.execute("DELETE FROM runs WHERE workflow_id = ?", (workflow_id,))
         return cursor.rowcount > 0
 
     def create_run(

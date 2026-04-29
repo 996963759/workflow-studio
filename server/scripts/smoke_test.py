@@ -283,6 +283,10 @@ def main() -> None:
     second_stored_run = request(f"/api/workflows/{created['id']}/runs", "POST", {"input_text": "清理历史测试"})
     delete_workflow_runs_result = request(f"/api/runs?workflow_id={created['id']}", "DELETE")
     workflow_runs_after_clear = request(f"/api/runs?workflow_id={created['id']}")
+    third_stored_run = request(f"/api/workflows/{created['id']}/runs", "POST", {"input_text": "删除工作流清理历史测试"})
+    delete_workflow_result = request(f"/api/workflows/{created['id']}", "DELETE")
+    deleted_workflow_status, _ = request_error(f"/api/workflows/{created['id']}")
+    workflow_runs_after_workflow_delete = request(f"/api/runs?workflow_id={created['id']}")
 
     assert validation["valid"] is True
     assert invalid_validation["valid"] is False
@@ -337,6 +341,10 @@ def main() -> None:
     assert second_stored_run["workflow_id"] == created["id"]
     assert delete_workflow_runs_result == {}
     assert workflow_runs_after_clear == []
+    assert third_stored_run["workflow_id"] == created["id"]
+    assert delete_workflow_result == {}
+    assert deleted_workflow_status == 404
+    assert workflow_runs_after_workflow_delete == []
 
     print(
         json.dumps(
@@ -365,6 +373,8 @@ def main() -> None:
                 "workflow_run_count": len(workflow_runs),
                 "deleted_single_status": deleted_single_status,
                 "workflow_runs_after_clear": len(workflow_runs_after_clear),
+                "deleted_workflow_status": deleted_workflow_status,
+                "workflow_runs_after_workflow_delete": len(workflow_runs_after_workflow_delete),
                 "fetched_run_status": fetched_run["status"],
             },
             ensure_ascii=False,
