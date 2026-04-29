@@ -8,6 +8,7 @@ from urllib.request import Request, urlopen
 
 from openai import OpenAI, OpenAIError
 
+from .knowledge import search_knowledge
 from .models import RunResponse, RunStep, WorkflowPayload
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
@@ -268,6 +269,22 @@ def run_llm_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, st
     return output, step_input, "模拟输出", None
 
 
+def run_knowledge_node(data: dict[str, Any], context: dict[str, str], input_text: str) -> tuple[str, str, str | None]:
+    query = render_template(data.get("query"), context).strip() or input_text
+    top_k = int(data.get("topK") or 4)
+    matches = search_knowledge(query, top_k)
+    step_input = query or "未配置检索语句"
+
+    if not matches:
+        return "没有在本地知识库中检索到相关片段。", step_input, "本地知识库"
+
+    output = "\n\n".join(
+        f"[{index}. {match.source} | score={match.score}]\n{match.text}"
+        for index, match in enumerate(matches, start=1)
+    )
+    return output, step_input, "本地知识库"
+
+
 def simulate_run(workflow: WorkflowPayload, input_text: str) -> RunResponse:
     context: dict[str, str] = {}
     nodes = create_execution_order(workflow.nodes, workflow.edges)
@@ -313,10 +330,7 @@ def simulate_run(workflow: WorkflowPayload, input_text: str) -> RunResponse:
             output = input_text or data.get("sampleInput") or ""
             step_input = "用户请求"
         elif kind == "knowledge":
-            query = render_template(data.get("query"), context)
-            top_k = data.get("topK") or 4
-            output = f"围绕「{query or input_text}」检索到 {top_k} 段相关内容。"
-            step_input = query or "未配置检索语句"
+            output, step_input, provider = run_knowledge_node(data, context, input_text)
         elif kind == "llm":
             output, step_input, provider, error = run_llm_node(data, context)
         elif kind == "tool":

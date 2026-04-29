@@ -167,6 +167,12 @@ type ProviderStatus = {
   openai_default_model: string
 }
 
+type KnowledgeStatus = {
+  directory: string
+  document_count: number
+  chunk_count: number
+}
+
 const LEGACY_STORAGE_KEY = 'workflow-studio.current-workflow'
 const WORKFLOWS_STORAGE_KEY = 'workflow-studio.workflows'
 const ACTIVE_WORKFLOW_STORAGE_KEY = 'workflow-studio.active-workflow-id'
@@ -795,6 +801,7 @@ function App() {
   const [remoteValidation, setRemoteValidation] = useState<RemoteValidationState | null>(null)
   const [providerStatus, setProviderStatus] = useState<ProviderStatus | null>(null)
   const [providerStatusCheckedAt, setProviderStatusCheckedAt] = useState('')
+  const [knowledgeStatus, setKnowledgeStatus] = useState<KnowledgeStatus | null>(null)
   const [lastBackendSyncAt, setLastBackendSyncAt] = useState('')
   const nextNodeId = useRef(1)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -920,6 +927,9 @@ function App() {
     : providerStatus?.openai_configured
       ? `OpenAI - ${providerStatus.openai_default_model}`
       : '模拟输出'
+  const knowledgeStatusLabel = knowledgeStatus
+    ? `${knowledgeStatus.document_count} 个文档 / ${knowledgeStatus.chunk_count} 个片段`
+    : '未检查'
 
   useEffect(() => {
     const controller = new AbortController()
@@ -1073,6 +1083,25 @@ function App() {
     }
   }
 
+  const refreshKnowledgeStatus = async (showNotice = true) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/knowledge/status`)
+      if (!response.ok) throw new Error('knowledge status failed')
+      const status = (await response.json()) as KnowledgeStatus
+      setKnowledgeStatus(status)
+      setBackendStatus('online')
+      if (showNotice) {
+        setNotice(`本地知识库已加载 ${status.document_count} 个文档，${status.chunk_count} 个片段。`)
+      }
+      return status
+    } catch {
+      setKnowledgeStatus(null)
+      setBackendStatus('offline')
+      if (showNotice) setNotice('知识库状态读取失败：请确认后端在线。')
+      return null
+    }
+  }
+
   const onNodesChange = (changes: NodeChange<WorkflowNode>[]) => {
     updateActiveNodes((current) => applyNodeChanges(changes, current))
     setNotice('')
@@ -1164,8 +1193,9 @@ function App() {
       if (!response.ok) throw new Error('health check failed')
       setBackendStatus('online')
       await refreshProviderStatus(false)
+      await refreshKnowledgeStatus(false)
       await validateActiveWorkflow()
-      setNotice('后端在线，工作流检查已切换到后端校验。')
+      setNotice('后端在线，工作流检查已切换到后端校验，知识库状态已刷新。')
     } catch {
       setBackendStatus('offline')
       setNotice('后端离线，当前仍可使用浏览器本地保存。')
@@ -2288,6 +2318,26 @@ function App() {
               更新：{new Date(providerStatusCheckedAt).toLocaleString('zh-CN')}
             </time>
           )}
+        </section>
+
+        <section className="panel knowledge-status-panel">
+          <div className="panel-title between">
+            <span>
+              <Search size={16} />
+              知识库
+            </span>
+            <button type="button" className="mini-action" onClick={() => refreshKnowledgeStatus()}>
+              刷新
+            </button>
+          </div>
+          <div className="model-status-current">
+            <span className={clsx('model-status-dot', knowledgeStatus?.document_count ? 'ready' : 'fallback')} />
+            <strong>{knowledgeStatusLabel}</strong>
+          </div>
+          <p className="model-status-note">
+            知识检索节点会读取后端本地 knowledge 目录中的 Markdown 和 TXT 文档。
+          </p>
+          {knowledgeStatus && <time className="model-status-time">{knowledgeStatus.directory}</time>}
         </section>
 
         <section className="panel runner">

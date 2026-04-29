@@ -115,8 +115,43 @@ def http_tool_workflow() -> dict:
     }
 
 
+def knowledge_workflow() -> dict:
+    return {
+        "name": "Knowledge Smoke Test Workflow",
+        "version": "0.2.0",
+        "nodes": [
+            {
+                "id": "input-1",
+                "position": {"x": 0, "y": 0},
+                "data": {"kind": "input", "label": "用户输入", "outputKey": "user_request"},
+            },
+            {
+                "id": "knowledge-1",
+                "position": {"x": 240, "y": 0},
+                "data": {
+                    "kind": "knowledge",
+                    "label": "知识检索",
+                    "query": "{{user_request}}",
+                    "topK": 2,
+                    "outputKey": "context",
+                },
+            },
+            {
+                "id": "output-1",
+                "position": {"x": 520, "y": 0},
+                "data": {"kind": "output", "label": "最终回答", "prompt": "{{context}}", "outputKey": "answer"},
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "input-1", "target": "knowledge-1"},
+            {"id": "e2", "source": "knowledge-1", "target": "output-1"},
+        ],
+    }
+
+
 def main() -> None:
     health = request("/api/health")
+    knowledge_status = request("/api/knowledge/status")
     workflow = {
         "name": "Smoke Test Workflow",
         "version": "0.2.0",
@@ -179,6 +214,7 @@ def main() -> None:
     branch_true_run = request("/api/runs", "POST", {"workflow": branch_workflow(), "input_text": "我要退款"})
     branch_false_run = request("/api/runs", "POST", {"workflow": branch_workflow(), "input_text": "我要咨询"})
     tool_run = request("/api/runs", "POST", {"workflow": http_tool_workflow(), "input_text": "检查后端"})
+    knowledge_run = request("/api/runs", "POST", {"workflow": knowledge_workflow(), "input_text": "退款多久到账"})
     stored_run = request(f"/api/workflows/{created['id']}/runs", "POST", {"input_text": "后端历史测试"})
     runs = request("/api/runs")
     workflow_runs = request(f"/api/runs?workflow_id={created['id']}")
@@ -204,6 +240,10 @@ def main() -> None:
     assert tool_step["provider"] == "HTTP 工具"
     assert "HTTP 200" in tool_step["output"]
     assert '"status":"ok"' in tool_step["output"].replace(" ", "")
+    knowledge_step = next(step for step in knowledge_run["steps"] if step["node_id"] == "knowledge-1")
+    assert knowledge_status["document_count"] >= 1
+    assert knowledge_step["provider"] == "本地知识库"
+    assert "退款" in knowledge_step["output"]
     assert any(
         step.get("provider") == "模拟输出"
         or str(step.get("provider", "")).startswith("OpenAI")
@@ -236,6 +276,8 @@ def main() -> None:
                 "branch_true_status": [step["status"] for step in branch_true_run["steps"]],
                 "branch_false_status": [step["status"] for step in branch_false_run["steps"]],
                 "tool_provider": tool_step.get("provider"),
+                "knowledge_documents": knowledge_status["document_count"],
+                "knowledge_provider": knowledge_step.get("provider"),
                 "stored_run_id": stored_run["id"],
                 "run_count": len(runs),
                 "workflow_run_count": len(workflow_runs),

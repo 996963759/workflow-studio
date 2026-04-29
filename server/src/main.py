@@ -10,6 +10,7 @@ from .models import (
     WorkflowRunRequest,
     WorkflowValidationResult,
 )
+from .knowledge import knowledge_status
 from .runner import get_provider_status, simulate_run
 from .storage import WorkflowStore
 from .validation import validate_workflow
@@ -35,6 +36,11 @@ def health() -> dict[str, str]:
 @app.get("/api/provider-status")
 def provider_status() -> dict[str, str | bool]:
     return get_provider_status()
+
+
+@app.get("/api/knowledge/status")
+def get_knowledge_status() -> dict[str, int | str]:
+    return knowledge_status()
 
 
 @app.get("/api/workflows", response_model=list[WorkflowRecord])

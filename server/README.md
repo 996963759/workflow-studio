@@ -1,6 +1,6 @@
 # Workflow Studio API
 
-FastAPI backend for Workflow Studio. The current backend stores workflows in a local SQLite database, validates workflow structure, records workflow runs, can call DeepSeek or OpenAI for LLM nodes when an API key is configured, and can execute localhost HTTP tool nodes.
+FastAPI backend for Workflow Studio. The current backend stores workflows in a local SQLite database, validates workflow structure, records workflow runs, searches local Markdown/TXT knowledge documents, can call DeepSeek or OpenAI for LLM nodes when an API key is configured, and can execute localhost HTTP tool nodes.
 
 ## Setup
 
@@ -39,10 +39,19 @@ DeepSeek is preferred when `DEEPSEEK_API_KEY` is present. Without DeepSeek or Op
 
 HTTP tool nodes can call `localhost`, `127.0.0.1`, or `::1` by default. Other hosts are blocked by validation and runtime checks.
 
+Local knowledge documents live in:
+
+```text
+server/data/knowledge/
+```
+
+Supported file types are `.md` and `.txt`. Knowledge nodes use simple local keyword retrieval and do not require a vector database.
+
 ## Endpoints
 
 - `GET /api/health`
 - `GET /api/provider-status`
+- `GET /api/knowledge/status`
 - `GET /api/workflows`
 - `POST /api/workflows/validate`
 - `POST /api/workflows`
