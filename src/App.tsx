@@ -98,6 +98,7 @@ type WorkflowRecord = Required<Pick<WorkflowDefinition, 'id' | 'name' | 'version
 }
 
 type WorkflowSortMode = 'updated' | 'name' | 'sync'
+type RunHistoryStatusFilter = 'all' | 'ok' | 'error'
 
 type ServerWorkflowRecord = {
   id: string
@@ -763,6 +764,8 @@ function App() {
   const [workflowSearch, setWorkflowSearch] = useState('')
   const [workflowSortMode, setWorkflowSortMode] = useState<WorkflowSortMode>('updated')
   const [showArchivedWorkflows, setShowArchivedWorkflows] = useState(false)
+  const [runHistorySearch, setRunHistorySearch] = useState('')
+  const [runHistoryStatusFilter, setRunHistoryStatusFilter] = useState<RunHistoryStatusFilter>('all')
   const [remoteValidation, setRemoteValidation] = useState<RemoteValidationState | null>(null)
   const [providerStatus, setProviderStatus] = useState<ProviderStatus | null>(null)
   const [providerStatusCheckedAt, setProviderStatusCheckedAt] = useState('')
@@ -788,6 +791,23 @@ function App() {
         return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
       })
   }, [showArchivedWorkflows, workflowSearch, workflowSortMode, workflowStore.workflows])
+  const visibleRunHistory = useMemo(() => {
+    const keyword = runHistorySearch.trim().toLowerCase()
+    return runHistory.filter((run) => {
+      const hasError = run.status === 'error' || run.steps.some((step) => step.status === 'error')
+      if (runHistoryStatusFilter === 'ok' && hasError) return false
+      if (runHistoryStatusFilter === 'error' && !hasError) return false
+      if (!keyword) return true
+      return [run.workflow_name, run.input_text, ...run.steps.flatMap((step) => [step.title, step.input, step.output, step.error ?? ''])]
+        .join('\n')
+        .toLowerCase()
+        .includes(keyword)
+    })
+  }, [runHistory, runHistorySearch, runHistoryStatusFilter])
+  const selectedRunRecord = runHistory.find((run) => run.id === selectedRunId)
+  const selectedRunErrorCount = selectedRunRecord?.steps.filter((step) => step.status === 'error').length ?? 0
+  const selectedRunDoneCount = selectedRunRecord?.steps.filter((step) => step.status === 'done' || step.status === 'routed').length ?? 0
+  const selectedRunSkippedCount = selectedRunRecord?.steps.filter((step) => step.status === 'skipped').length ?? 0
   const nodes = activeWorkflow.nodes
   const edges = activeWorkflow.edges
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? nodes[0]
@@ -940,6 +960,7 @@ function App() {
         output: issue.message,
       })),
     )
+    setSelectedRunId('')
     setNotice(`发现 ${errors.length} 个严重问题，已阻止${action}。`)
     return errors.length > 0
   }
@@ -957,6 +978,31 @@ function App() {
     } catch {
       setNotice('复制失败：当前浏览器不允许访问剪贴板。')
     }
+  }
+
+  const copyCurrentRunSummary = () => {
+    const selectedRun = selectedRunRecord
+    const title = selectedRun
+      ? `${selectedRun.workflow_name} · ${new Date(selectedRun.created_at).toLocaleString('zh-CN')}`
+      : activeWorkflow.name
+    const content = [
+      `运行：${title}`,
+      `输入：${selectedRun?.input_text ?? runInput}`,
+      ...runSteps.map((step, index) =>
+        [
+          `${index + 1}. ${step.title} [${step.status}]`,
+          `输入：${step.input}`,
+          `输出：${step.output}`,
+          step.variable ? `写入：${step.variable}` : '',
+          step.provider ? `来源：${step.provider}` : '',
+          step.error ? `错误：${step.error}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      ),
+    ].join('\n\n')
+
+    void copyText('整次运行结果', content)
   }
 
   const focusIssueNode = (issue: WorkflowIssue) => {
@@ -1416,6 +1462,7 @@ function App() {
           output: '工作流存在环形依赖或无效连线，无法计算执行顺序。',
         },
       ])
+      setSelectedRunId('')
       return
     }
 
@@ -1552,6 +1599,7 @@ function App() {
     })
 
     setRunSteps(steps)
+    setSelectedRunId('')
     setNotice(`已按 ${order.length} 个节点的连线顺序完成运行。`)
   }
 
@@ -2212,26 +2260,58 @@ function App() {
             </button>
           </div>
 
+          <div className="run-history-tools">
+            <label className="run-history-search">
+              <Search size={14} />
+              <input
+                type="search"
+                value={runHistorySearch}
+                onChange={(event) => setRunHistorySearch(event.target.value)}
+                placeholder="搜索输入或输出"
+              />
+            </label>
+            <select
+              value={runHistoryStatusFilter}
+              aria-label="运行历史状态筛选"
+              onChange={(event) => setRunHistoryStatusFilter(event.target.value as RunHistoryStatusFilter)}
+            >
+              <option value="all">全部状态</option>
+              <option value="ok">成功</option>
+              <option value="error">失败</option>
+            </select>
+          </div>
+
           <div className="run-history">
             {runHistory.length === 0 ? (
               <p>暂无后端运行历史。</p>
+            ) : visibleRunHistory.length === 0 ? (
+              <p>没有匹配的运行历史。</p>
             ) : (
-              runHistory.slice(0, 6).map((run) => (
-                <div key={run.id} className={clsx('run-history-item', run.id === selectedRunId && 'active')}>
-                  <button type="button" onClick={() => selectRunHistory(run.id)}>
-                    <strong>{run.workflow_name}</strong>
-                    <span>{new Date(run.created_at).toLocaleString('zh-CN')}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="run-delete-button"
-                    aria-label="删除运行历史"
-                    onClick={() => deleteRunHistory(run.id)}
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              ))
+              visibleRunHistory.slice(0, 8).map((run) => {
+                const hasError = run.status === 'error' || run.steps.some((step) => step.status === 'error')
+                const lastStep = [...run.steps].reverse().find((step) => step.status !== 'skipped') ?? run.steps.at(-1)
+                return (
+                  <div key={run.id} className={clsx('run-history-item', run.id === selectedRunId && 'active')}>
+                    <button type="button" onClick={() => selectRunHistory(run.id)}>
+                      <strong>{run.workflow_name}</strong>
+                      <span>{new Date(run.created_at).toLocaleString('zh-CN')}</span>
+                      <small>{run.input_text}</small>
+                      <small>{lastStep ? `结果：${lastStep.output}` : '暂无节点输出'}</small>
+                    </button>
+                    <span className={clsx('run-status-badge', hasError ? 'error' : 'ok')}>
+                      {hasError ? '失败' : '成功'}
+                    </span>
+                    <button
+                      type="button"
+                      className="run-delete-button"
+                      aria-label="删除运行历史"
+                      onClick={() => deleteRunHistory(run.id)}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                )
+              })
             )}
           </div>
 
@@ -2242,60 +2322,76 @@ function App() {
                 <span>点击运行后，可以查看每个节点的模拟输出。</span>
               </div>
             ) : (
-              runSteps.map((step) => (
-                <article key={step.nodeId}>
-                  <span className={clsx('status-dot', step.status)} />
+              <>
+                <div className="run-summary">
                   <div>
-                    <strong>{step.title}</strong>
-                    <dl>
-                      <div>
-                        <dt>
-                          输入
-                          <button type="button" onClick={() => copyText('节点输入', step.input)}>
-                            <Copy size={12} />
-                            复制
-                          </button>
-                        </dt>
-                        <dd>{step.input}</dd>
-                      </div>
-                      <div>
-                        <dt>
-                          输出
-                          <button type="button" onClick={() => copyText('节点输出', step.output)}>
-                            <Copy size={12} />
-                            复制
-                          </button>
-                        </dt>
-                        <dd>{step.output}</dd>
-                      </div>
-                      {step.variable && (
+                    <strong>{selectedRunRecord ? selectedRunRecord.workflow_name : '当前运行结果'}</strong>
+                    <span>
+                      完成 {selectedRunDoneCount || runSteps.filter((step) => step.status === 'done' || step.status === 'routed').length}
+                      个，跳过 {selectedRunSkippedCount || runSteps.filter((step) => step.status === 'skipped').length} 个，错误{' '}
+                      {selectedRunErrorCount || runSteps.filter((step) => step.status === 'error').length} 个
+                    </span>
+                  </div>
+                  <button type="button" onClick={copyCurrentRunSummary}>
+                    <Copy size={12} />
+                    复制整次结果
+                  </button>
+                </div>
+                {runSteps.map((step) => (
+                  <article key={step.nodeId}>
+                    <span className={clsx('status-dot', step.status)} />
+                    <div>
+                      <strong>{step.title}</strong>
+                      <dl>
                         <div>
-                          <dt>写入</dt>
-                          <dd>{step.variable}</dd>
-                        </div>
-                      )}
-                      {step.provider && (
-                        <div>
-                          <dt>来源</dt>
-                          <dd>{step.provider}</dd>
-                        </div>
-                      )}
-                      {step.error && (
-                        <div className="run-error-detail">
                           <dt>
-                            错误原因
-                            <button type="button" onClick={() => copyText('错误原因', step.error)}>
+                            输入
+                            <button type="button" onClick={() => copyText('节点输入', step.input)}>
                               <Copy size={12} />
                               复制
                             </button>
                           </dt>
-                          <dd>{step.error}</dd>
+                          <dd>{step.input}</dd>
                         </div>
-                      )}
-                    </dl>
-                  </div>
-                </article>
-              ))
+                        <div>
+                          <dt>
+                            输出
+                            <button type="button" onClick={() => copyText('节点输出', step.output)}>
+                              <Copy size={12} />
+                              复制
+                            </button>
+                          </dt>
+                          <dd>{step.output}</dd>
+                        </div>
+                        {step.variable && (
+                          <div>
+                            <dt>写入</dt>
+                            <dd>{step.variable}</dd>
+                          </div>
+                        )}
+                        {step.provider && (
+                          <div>
+                            <dt>来源</dt>
+                            <dd>{step.provider}</dd>
+                          </div>
+                        )}
+                        {step.error && (
+                          <div className="run-error-detail">
+                            <dt>
+                              错误原因
+                              <button type="button" onClick={() => copyText('错误原因', step.error)}>
+                                <Copy size={12} />
+                                复制
+                              </button>
+                            </dt>
+                            <dd>{step.error}</dd>
+                          </div>
+                        )}
+                      </dl>
+                    </div>
+                  </article>
+                ))}
+              </>
             )}
           </div>
         </section>
