@@ -2,6 +2,16 @@
 
 这是一个本地运行的类 Dify 工作流应用 MVP，使用 React、TypeScript、Vite 和 React Flow 构建。
 
+## 文档导航
+
+- [架构说明](docs/architecture.md)
+- [API 摘要](docs/api.md)
+- [演示流程](docs/demo-script.md)
+- [安全与边界](docs/security.md)
+- [简历描述](docs/resume.md)
+- [发布说明](docs/release-notes.md)
+- [需求与计划](docs/requirements-and-plan.md)
+
 ## 当前功能
 
 - 可拖拽、可连线的可视化工作流画布
@@ -277,6 +287,20 @@ powershell -ExecutionPolicy Bypass -File .\scripts\test-all.ps1
 ```
 
 脚本会执行前端 lint、前端构建、Python 编译、后端 unittest，并启动临时后端运行 smoke test。
+
+## 项目体检
+
+快速检查依赖、构建、测试、Alembic 配置：
+
+```powershell
+npm.cmd run doctor
+```
+
+如果要额外检查 Docker Compose 配置：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\doctor.ps1
+```
 
 ## 当前边界
 

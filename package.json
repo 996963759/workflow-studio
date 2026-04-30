@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "doctor": "powershell -ExecutionPolicy Bypass -File ./scripts/doctor.ps1 -SkipDocker"
   },
   "dependencies": {
     "@xyflow/react": "^12.10.2",
