@@ -140,6 +140,20 @@ The database file is ignored by Git.
 
 Saved workflow records include `name`, `version`, `nodes`, `edges`, `archived`, and `updated_at`.
 
+## Migrations
+
+Run Alembic migrations from the repo root:
+
+```powershell
+server\.venv\Scripts\python.exe -m alembic upgrade head
+```
+
+Generate a migration after changing ORM models:
+
+```powershell
+server\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe change"
+```
+
 ## Smoke Test
 
 From the repo root, recommended:

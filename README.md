@@ -214,6 +214,20 @@ http://127.0.0.1:8000/api/health
 - `LOG_LEVEL`：后端日志级别，默认 `INFO`
 - `CORS_ORIGINS`：允许访问 API 的前端地址
 
+## 数据库迁移
+
+项目已接入 SQLAlchemy ORM 和 Alembic。升级数据库结构：
+
+```powershell
+server\.venv\Scripts\python.exe -m alembic upgrade head
+```
+
+生成迁移草稿：
+
+```powershell
+server\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "描述变更"
+```
+
 ## Docker 运行
 
 ```powershell
@@ -272,6 +286,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\test-all.ps1
 
 - `workflow-studio.workflows`：保存所有本地工作流。
 - `workflow-studio.active-workflow-id`：保存当前选中的工作流。
+- `workflow-studio.auth-session`：保存当前浏览器登录 token。
 - 旧版 `workflow-studio.current-workflow` 会在首次打开时自动迁移。
 - 同步到后端后，本地工作流会记录后端 ID 和最近同步时间。
 

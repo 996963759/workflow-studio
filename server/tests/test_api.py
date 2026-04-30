@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from server.src.auth import AuthService, set_auth_service
 from server.src import main as api
+from server.src.db import create_session_factory
 from server.src.storage import WorkflowStore
 
 
@@ -51,7 +52,10 @@ class ApiTestCase(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.previous_store = api.store
         self.previous_auth_service = api.auth_service
-        api.store = WorkflowStore(Path(self.temp_dir.name) / "test.db")
+        test_db = Path(self.temp_dir.name) / "test.db"
+        engine, session_factory = create_session_factory(f"sqlite:///{test_db.as_posix()}")
+        self.engine = engine
+        api.store = WorkflowStore(test_db, session_factory=session_factory, engine=engine)
         api.auth_service = AuthService(api.store)
         set_auth_service(api.auth_service)
         self.client = TestClient(api.app)
@@ -59,6 +63,7 @@ class ApiTestCase(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.client.close()
+        self.engine.dispose()
         api.store = self.previous_store
         api.auth_service = self.previous_auth_service
         set_auth_service(self.previous_auth_service)

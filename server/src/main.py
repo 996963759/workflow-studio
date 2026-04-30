@@ -23,14 +23,14 @@ from .models import (
 from .knowledge import delete_knowledge_document, knowledge_status, list_knowledge_documents, save_knowledge_document
 from .logging_config import configure_logging
 from .runner import get_provider_status, simulate_run
-from .storage import WorkflowStore
+from .storage import default_store
 from .validation import validate_workflow
 
 
 configure_logging()
 logger = logging.getLogger("workflow_studio.api")
 app = FastAPI(title="Workflow Studio API", version="0.1.0")
-store = WorkflowStore()
+store = default_store
 auth_service = AuthService(store)
 set_auth_service(auth_service)
 default_user_id = auth_service.ensure_default_user()

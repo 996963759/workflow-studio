@@ -21,3 +21,10 @@ CORS_ORIGINS = [
     for origin in get_env("CORS_ORIGINS", "http://127.0.0.1:5173,http://localhost:5173").split(",")
     if origin.strip()
 ]
+
+
+def sqlite_url(path: Path) -> str:
+    return f"sqlite:///{path.as_posix()}"
+
+
+DATABASE_URL = get_env("DATABASE_URL", sqlite_url(DATABASE_PATH))

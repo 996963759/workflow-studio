@@ -1,11 +1,13 @@
 import hashlib
 import hmac
 import secrets
-import sqlite3
 
 from fastapi import Header, HTTPException
+from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 
 from .models import AuthPayload, AuthResponse, UserRecord
+from .orm import DbSession, DbUser
 from .storage import WorkflowStore, utc_now
 
 
@@ -45,14 +47,16 @@ class AuthService:
         created_at = utc_now()
         try:
             with self.store._connect() as connection:
-                connection.execute(
-                    """
-                    INSERT INTO users (id, username, password_hash, created_at)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (user_id, username, hash_password(password), created_at),
+                connection.add(
+                    DbUser(
+                        id=user_id,
+                        username=username,
+                        password_hash=hash_password(password),
+                        created_at=created_at,
+                    )
                 )
-        except sqlite3.IntegrityError as error:
+                connection.commit()
+        except IntegrityError as error:
             raise HTTPException(status_code=409, detail="Username already exists") from error
         token = self.create_session(user_id)
         return AuthResponse(token=token, user=UserRecord(id=user_id, username=username, created_at=created_at))
@@ -62,8 +66,8 @@ class AuthService:
         if not user:
             raise HTTPException(status_code=401, detail="Invalid username or password")
         with self.store._connect() as connection:
-            row = connection.execute("SELECT password_hash FROM users WHERE id = ?", (user.id,)).fetchone()
-        if not row or not verify_password(password, row["password_hash"]):
+            db_user = connection.scalar(select(DbUser).where(DbUser.id == user.id))
+        if not db_user or not verify_password(password, db_user.password_hash):
             raise HTTPException(status_code=401, detail="Invalid username or password")
         token = self.create_session(user.id)
         return AuthResponse(token=token, user=user)
@@ -71,39 +75,28 @@ class AuthService:
     def create_session(self, user_id: str) -> str:
         token = secrets.token_urlsafe(32)
         with self.store._connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO sessions (token, user_id, created_at)
-                VALUES (?, ?, ?)
-                """,
-                (token, user_id, utc_now()),
-            )
+            connection.add(DbSession(token=token, user_id=user_id, created_at=utc_now()))
+            connection.commit()
         return token
 
     def get_user_by_username(self, username: str) -> UserRecord | None:
         with self.store._connect() as connection:
-            row = connection.execute(
-                "SELECT id, username, created_at FROM users WHERE username = ?",
-                (username,),
-            ).fetchone()
-        return UserRecord(id=row["id"], username=row["username"], created_at=row["created_at"]) if row else None
+            row = connection.scalar(select(DbUser).where(DbUser.username == username))
+        return UserRecord(id=row.id, username=row.username, created_at=row.created_at) if row else None
 
     def get_user_by_token(self, token: str) -> UserRecord | None:
         with self.store._connect() as connection:
-            row = connection.execute(
-                """
-                SELECT users.id, users.username, users.created_at
-                FROM sessions
-                JOIN users ON users.id = sessions.user_id
-                WHERE sessions.token = ?
-                """,
-                (token,),
-            ).fetchone()
-        return UserRecord(id=row["id"], username=row["username"], created_at=row["created_at"]) if row else None
+            row = connection.scalar(
+                select(DbUser)
+                .join(DbSession, DbSession.user_id == DbUser.id)
+                .where(DbSession.token == token)
+            )
+        return UserRecord(id=row.id, username=row.username, created_at=row.created_at) if row else None
 
     def logout(self, token: str) -> None:
         with self.store._connect() as connection:
-            connection.execute("DELETE FROM sessions WHERE token = ?", (token,))
+            connection.execute(delete(DbSession).where(DbSession.token == token))
+            connection.commit()
 
 
 auth_service: AuthService | None = None
