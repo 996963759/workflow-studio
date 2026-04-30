@@ -55,7 +55,10 @@ try {
   npm.cmd run build
 
   Write-Host "Compiling backend Python files..."
-  & $Python -m compileall server/src server/scripts
+  & $Python -m compileall server/src server/scripts server/tests
+
+  Write-Host "Running backend unit tests..."
+  & $Python -m unittest discover server/tests
 
   if (Test-PortListening $SmokePort) {
     throw "Smoke test port $SmokePort is already in use. Stop that process or pass -SmokePort with another value."

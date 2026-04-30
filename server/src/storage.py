@@ -4,11 +4,11 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .config import DATABASE_PATH
 from .models import RunRecord, RunResponse, WorkflowPayload, WorkflowRecord
 
 
-DATA_DIR = Path(__file__).resolve().parents[1] / "data"
-DB_PATH = DATA_DIR / "workflow_studio.db"
+DB_PATH = DATABASE_PATH
 
 
 def utc_now() -> str:

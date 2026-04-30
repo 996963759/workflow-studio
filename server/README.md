@@ -1,6 +1,6 @@
 # Workflow Studio API
 
-FastAPI backend for Workflow Studio. The current backend stores workflows and archive status in a local SQLite database, validates workflow structure, records workflow runs, searches local Markdown/TXT knowledge documents, can call DeepSeek or OpenAI for LLM nodes when an API key is configured, and can execute localhost HTTP tool nodes.
+FastAPI backend for Workflow Studio. The current backend stores workflows and archive status in a local SQLite database, validates workflow structure, records workflow runs, searches local Markdown/TXT knowledge documents, can call DeepSeek or OpenAI for LLM nodes when an API key is configured, and can execute localhost HTTP tool nodes. It also includes request logging, configurable CORS/database settings, and unittest coverage for the core API lifecycle.
 
 ## Setup
 
@@ -50,6 +50,12 @@ server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 
 ```
 
 DeepSeek is preferred when `DEEPSEEK_API_KEY` is present. Without DeepSeek or OpenAI keys, LLM nodes keep returning simulated output.
+
+Additional environment variables:
+
+- `WORKFLOW_STUDIO_DB`: SQLite database path
+- `LOG_LEVEL`: Python log level, default `INFO`
+- `CORS_ORIGINS`: comma-separated allowed frontend origins
 
 LLM nodes support per-node runtime options:
 
@@ -155,4 +161,10 @@ If the API is running on another port:
 ```powershell
 $env:BASE_URL="http://127.0.0.1:8001"
 server\.venv\Scripts\python.exe server/scripts/smoke_test.py
+```
+
+Run backend unit tests only:
+
+```powershell
+server\.venv\Scripts\python.exe -m unittest discover server/tests
 ```

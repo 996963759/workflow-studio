@@ -1,6 +1,11 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+import logging
+import time
 
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+from .config import CORS_ORIGINS, DIST_DIR
 from .models import (
     KnowledgeDocumentPayload,
     RunRecord,
@@ -12,21 +17,39 @@ from .models import (
     WorkflowValidationResult,
 )
 from .knowledge import delete_knowledge_document, knowledge_status, list_knowledge_documents, save_knowledge_document
+from .logging_config import configure_logging
 from .runner import get_provider_status, simulate_run
 from .storage import WorkflowStore
 from .validation import validate_workflow
 
 
+configure_logging()
+logger = logging.getLogger("workflow_studio.api")
 app = FastAPI(title="Workflow Studio API", version="0.1.0")
 store = WorkflowStore()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    started_at = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - started_at) * 1000
+    logger.info(
+        "request method=%s path=%s status=%s duration_ms=%.1f",
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration_ms,
+    )
+    return response
 
 
 @app.get("/api/health")
@@ -151,3 +174,7 @@ def run_stored_workflow(workflow_id: str, payload: WorkflowRunRequest) -> RunRec
     raise_on_validation_errors(workflow)
     response = simulate_run(workflow, payload.input_text)
     return store.create_run(workflow.id, workflow.name, payload.input_text, response)
+
+
+if DIST_DIR.exists():
+    app.mount("/", StaticFiles(directory=DIST_DIR, html=True), name="frontend")

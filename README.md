@@ -50,6 +50,7 @@
 - 存在严重问题时会阻止运行
 - 右侧配置面板会根据节点类型展示专属配置项
 - 节点配置面板支持字段级校验和恢复默认配置
+- 后端单元测试、请求日志、环境变量样例和 Docker Compose 部署文件
 - 节点支持失败策略和重试次数配置
 - 运行输入可以手动编辑，也可以一键套用示例
 - 提示词、检索语句、工具请求地址、请求头、请求体和输出模板支持变量快速插入
@@ -199,6 +200,29 @@ server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 
 http://127.0.0.1:8000/api/health
 ```
 
+## 环境变量
+
+项目提供 `.env.example` 作为配置模板。常用项：
+
+- `DEEPSEEK_API_KEY`：启用 DeepSeek 大模型节点
+- `DEEPSEEK_MODEL`：DeepSeek 模型，默认 `deepseek-v4-flash`
+- `OPENAI_API_KEY`：没有 DeepSeek Key 时可启用 OpenAI
+- `WORKFLOW_STUDIO_DB`：SQLite 数据库路径
+- `LOG_LEVEL`：后端日志级别，默认 `INFO`
+- `CORS_ORIGINS`：允许访问 API 的前端地址
+
+## Docker 运行
+
+```powershell
+docker compose up --build
+```
+
+容器会构建前端并启动 FastAPI，访问：
+
+```text
+http://127.0.0.1:8000
+```
+
 ## 本地知识库
 
 可以在右侧“知识库”面板上传 Markdown 或 TXT 文档，也可以手动把文件放到：
@@ -235,7 +259,7 @@ npm.cmd run build
 powershell -ExecutionPolicy Bypass -File .\scripts\test-all.ps1
 ```
 
-脚本会执行前端 lint、前端构建、Python 编译，并启动临时后端运行 smoke test。
+脚本会执行前端 lint、前端构建、Python 编译、后端 unittest，并启动临时后端运行 smoke test。
 
 ## 当前边界
 
