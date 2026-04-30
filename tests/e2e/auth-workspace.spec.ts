@@ -10,7 +10,7 @@ test('注册后进入中文工作台并显示团队空间和运行队列入口',
   await page.getByRole('button', { name: '注册并登录' }).click()
 
   await expect(page.getByText('流程工坊').first()).toBeVisible()
-  await expect(page.getByText('团队空间')).toBeVisible()
+  await expect(page.getByText('团队空间', { exact: true })).toBeVisible()
   await expect(page.getByLabel('当前团队空间')).toBeVisible()
   await expect(page.getByRole('button', { name: '异步入队' })).toBeVisible()
   await expect(page.getByText('异步队列空闲')).toBeVisible()
