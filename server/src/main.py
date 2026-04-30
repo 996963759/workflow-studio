@@ -1,7 +1,7 @@
 import logging
 import time
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -12,15 +12,27 @@ from .models import (
     AuthResponse,
     KnowledgeDocumentPayload,
     RunRecord,
+    RunJobRecord,
     RunRequest,
     RunResponse,
+    WorkspaceCreatePayload,
+    WorkspaceMemberPayload,
+    WorkspaceMemberRecord,
+    WorkspaceRecord,
     WorkflowPayload,
     WorkflowRecord,
     WorkflowRunRequest,
     WorkflowValidationResult,
     UserRecord,
 )
-from .knowledge import delete_knowledge_document, knowledge_status, list_knowledge_documents, save_knowledge_document
+from .jobs import RunJobQueue
+from .knowledge import (
+    delete_knowledge_document,
+    knowledge_status,
+    list_knowledge_documents,
+    save_knowledge_document,
+    set_knowledge_session_factory,
+)
 from .logging_config import configure_logging
 from .runner import get_provider_status, simulate_run
 from .storage import default_store
@@ -31,10 +43,12 @@ configure_logging()
 logger = logging.getLogger("workflow_studio.api")
 app = FastAPI(title="Workflow Studio API", version="0.1.0")
 store = default_store
+set_knowledge_session_factory(store.SessionLocal)
 auth_service = AuthService(store)
 set_auth_service(auth_service)
 default_user_id = auth_service.ensure_default_user()
 store.assign_unowned_records(default_user_id)
+job_queue = RunJobQueue(store)
 
 app.add_middleware(
     CORSMiddleware,
@@ -70,31 +84,93 @@ def provider_status() -> dict[str, str | bool]:
     return get_provider_status()
 
 
+def resolve_workspace_id(user: UserRecord, workspace_id: str | None = Header(default=None, alias="X-Workspace-Id")) -> str:
+    if workspace_id:
+        if not store.can_access_workspace(workspace_id, user.id):
+            raise HTTPException(status_code=403, detail="Workspace access denied")
+        return workspace_id
+    return store.ensure_default_workspace(user.id, user.username)
+
+
+def require_workspace_role(minimum_role: str):
+    def dependency(
+        user: UserRecord = Depends(require_auth),
+        workspace_id: str | None = Header(default=None, alias="X-Workspace-Id"),
+    ) -> tuple[UserRecord, str]:
+        resolved_workspace_id = resolve_workspace_id(user, workspace_id)
+        if not store.can_access_workspace(resolved_workspace_id, user.id, minimum_role):
+            raise HTTPException(status_code=403, detail="Insufficient workspace role")
+        return user, resolved_workspace_id
+
+    return dependency
+
+
+WorkspaceContext = tuple[UserRecord, str]
+
+
+@app.get("/api/workspaces", response_model=list[WorkspaceRecord])
+def list_workspaces(user: UserRecord = Depends(require_auth)) -> list[WorkspaceRecord]:
+    store.ensure_default_workspace(user.id, user.username)
+    return store.list_workspaces(user.id)
+
+
+@app.post("/api/workspaces", response_model=WorkspaceRecord, status_code=201)
+def create_workspace(payload: WorkspaceCreatePayload, user: UserRecord = Depends(require_auth)) -> WorkspaceRecord:
+    return store.create_workspace(user.id, payload.name)
+
+
+@app.get("/api/workspaces/{workspace_id}/members", response_model=list[WorkspaceMemberRecord])
+def list_workspace_members(workspace_id: str, user: UserRecord = Depends(require_auth)) -> list[WorkspaceMemberRecord]:
+    members = store.list_workspace_members(workspace_id, user.id)
+    if members is None:
+        raise HTTPException(status_code=403, detail="Workspace access denied")
+    return members
+
+
+@app.post("/api/workspaces/{workspace_id}/members", response_model=WorkspaceMemberRecord)
+def upsert_workspace_member(
+    workspace_id: str,
+    payload: WorkspaceMemberPayload,
+    user: UserRecord = Depends(require_auth),
+) -> WorkspaceMemberRecord:
+    member = store.upsert_workspace_member(workspace_id, user.id, payload.username, payload.role)
+    if member is None:
+        raise HTTPException(status_code=404, detail="User not found or workspace access denied")
+    return member
+
+
 @app.get("/api/knowledge/status")
-def get_knowledge_status(user: UserRecord = Depends(require_auth)) -> dict[str, int | str]:
-    return knowledge_status(user.id)
+def get_knowledge_status(context: WorkspaceContext = Depends(require_workspace_role("viewer"))) -> dict[str, int | str]:
+    user, workspace_id = context
+    return knowledge_status(user.id, workspace_id)
 
 
 @app.get("/api/knowledge/documents")
-def get_knowledge_documents(user: UserRecord = Depends(require_auth)) -> list[dict[str, int | str]]:
-    return list_knowledge_documents(user.id)
+def get_knowledge_documents(context: WorkspaceContext = Depends(require_workspace_role("viewer"))) -> list[dict[str, int | str]]:
+    user, workspace_id = context
+    return list_knowledge_documents(user.id, workspace_id)
 
 
 @app.post("/api/knowledge/documents", status_code=201)
 def upload_knowledge_document(
     payload: KnowledgeDocumentPayload,
-    user: UserRecord = Depends(require_auth),
+    context: WorkspaceContext = Depends(require_workspace_role("editor")),
 ) -> dict[str, int | str]:
+    user, workspace_id = context
     try:
-        return save_knowledge_document(payload.filename, payload.content, user.id)
+        return save_knowledge_document(payload.filename, payload.content, user.id, workspace_id)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @app.delete("/api/knowledge/documents/{filename}", status_code=204)
-def remove_knowledge_document(filename: str, user: UserRecord = Depends(require_auth)) -> None:
+def remove_knowledge_document(
+    filename: str,
+    context: WorkspaceContext = Depends(require_workspace_role("editor")),
+) -> None:
+    user, workspace_id = context
     try:
-        deleted = delete_knowledge_document(filename, user.id)
+        deleted = delete_knowledge_document(filename, user.id, workspace_id)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     if not deleted:
@@ -122,8 +198,9 @@ def logout_user(token: str = Depends(current_token)) -> None:
 
 
 @app.get("/api/workflows", response_model=list[WorkflowRecord])
-def list_workflows(user: UserRecord = Depends(require_auth)) -> list[WorkflowRecord]:
-    return store.list_workflows(user.id)
+def list_workflows(context: WorkspaceContext = Depends(require_workspace_role("viewer"))) -> list[WorkflowRecord]:
+    user, workspace_id = context
+    return store.list_workflows(user.id, workspace_id)
 
 
 def raise_on_validation_errors(payload: WorkflowPayload) -> WorkflowValidationResult:
@@ -136,20 +213,28 @@ def raise_on_validation_errors(payload: WorkflowPayload) -> WorkflowValidationRe
 @app.post("/api/workflows/validate", response_model=WorkflowValidationResult)
 def validate_workflow_payload(
     payload: WorkflowPayload,
-    _: UserRecord = Depends(require_auth),
+    _: WorkspaceContext = Depends(require_workspace_role("viewer")),
 ) -> WorkflowValidationResult:
     return validate_workflow(payload)
 
 
 @app.post("/api/workflows", response_model=WorkflowRecord, status_code=201)
-def create_workflow(payload: WorkflowPayload, user: UserRecord = Depends(require_auth)) -> WorkflowRecord:
+def create_workflow(
+    payload: WorkflowPayload,
+    context: WorkspaceContext = Depends(require_workspace_role("editor")),
+) -> WorkflowRecord:
+    user, workspace_id = context
     raise_on_validation_errors(payload)
-    return store.create_workflow(payload, user.id)
+    return store.create_workflow(payload, user.id, workspace_id)
 
 
 @app.get("/api/workflows/{workflow_id}", response_model=WorkflowRecord)
-def get_workflow(workflow_id: str, user: UserRecord = Depends(require_auth)) -> WorkflowRecord:
-    workflow = store.get_workflow(workflow_id, user.id)
+def get_workflow(
+    workflow_id: str,
+    context: WorkspaceContext = Depends(require_workspace_role("viewer")),
+) -> WorkflowRecord:
+    user, workspace_id = context
+    workflow = store.get_workflow(workflow_id, user.id, workspace_id)
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
     return workflow
@@ -159,51 +244,61 @@ def get_workflow(workflow_id: str, user: UserRecord = Depends(require_auth)) -> 
 def update_workflow(
     workflow_id: str,
     payload: WorkflowPayload,
-    user: UserRecord = Depends(require_auth),
+    context: WorkspaceContext = Depends(require_workspace_role("editor")),
 ) -> WorkflowRecord:
+    user, workspace_id = context
     raise_on_validation_errors(payload)
-    workflow = store.update_workflow(workflow_id, payload, user.id)
+    workflow = store.update_workflow(workflow_id, payload, user.id, workspace_id)
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
     return workflow
 
 
 @app.delete("/api/workflows/{workflow_id}", status_code=204)
-def delete_workflow(workflow_id: str, user: UserRecord = Depends(require_auth)) -> None:
-    if not store.delete_workflow(workflow_id, user.id):
+def delete_workflow(workflow_id: str, context: WorkspaceContext = Depends(require_workspace_role("editor"))) -> None:
+    user, workspace_id = context
+    if not store.delete_workflow(workflow_id, user.id, workspace_id):
         raise HTTPException(status_code=404, detail="Workflow not found")
 
 
 @app.post("/api/runs", response_model=RunResponse)
-def run_workflow(payload: RunRequest, user: UserRecord = Depends(require_auth)) -> RunResponse:
+def run_workflow(payload: RunRequest, context: WorkspaceContext = Depends(require_workspace_role("viewer"))) -> RunResponse:
+    user, workspace_id = context
     raise_on_validation_errors(payload.workflow)
-    return simulate_run(payload.workflow, payload.input_text, user.id)
+    return simulate_run(payload.workflow, payload.input_text, user.id, workspace_id)
 
 
 @app.get("/api/runs", response_model=list[RunRecord])
 def list_runs(
     workflow_id: str | None = None,
-    user: UserRecord = Depends(require_auth),
+    context: WorkspaceContext = Depends(require_workspace_role("viewer")),
 ) -> list[RunRecord]:
-    return store.list_runs(user.id, workflow_id)
+    user, workspace_id = context
+    return store.list_runs(user.id, workflow_id, workspace_id)
 
 
 @app.delete("/api/runs", status_code=204)
-def delete_runs(workflow_id: str | None = None, user: UserRecord = Depends(require_auth)) -> None:
-    store.delete_runs(user.id, workflow_id)
+def delete_runs(
+    workflow_id: str | None = None,
+    context: WorkspaceContext = Depends(require_workspace_role("editor")),
+) -> None:
+    user, workspace_id = context
+    store.delete_runs(user.id, workflow_id, workspace_id)
 
 
 @app.get("/api/runs/{run_id}", response_model=RunRecord)
-def get_run(run_id: str, user: UserRecord = Depends(require_auth)) -> RunRecord:
-    run = store.get_run(run_id, user.id)
+def get_run(run_id: str, context: WorkspaceContext = Depends(require_workspace_role("viewer"))) -> RunRecord:
+    user, workspace_id = context
+    run = store.get_run(run_id, user.id, workspace_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     return run
 
 
 @app.delete("/api/runs/{run_id}", status_code=204)
-def delete_run(run_id: str, user: UserRecord = Depends(require_auth)) -> None:
-    if not store.delete_run(run_id, user.id):
+def delete_run(run_id: str, context: WorkspaceContext = Depends(require_workspace_role("editor"))) -> None:
+    user, workspace_id = context
+    if not store.delete_run(run_id, user.id, workspace_id):
         raise HTTPException(status_code=404, detail="Run not found")
 
 
@@ -211,14 +306,47 @@ def delete_run(run_id: str, user: UserRecord = Depends(require_auth)) -> None:
 def run_stored_workflow(
     workflow_id: str,
     payload: WorkflowRunRequest,
-    user: UserRecord = Depends(require_auth),
+    context: WorkspaceContext = Depends(require_workspace_role("viewer")),
 ) -> RunRecord:
-    workflow = store.get_workflow(workflow_id, user.id)
+    user, workspace_id = context
+    workflow = store.get_workflow(workflow_id, user.id, workspace_id)
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
     raise_on_validation_errors(workflow)
-    response = simulate_run(workflow, payload.input_text, user.id)
-    return store.create_run(workflow.id, user.id, workflow.name, payload.input_text, response)
+    response = simulate_run(workflow, payload.input_text, user.id, workspace_id)
+    return store.create_run(workflow.id, user.id, workflow.name, payload.input_text, response, workspace_id)
+
+
+@app.post("/api/workflows/{workflow_id}/run-jobs", response_model=RunJobRecord, status_code=202)
+def enqueue_stored_workflow_run(
+    workflow_id: str,
+    payload: WorkflowRunRequest,
+    context: WorkspaceContext = Depends(require_workspace_role("viewer")),
+) -> RunJobRecord:
+    user, workspace_id = context
+    workflow = store.get_workflow(workflow_id, user.id, workspace_id)
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    raise_on_validation_errors(workflow)
+    return job_queue.enqueue(user.id, workspace_id, workflow_id, payload.input_text)
+
+
+@app.get("/api/run-jobs", response_model=list[RunJobRecord])
+def list_run_jobs(
+    workflow_id: str | None = None,
+    context: WorkspaceContext = Depends(require_workspace_role("viewer")),
+) -> list[RunJobRecord]:
+    user, workspace_id = context
+    return store.list_run_jobs(user.id, workflow_id, workspace_id)
+
+
+@app.get("/api/run-jobs/{job_id}", response_model=RunJobRecord)
+def get_run_job(job_id: str, context: WorkspaceContext = Depends(require_workspace_role("viewer"))) -> RunJobRecord:
+    user, workspace_id = context
+    job = store.get_run_job(job_id, user.id, workspace_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Run job not found")
+    return job
 
 
 if DIST_DIR.exists():

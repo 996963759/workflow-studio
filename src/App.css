@@ -120,6 +120,48 @@
   border-radius: 8px;
 }
 
+.workspace-panel {
+  gap: 10px;
+}
+
+.workspace-panel select {
+  width: 100%;
+}
+
+.workspace-role {
+  color: #64748b;
+  font-size: 12px;
+  margin: 0;
+}
+
+.run-job-strip {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #dbe3dd;
+  border-radius: 7px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px;
+}
+
+.run-job-strip span {
+  color: #475569;
+  flex: 1;
+  font-size: 12px;
+  min-width: 160px;
+}
+
+.run-job-strip button {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  color: #334155;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 5px 8px;
+}
+
 .brand strong,
 .workflow-node strong,
 .run-log strong {

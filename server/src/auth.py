@@ -58,6 +58,7 @@ class AuthService:
                 connection.commit()
         except IntegrityError as error:
             raise HTTPException(status_code=409, detail="Username already exists") from error
+        self.store.ensure_default_workspace(user_id, username)
         token = self.create_session(user_id)
         return AuthResponse(token=token, user=UserRecord(id=user_id, username=username, created_at=created_at))
 

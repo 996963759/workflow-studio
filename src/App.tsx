@@ -45,6 +45,7 @@ import {
 import clsx from 'clsx'
 import '@xyflow/react/dist/style.css'
 import './App.css'
+import { AuthView } from './components/AuthView'
 
 type NodeKind = 'input' | 'llm' | 'knowledge' | 'tool' | 'condition' | 'output'
 type ConditionOperator = 'contains' | 'equals' | 'not_empty'
@@ -147,6 +148,25 @@ type AuthSession = {
   user: AuthUser
 }
 
+type WorkspaceRecord = {
+  id: string
+  name: string
+  owner_id: string
+  role: 'owner' | 'editor' | 'viewer'
+  created_at: string
+}
+
+type RunJobRecord = {
+  id: string
+  workflow_id: string
+  status: 'queued' | 'running' | 'succeeded' | 'failed'
+  input_text: string
+  run_id?: string | null
+  error?: string | null
+  created_at: string
+  updated_at: string
+}
+
 type BackendWorkflowLoadMode = 'manual' | 'startup'
 
 type WorkflowIssue = {
@@ -193,6 +213,7 @@ type KnowledgeStatus = {
   directory: string
   document_count: number
   chunk_count: number
+  indexed_chunk_count?: number
 }
 
 type KnowledgeDocument = {
@@ -214,6 +235,7 @@ const LEGACY_STORAGE_KEY = 'workflow-studio.current-workflow'
 const WORKFLOWS_STORAGE_KEY = 'workflow-studio.workflows'
 const ACTIVE_WORKFLOW_STORAGE_KEY = 'workflow-studio.active-workflow-id'
 const AUTH_STORAGE_KEY = 'workflow-studio.auth-session'
+const ACTIVE_WORKSPACE_STORAGE_KEY = 'workflow-studio.active-workspace-id'
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
 
 const nodeMeta: Record<
@@ -605,6 +627,16 @@ const persistAuthSession = (session: AuthSession | null) => {
     return
   }
   window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session))
+}
+
+const loadActiveWorkspaceId = () => window.localStorage.getItem(ACTIVE_WORKSPACE_STORAGE_KEY) ?? ''
+
+const persistActiveWorkspaceId = (workspaceId: string) => {
+  if (!workspaceId) {
+    window.localStorage.removeItem(ACTIVE_WORKSPACE_STORAGE_KEY)
+    return
+  }
+  window.localStorage.setItem(ACTIVE_WORKSPACE_STORAGE_KEY, workspaceId)
 }
 
 const loadWorkflowStore = (): WorkflowStore => {
@@ -1142,6 +1174,10 @@ function App() {
   const [providerStatusCheckedAt, setProviderStatusCheckedAt] = useState('')
   const [knowledgeStatus, setKnowledgeStatus] = useState<KnowledgeStatus | null>(null)
   const [knowledgeDocuments, setKnowledgeDocuments] = useState<KnowledgeDocument[]>([])
+  const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([])
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState(() => loadActiveWorkspaceId())
+  const [runJobs, setRunJobs] = useState<RunJobRecord[]>([])
+  const [activeRunJobId, setActiveRunJobId] = useState('')
   const [lastBackendSyncAt, setLastBackendSyncAt] = useState('')
   const nextNodeId = useRef(1)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -1274,6 +1310,8 @@ function App() {
   const knowledgeStatusLabel = knowledgeStatus
     ? `${knowledgeStatus.document_count} 个文档 / ${knowledgeStatus.chunk_count} 个片段`
     : '未检查'
+  const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaces[0]
+  const activeRunJob = runJobs.find((job) => job.id === activeRunJobId)
   const authToken = authSession?.token
 
   const apiFetch = useCallback(
@@ -1282,9 +1320,12 @@ function App() {
       if (authToken) {
         headers.set('Authorization', `Bearer ${authToken}`)
       }
+      if (activeWorkspaceId) {
+        headers.set('X-Workspace-Id', activeWorkspaceId)
+      }
       return fetch(`${API_BASE_URL}${path}`, { ...init, headers })
     },
-    [authToken],
+    [activeWorkspaceId, authToken],
   )
 
   const handleAuthSubmit = async () => {
@@ -1306,6 +1347,29 @@ function App() {
     }
   }
 
+  const loadWorkspaces = useCallback(async () => {
+    if (!authToken) return [] as WorkspaceRecord[]
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/workspaces`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      })
+      if (!response.ok) throw new Error('load workspaces failed')
+      const records = (await response.json()) as WorkspaceRecord[]
+      setWorkspaces(records)
+      const storedWorkspaceId = loadActiveWorkspaceId()
+      const nextActiveWorkspaceId = records.some((workspace) => workspace.id === storedWorkspaceId)
+        ? storedWorkspaceId
+        : records[0]?.id ?? ''
+      setActiveWorkspaceId(nextActiveWorkspaceId)
+      persistActiveWorkspaceId(nextActiveWorkspaceId)
+      return records
+    } catch {
+      setWorkspaces([])
+      setNotice('团队空间读取失败：请确认后端服务在线。')
+      return []
+    }
+  }, [authToken])
+
   const logout = async () => {
     try {
       await apiFetch('/api/auth/logout', { method: 'POST' })
@@ -1318,6 +1382,11 @@ function App() {
     setProviderStatus(null)
     setKnowledgeStatus(null)
     setKnowledgeDocuments([])
+    setWorkspaces([])
+    setActiveWorkspaceId('')
+    persistActiveWorkspaceId('')
+    setRunJobs([])
+    setActiveRunJobId('')
     setRunHistory([])
     setSelectedRunId('')
     setNotice('已退出登录。')
@@ -1842,10 +1911,36 @@ function App() {
 
   useEffect(() => {
     if (!authSession) return
+    const timer = window.setTimeout(() => {
+      void loadWorkspaces()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [authSession, loadWorkspaces])
+
+  useEffect(() => {
+    if (!authSession) return
     if (didAutoLoadBackendRef.current) return
+    if (!activeWorkspaceId) return
     didAutoLoadBackendRef.current = true
-    void loadWorkflowsFromBackend('startup')
-  }, [authSession, loadWorkflowsFromBackend])
+    const timer = window.setTimeout(() => {
+      void loadWorkflowsFromBackend('startup')
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [activeWorkspaceId, authSession, loadWorkflowsFromBackend])
+
+  const switchWorkspace = (workspaceId: string) => {
+    setActiveWorkspaceId(workspaceId)
+    persistActiveWorkspaceId(workspaceId)
+    setKnowledgeStatus(null)
+    setKnowledgeDocuments([])
+    setRunHistory([])
+    setRunJobs([])
+    setSelectedRunId('')
+    setActiveRunJobId('')
+    setRunSteps([])
+    didAutoLoadBackendRef.current = false
+    setNotice('已切换团队空间，请重新加载后端工作流和知识库状态。')
+  }
 
   const runWorkflowOnBackend = async () => {
     if (!activeWorkflow.serverId) {
@@ -1906,6 +2001,81 @@ function App() {
     } catch {
       setBackendStatus('offline')
       setNotice('后端运行失败：请确认后端在线，且当前工作流已同步。')
+    }
+  }
+
+  const pollRunJob = async (jobId: string) => {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 800))
+      const response = await apiFetch(`/api/run-jobs/${jobId}`)
+      if (!response.ok) throw new Error('poll job failed')
+      const job = (await response.json()) as RunJobRecord
+      setRunJobs((current) => [job, ...current.filter((item) => item.id !== job.id)])
+      if (job.status === 'succeeded' && job.run_id) {
+        const runResponse = await apiFetch(`/api/runs/${job.run_id}`)
+        if (!runResponse.ok) throw new Error('load job run failed')
+        const run = (await runResponse.json()) as ServerRunRecord
+        setRunSteps(run.steps)
+        setRunHistory((current) => [run, ...current.filter((item) => item.id !== run.id)])
+        setSelectedRunId(run.id)
+        setBackendStatus('online')
+        setNotice('异步运行已完成，结果已保存到运行历史。')
+        return
+      }
+      if (job.status === 'failed') {
+        setNotice(`异步运行失败：${job.error ?? '后端没有返回错误原因'}`)
+        return
+      }
+    }
+    setNotice('异步运行仍在队列中，请稍后刷新运行任务。')
+  }
+
+  const runWorkflowAsyncOnBackend = async () => {
+    if (!activeWorkflow.serverId) {
+      setNotice('请先点击“同步到后端”，再使用异步运行。')
+      return
+    }
+    if (activeWorkflowSyncState === 'dirty') {
+      setNotice('当前工作流有未同步改动。请先同步到后端，再使用异步运行。')
+      return
+    }
+    const issues = await validateActiveWorkflow()
+    if (showBlockingIssues(issues, '异步运行')) return
+
+    try {
+      const response = await apiFetch(`/api/workflows/${activeWorkflow.serverId}/run-jobs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input_text: runInput }),
+      })
+      if (!response.ok) throw new Error('enqueue run failed')
+      const job = (await response.json()) as RunJobRecord
+      setRunJobs((current) => [job, ...current.filter((item) => item.id !== job.id)])
+      setActiveRunJobId(job.id)
+      setBackendStatus('online')
+      setNotice('已提交到异步运行队列，正在轮询结果。')
+      void pollRunJob(job.id)
+    } catch {
+      setBackendStatus('offline')
+      setNotice('提交异步运行失败：请确认后端在线，且当前空间有权限运行。')
+    }
+  }
+
+  const loadRunJobs = async () => {
+    if (!activeWorkflow.serverId) {
+      setRunJobs([])
+      return
+    }
+    try {
+      const response = await apiFetch(`/api/run-jobs?workflow_id=${activeWorkflow.serverId}`)
+      if (!response.ok) throw new Error('load jobs failed')
+      const jobs = (await response.json()) as RunJobRecord[]
+      setRunJobs(jobs)
+      setBackendStatus('online')
+      setNotice(`已加载 ${jobs.length} 条异步运行任务。`)
+    } catch {
+      setBackendStatus('offline')
+      setNotice('加载异步运行任务失败：请确认后端在线。')
     }
   }
 
@@ -2380,47 +2550,16 @@ function App() {
 
   if (!authSession) {
     return (
-      <main className="auth-shell">
-        <section className="auth-panel">
-          <div className="brand auth-brand">
-            <span>
-              <Shield size={22} />
-            </span>
-            <div>
-              <strong>流程工坊</strong>
-              <small>登录后进入工作台</small>
-            </div>
-          </div>
-          <div className="auth-tabs">
-            <button type="button" className={clsx(authMode === 'login' && 'active')} onClick={() => setAuthMode('login')}>
-              登录
-            </button>
-            <button type="button" className={clsx(authMode === 'register' && 'active')} onClick={() => setAuthMode('register')}>
-              注册
-            </button>
-          </div>
-          <label>
-            账号
-            <input value={authUsername} onChange={(event) => setAuthUsername(event.target.value)} placeholder="至少 3 个字符" />
-          </label>
-          <label>
-            密码
-            <input
-              type="password"
-              value={authPassword}
-              onChange={(event) => setAuthPassword(event.target.value)}
-              placeholder="至少 6 个字符"
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') void handleAuthSubmit()
-              }}
-            />
-          </label>
-          {authNotice && <p className="auth-notice">{authNotice}</p>}
-          <button type="button" className="primary" onClick={handleAuthSubmit}>
-            {authMode === 'login' ? '登录' : '注册并登录'}
-          </button>
-        </section>
-      </main>
+      <AuthView
+        authMode={authMode}
+        authNotice={authNotice}
+        authPassword={authPassword}
+        authUsername={authUsername}
+        onPasswordChange={setAuthPassword}
+        onSubmit={() => void handleAuthSubmit()}
+        onUsernameChange={setAuthUsername}
+        setAuthMode={setAuthMode}
+      />
     )
   }
 
@@ -2436,6 +2575,32 @@ function App() {
             <small>工作流编辑器</small>
           </div>
         </div>
+
+        <section className="panel workspace-panel">
+          <div className="panel-title between">
+            <span>
+              <Shield size={16} />
+              团队空间
+            </span>
+            <button type="button" className="mini-action" onClick={() => void loadWorkspaces()}>
+              刷新
+            </button>
+          </div>
+          <select
+            value={activeWorkspaceId}
+            aria-label="当前团队空间"
+            onChange={(event) => switchWorkspace(event.target.value)}
+          >
+            {workspaces.map((workspace) => (
+              <option key={workspace.id} value={workspace.id}>
+                {workspace.name}
+              </option>
+            ))}
+          </select>
+          <p className="workspace-role">
+            {activeWorkspace ? `当前角色：${activeWorkspace.role}` : '暂未加载团队空间'}
+          </p>
+        </section>
 
         <section className="panel">
           <div className="panel-title">
@@ -3191,14 +3356,36 @@ function App() {
           </label>
           <div className="runner-actions">
             <button type="button" onClick={runWorkflowOnBackend}>
-              后端运行
+              同步运行
+            </button>
+            <button type="button" onClick={runWorkflowAsyncOnBackend}>
+              异步入队
             </button>
             <button type="button" onClick={loadRunHistory}>
               加载历史
             </button>
+            <button type="button" onClick={loadRunJobs}>
+              刷新队列
+            </button>
             <button type="button" onClick={clearCurrentRunHistory}>
               清空历史
             </button>
+          </div>
+
+          <div className="run-job-strip">
+            {activeRunJob ? (
+              <span>
+                当前任务：{activeRunJob.status}
+                {activeRunJob.run_id ? ` · 运行记录 ${activeRunJob.run_id.slice(0, 8)}` : ''}
+              </span>
+            ) : (
+              <span>异步队列空闲</span>
+            )}
+            {runJobs.slice(0, 3).map((job) => (
+              <button key={job.id} type="button" onClick={() => setActiveRunJobId(job.id)}>
+                {job.status}
+              </button>
+            ))}
           </div>
 
           <div className="run-history-tools">

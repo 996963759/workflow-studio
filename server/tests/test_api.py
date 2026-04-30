@@ -1,5 +1,6 @@
 import logging
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from uuid import uuid4
@@ -9,6 +10,8 @@ from fastapi.testclient import TestClient
 from server.src.auth import AuthService, set_auth_service
 from server.src import main as api
 from server.src.db import create_session_factory
+from server.src.jobs import RunJobQueue
+from server.src.knowledge import set_knowledge_session_factory
 from server.src.storage import WorkflowStore
 
 
@@ -56,6 +59,8 @@ class ApiTestCase(unittest.TestCase):
         engine, session_factory = create_session_factory(f"sqlite:///{test_db.as_posix()}")
         self.engine = engine
         api.store = WorkflowStore(test_db, session_factory=session_factory, engine=engine)
+        set_knowledge_session_factory(api.store.SessionLocal)
+        api.job_queue = RunJobQueue(api.store)
         api.auth_service = AuthService(api.store)
         set_auth_service(api.auth_service)
         self.client = TestClient(api.app)
@@ -65,6 +70,8 @@ class ApiTestCase(unittest.TestCase):
         self.client.close()
         self.engine.dispose()
         api.store = self.previous_store
+        set_knowledge_session_factory(api.store.SessionLocal)
+        api.job_queue = RunJobQueue(api.store)
         api.auth_service = self.previous_auth_service
         set_auth_service(self.previous_auth_service)
         self.temp_dir.cleanup()
@@ -128,6 +135,112 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(self.client.get(f"/api/workflows/{created['id']}", headers=other_headers).status_code, 404)
         self.assertEqual(self.client.delete(f"/api/workflows/{created['id']}", headers=other_headers).status_code, 404)
         self.assertEqual(self.client.get(f"/api/workflows/{created['id']}", headers=self.auth_headers).status_code, 200)
+
+    def test_workspace_membership_roles_and_isolation(self) -> None:
+        viewer_headers = self.create_auth_headers("viewer-user")
+        viewer_me = self.client.get("/api/auth/me", headers=viewer_headers).json()
+        workspace = self.client.post(
+            "/api/workspaces",
+            json={"name": "共享测试空间"},
+            headers=self.auth_headers,
+        ).json()
+        created = self.client.post(
+            "/api/workflows",
+            json=valid_workflow(),
+            headers={**self.auth_headers, "X-Workspace-Id": workspace["id"]},
+        ).json()
+
+        denied = self.client.get(
+            f"/api/workflows/{created['id']}",
+            headers={**viewer_headers, "X-Workspace-Id": workspace["id"]},
+        )
+        self.assertEqual(denied.status_code, 403)
+
+        member = self.client.post(
+            f"/api/workspaces/{workspace['id']}/members",
+            json={"username": viewer_me["username"], "role": "viewer"},
+            headers=self.auth_headers,
+        )
+        self.assertEqual(member.status_code, 200)
+
+        fetch = self.client.get(
+            f"/api/workflows/{created['id']}",
+            headers={**viewer_headers, "X-Workspace-Id": workspace["id"]},
+        )
+        self.assertEqual(fetch.status_code, 200)
+        update = self.client.put(
+            f"/api/workflows/{created['id']}",
+            json=valid_workflow(),
+            headers={**viewer_headers, "X-Workspace-Id": workspace["id"]},
+        )
+        self.assertEqual(update.status_code, 403)
+
+    def test_async_run_job_completes_and_creates_run(self) -> None:
+        created = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers).json()
+        enqueue = self.client.post(
+            f"/api/workflows/{created['id']}/run-jobs",
+            json={"input_text": "异步运行"},
+            headers=self.auth_headers,
+        )
+        self.assertEqual(enqueue.status_code, 202)
+        job = enqueue.json()
+        for _ in range(30):
+            latest = self.client.get(f"/api/run-jobs/{job['id']}", headers=self.auth_headers).json()
+            if latest["status"] in {"succeeded", "failed"}:
+                break
+            time.sleep(0.1)
+        self.assertEqual(latest["status"], "succeeded")
+        self.assertTrue(latest["run_id"])
+        run = self.client.get(f"/api/runs/{latest['run_id']}", headers=self.auth_headers)
+        self.assertEqual(run.status_code, 200)
+        self.assertEqual(run.json()["input_text"], "异步运行")
+
+    def test_workspace_knowledge_upload_indexes_and_searches(self) -> None:
+        upload = self.client.post(
+            "/api/knowledge/documents",
+            json={"filename": "vector-test.md", "content": "退款通常会在三到五个工作日到账。"},
+            headers=self.auth_headers,
+        )
+        self.assertEqual(upload.status_code, 201)
+        status = self.client.get("/api/knowledge/status", headers=self.auth_headers).json()
+        self.assertGreaterEqual(status["indexed_chunk_count"], 1)
+
+        workflow = {
+            **valid_workflow(),
+            "nodes": [
+                {
+                    "id": "input-1",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"kind": "input", "label": "用户输入", "outputKey": "user_request"},
+                },
+                {
+                    "id": "knowledge-1",
+                    "position": {"x": 240, "y": 0},
+                    "data": {
+                        "kind": "knowledge",
+                        "label": "知识检索",
+                        "query": "{{user_request}}",
+                        "topK": 1,
+                        "outputKey": "context",
+                    },
+                },
+                {
+                    "id": "output-1",
+                    "position": {"x": 480, "y": 0},
+                    "data": {"kind": "output", "label": "最终输出", "prompt": "{{context}}", "outputKey": "answer"},
+                },
+            ],
+            "edges": [
+                {"id": "e1", "source": "input-1", "target": "knowledge-1"},
+                {"id": "e2", "source": "knowledge-1", "target": "output-1"},
+            ],
+        }
+        run = self.client.post(
+            "/api/runs",
+            json={"workflow": workflow, "input_text": "多久到账"},
+            headers=self.auth_headers,
+        ).json()
+        self.assertIn("退款", run["steps"][1]["output"])
 
 
 if __name__ == "__main__":

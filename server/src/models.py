@@ -45,6 +45,30 @@ class UserRecord(BaseModel):
     created_at: str
 
 
+class WorkspaceRecord(BaseModel):
+    id: str
+    name: str
+    owner_id: str
+    role: str
+    created_at: str
+
+
+class WorkspaceCreatePayload(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
+class WorkspaceMemberRecord(BaseModel):
+    id: str
+    username: str
+    role: str
+    created_at: str
+
+
+class WorkspaceMemberPayload(BaseModel):
+    username: str = Field(min_length=3, max_length=64)
+    role: str = Field(pattern="^(owner|editor|viewer)$")
+
+
 class AuthResponse(BaseModel):
     token: str
     user: UserRecord
@@ -81,3 +105,14 @@ class RunRecord(RunResponse):
     workflow_name: str
     input_text: str
     created_at: str
+
+
+class RunJobRecord(BaseModel):
+    id: str
+    workflow_id: str
+    status: str
+    input_text: str
+    run_id: str | None = None
+    error: str | None = None
+    created_at: str
+    updated_at: str
