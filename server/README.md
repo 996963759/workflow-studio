@@ -1,6 +1,6 @@
 # Workflow Studio API
 
-FastAPI backend for Workflow Studio. The current backend stores workflows and archive status in a local SQLite database, validates workflow structure, records workflow runs, searches local Markdown/TXT knowledge documents, can call DeepSeek or OpenAI for LLM nodes when an API key is configured, and can execute localhost HTTP tool nodes. It also includes request logging, configurable CORS/database settings, and unittest coverage for the core API lifecycle.
+FastAPI backend for Workflow Studio. The current backend stores users, sessions, workflows and archive status in a local SQLite database, validates workflow structure, records workflow runs, searches per-user Markdown/TXT knowledge documents, can call DeepSeek or OpenAI for LLM nodes when an API key is configured, and can execute localhost HTTP tool nodes. It also includes request logging, configurable CORS/database settings, and unittest coverage for the core API lifecycle.
 
 ## Setup
 
@@ -82,6 +82,10 @@ Supported file types are `.md` and `.txt`. Knowledge nodes use simple local keyw
 
 - `GET /api/health`
 - `GET /api/provider-status`
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `GET /api/auth/me`
+- `POST /api/auth/logout`
 - `GET /api/knowledge/status`
 - `GET /api/knowledge/documents`
 - `POST /api/knowledge/documents`

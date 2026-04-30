@@ -34,6 +34,22 @@ class KnowledgeDocumentPayload(BaseModel):
     content: str = Field(default="")
 
 
+class AuthPayload(BaseModel):
+    username: str = Field(min_length=3, max_length=64)
+    password: str = Field(min_length=6, max_length=128)
+
+
+class UserRecord(BaseModel):
+    id: str
+    username: str
+    created_at: str
+
+
+class AuthResponse(BaseModel):
+    token: str
+    user: UserRecord
+
+
 class RunRequest(BaseModel):
     workflow: WorkflowPayload
     input_text: str = ""

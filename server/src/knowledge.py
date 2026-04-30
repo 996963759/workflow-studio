@@ -28,10 +28,17 @@ def safe_document_name(filename: str) -> str:
     return safe_name
 
 
-def document_path(filename: str) -> Path:
+def user_knowledge_dir(user_id: str | None = None) -> Path:
+    if not user_id:
+        return KNOWLEDGE_DIR
+    safe_user = re.sub(r"[^A-Za-z0-9._-]+", "-", user_id)
+    return KNOWLEDGE_DIR / safe_user
+
+
+def document_path(filename: str, user_id: str | None = None) -> Path:
     safe_name = safe_document_name(filename)
-    path = (KNOWLEDGE_DIR / safe_name).resolve()
-    root = KNOWLEDGE_DIR.resolve()
+    root = user_knowledge_dir(user_id).resolve()
+    path = (root / safe_name).resolve()
     if root not in path.parents and path != root:
         raise ValueError("Invalid document path")
     return path
@@ -66,12 +73,13 @@ def split_document(content: str) -> list[str]:
     return chunks
 
 
-def read_knowledge_documents() -> list[tuple[str, str]]:
-    if not KNOWLEDGE_DIR.exists():
+def read_knowledge_documents(user_id: str | None = None) -> list[tuple[str, str]]:
+    root = user_knowledge_dir(user_id)
+    if not root.exists():
         return []
 
     documents: list[tuple[str, str]] = []
-    for path in sorted(KNOWLEDGE_DIR.rglob("*")):
+    for path in sorted(root.rglob("*")):
         if not path.is_file() or path.suffix.lower() not in SUPPORTED_EXTENSIONS:
             continue
         try:
@@ -79,16 +87,17 @@ def read_knowledge_documents() -> list[tuple[str, str]]:
         except UnicodeDecodeError:
             content = path.read_text(encoding="gb18030", errors="ignore").strip()
         if content:
-            documents.append((path.relative_to(KNOWLEDGE_DIR).as_posix(), content))
+            documents.append((path.relative_to(root).as_posix(), content))
     return documents
 
 
-def list_knowledge_documents() -> list[dict[str, int | str]]:
+def list_knowledge_documents(user_id: str | None = None) -> list[dict[str, int | str]]:
     documents: list[dict[str, int | str]] = []
-    if not KNOWLEDGE_DIR.exists():
+    root = user_knowledge_dir(user_id)
+    if not root.exists():
         return documents
 
-    for path in sorted(KNOWLEDGE_DIR.iterdir()):
+    for path in sorted(root.iterdir()):
         if not path.is_file() or path.suffix.lower() not in SUPPORTED_EXTENSIONS:
             continue
         content = path.read_text(encoding="utf-8", errors="ignore")
@@ -102,11 +111,11 @@ def list_knowledge_documents() -> list[dict[str, int | str]]:
     return documents
 
 
-def save_knowledge_document(filename: str, content: str) -> dict[str, int | str]:
+def save_knowledge_document(filename: str, content: str, user_id: str | None = None) -> dict[str, int | str]:
     if len(content.encode("utf-8")) > 1_000_000:
         raise ValueError("Document is too large")
-    path = document_path(filename)
-    KNOWLEDGE_DIR.mkdir(parents=True, exist_ok=True)
+    path = document_path(filename, user_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     return {
         "name": path.name,
@@ -115,8 +124,8 @@ def save_knowledge_document(filename: str, content: str) -> dict[str, int | str]
     }
 
 
-def delete_knowledge_document(filename: str) -> bool:
-    path = document_path(filename)
+def delete_knowledge_document(filename: str, user_id: str | None = None) -> bool:
+    path = document_path(filename, user_id)
     if not path.exists() or not path.is_file():
         return False
     path.unlink()
@@ -128,13 +137,13 @@ def score_chunk(query_tokens: list[str], text: str) -> int:
     return sum(lower_text.count(token) for token in query_tokens)
 
 
-def search_knowledge(query: str, top_k: int) -> list[KnowledgeChunk]:
+def search_knowledge(query: str, top_k: int, user_id: str | None = None) -> list[KnowledgeChunk]:
     query_tokens = tokenize(query)
     if not query_tokens:
         return []
 
     matches: list[KnowledgeChunk] = []
-    for source, content in read_knowledge_documents():
+    for source, content in read_knowledge_documents(user_id):
         for chunk in split_document(content):
             score = score_chunk(query_tokens, chunk)
             if score > 0:
@@ -143,11 +152,12 @@ def search_knowledge(query: str, top_k: int) -> list[KnowledgeChunk]:
     return sorted(matches, key=lambda item: (-item.score, item.source, item.text[:40]))[: max(1, top_k)]
 
 
-def knowledge_status() -> dict[str, int | str]:
-    documents = read_knowledge_documents()
+def knowledge_status(user_id: str | None = None) -> dict[str, int | str]:
+    root = user_knowledge_dir(user_id)
+    documents = read_knowledge_documents(user_id)
     chunk_count = sum(len(split_document(content)) for _, content in documents)
     return {
-        "directory": str(KNOWLEDGE_DIR),
+        "directory": str(root),
         "document_count": len(documents),
         "chunk_count": chunk_count,
     }

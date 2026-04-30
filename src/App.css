@@ -1,3 +1,77 @@
+.auth-shell {
+  align-items: center;
+  background: #eef1ea;
+  display: flex;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.auth-panel {
+  background: #ffffff;
+  border: 1px solid #d8ded4;
+  border-radius: 8px;
+  box-shadow: 0 18px 60px rgba(31, 41, 55, 0.14);
+  display: grid;
+  gap: 14px;
+  max-width: 380px;
+  padding: 22px;
+  width: min(100%, 380px);
+}
+
+.auth-brand {
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 14px;
+}
+
+.auth-tabs {
+  background: #f1f5f9;
+  border-radius: 7px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 3px;
+}
+
+.auth-tabs button {
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: #475569;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 8px;
+}
+
+.auth-tabs button.active {
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.12);
+  color: #193f34;
+}
+
+.auth-panel label {
+  color: #334155;
+  display: grid;
+  font-size: 12px;
+  font-weight: 700;
+  gap: 6px;
+}
+
+.auth-panel input {
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  color: #111827;
+  font: inherit;
+  padding: 10px;
+}
+
+.auth-notice {
+  color: #b45309;
+  font-size: 12px;
+  margin: 0;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 286px minmax(520px, 1fr) 360px;

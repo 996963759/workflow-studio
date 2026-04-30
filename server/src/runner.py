@@ -328,10 +328,15 @@ def run_llm_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, st
     return output, step_input, "模拟输出", None
 
 
-def run_knowledge_node(data: dict[str, Any], context: dict[str, str], input_text: str) -> tuple[str, str, str | None]:
+def run_knowledge_node(
+    data: dict[str, Any],
+    context: dict[str, str],
+    input_text: str,
+    user_id: str | None = None,
+) -> tuple[str, str, str | None]:
     query = render_template(data.get("query"), context).strip() or input_text
     top_k = int(data.get("topK") or 4)
-    matches = search_knowledge(query, top_k)
+    matches = search_knowledge(query, top_k, user_id)
     step_input = query or "未配置检索语句"
 
     if not matches:
@@ -344,7 +349,7 @@ def run_knowledge_node(data: dict[str, Any], context: dict[str, str], input_text
     return output, step_input, "本地知识库"
 
 
-def simulate_run(workflow: WorkflowPayload, input_text: str) -> RunResponse:
+def simulate_run(workflow: WorkflowPayload, input_text: str, user_id: str | None = None) -> RunResponse:
     context: dict[str, str] = {}
     nodes = create_execution_order(workflow.nodes, workflow.edges)
     if nodes is None:
@@ -390,7 +395,7 @@ def simulate_run(workflow: WorkflowPayload, input_text: str) -> RunResponse:
             output = input_text or data.get("sampleInput") or ""
             step_input = "用户请求"
         elif kind == "knowledge":
-            output, step_input, provider = run_knowledge_node(data, context, input_text)
+            output, step_input, provider = run_knowledge_node(data, context, input_text, user_id)
         elif kind == "llm":
             output, step_input, provider, error = run_llm_node(data, context)
         elif kind == "tool":

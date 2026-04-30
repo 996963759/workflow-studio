@@ -5,6 +5,7 @@ from urllib.error import HTTPError
 
 
 BASE_URL = os.getenv("BASE_URL", "http://127.0.0.1:8000")
+AUTH_TOKEN = ""
 
 
 def request(path: str, method: str = "GET", body: dict | None = None) -> dict | list:
@@ -13,6 +14,8 @@ def request(path: str, method: str = "GET", body: dict | None = None) -> dict | 
     if body is not None:
         data = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
+    if AUTH_TOKEN:
+        headers["Authorization"] = f"Bearer {AUTH_TOKEN}"
     req = urllib.request.Request(f"{BASE_URL}{path}", data=data, headers=headers, method=method)
     with urllib.request.urlopen(req, timeout=10) as response:
         content = response.read().decode("utf-8")
@@ -189,7 +192,15 @@ def failing_tool_workflow(policy: str) -> dict:
 
 
 def main() -> None:
+    global AUTH_TOKEN
     health = request("/api/health")
+    auth_username = f"smoke-{os.getpid()}"
+    auth = request(
+        "/api/auth/register",
+        "POST",
+        {"username": auth_username, "password": "password123"},
+    )
+    AUTH_TOKEN = auth["token"]
     knowledge_status = request("/api/knowledge/status")
     initial_knowledge_documents = request("/api/knowledge/documents")
     uploaded_document = request(
@@ -197,7 +208,7 @@ def main() -> None:
         "POST",
         {
             "filename": "smoke-test.md",
-            "content": "# Smoke Test\n\n烟雾测试文档用于验证知识库上传和删除。",
+            "content": "# Smoke Test\n\n烟雾测试文档用于验证知识库上传和删除。\n\n退款通常会在 3 到 5 个工作日到账。",
         },
     )
     knowledge_documents_after_upload = request("/api/knowledge/documents")
@@ -289,6 +300,7 @@ def main() -> None:
     workflow_runs_after_workflow_delete = request(f"/api/runs?workflow_id={created['id']}")
 
     assert validation["valid"] is True
+    assert auth["user"]["username"] == auth_username
     assert invalid_validation["valid"] is False
     assert invalid_create_status == 400
     assert invalid_create_body["detail"]["valid"] is False
@@ -308,7 +320,7 @@ def main() -> None:
     assert "HTTP 200" in tool_step["output"]
     assert '"status":"ok"' in tool_step["output"].replace(" ", "")
     knowledge_step = next(step for step in knowledge_run["steps"] if step["node_id"] == "knowledge-1")
-    assert knowledge_status["document_count"] >= 1
+    assert knowledge_status["document_count"] == len(initial_knowledge_documents)
     assert knowledge_step["provider"] == "本地知识库"
     assert "退款" in knowledge_step["output"]
     assert isinstance(initial_knowledge_documents, list)

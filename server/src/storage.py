@@ -30,8 +30,29 @@ class WorkflowStore:
         with self._connect() as connection:
             connection.execute(
                 """
+                CREATE TABLE IF NOT EXISTS users (
+                    id TEXT PRIMARY KEY,
+                    username TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sessions (
+                    token TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                )
+                """
+            )
+            connection.execute(
+                """
                 CREATE TABLE IF NOT EXISTS workflows (
                     id TEXT PRIMARY KEY,
+                    user_id TEXT,
                     name TEXT NOT NULL,
                     version TEXT NOT NULL,
                     nodes_json TEXT NOT NULL,
@@ -47,10 +68,13 @@ class WorkflowStore:
             }
             if "archived" not in columns:
                 connection.execute("ALTER TABLE workflows ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+            if "user_id" not in columns:
+                connection.execute("ALTER TABLE workflows ADD COLUMN user_id TEXT")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS runs (
                     id TEXT PRIMARY KEY,
+                    user_id TEXT,
                     workflow_id TEXT,
                     workflow_name TEXT NOT NULL,
                     input_text TEXT NOT NULL,
@@ -60,41 +84,55 @@ class WorkflowStore:
                 )
                 """
             )
+            run_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(runs)").fetchall()
+            }
+            if "user_id" not in run_columns:
+                connection.execute("ALTER TABLE runs ADD COLUMN user_id TEXT")
 
-    def list_workflows(self) -> list[WorkflowRecord]:
+    def assign_unowned_records(self, user_id: str) -> None:
+        with self._connect() as connection:
+            connection.execute("UPDATE workflows SET user_id = ? WHERE user_id IS NULL", (user_id,))
+            connection.execute("UPDATE runs SET user_id = ? WHERE user_id IS NULL", (user_id,))
+
+    def list_workflows(self, user_id: str) -> list[WorkflowRecord]:
         with self._connect() as connection:
             rows = connection.execute(
                 """
                 SELECT id, name, version, nodes_json, edges_json, archived, updated_at
                 FROM workflows
+                WHERE user_id = ?
                 ORDER BY updated_at DESC
-                """
+                """,
+                (user_id,),
             ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
-    def get_workflow(self, workflow_id: str) -> WorkflowRecord | None:
+    def get_workflow(self, workflow_id: str, user_id: str) -> WorkflowRecord | None:
         with self._connect() as connection:
             row = connection.execute(
                 """
                 SELECT id, name, version, nodes_json, edges_json, archived, updated_at
                 FROM workflows
-                WHERE id = ?
+                WHERE id = ? AND user_id = ?
                 """,
-                (workflow_id,),
+                (workflow_id, user_id),
             ).fetchone()
         return self._row_to_record(row) if row else None
 
-    def create_workflow(self, payload: WorkflowPayload) -> WorkflowRecord:
+    def create_workflow(self, payload: WorkflowPayload, user_id: str) -> WorkflowRecord:
         workflow_id = str(uuid.uuid4())
         updated_at = utc_now()
         with self._connect() as connection:
             connection.execute(
                 """
-                INSERT INTO workflows (id, name, version, nodes_json, edges_json, archived, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO workflows (id, user_id, name, version, nodes_json, edges_json, archived, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     workflow_id,
+                    user_id,
                     payload.name,
                     payload.version,
                     json.dumps(payload.nodes, ensure_ascii=False),
@@ -105,14 +143,14 @@ class WorkflowStore:
             )
         return WorkflowRecord(id=workflow_id, updated_at=updated_at, **payload.model_dump())
 
-    def update_workflow(self, workflow_id: str, payload: WorkflowPayload) -> WorkflowRecord | None:
+    def update_workflow(self, workflow_id: str, payload: WorkflowPayload, user_id: str) -> WorkflowRecord | None:
         updated_at = utc_now()
         with self._connect() as connection:
             cursor = connection.execute(
                 """
                 UPDATE workflows
                 SET name = ?, version = ?, nodes_json = ?, edges_json = ?, archived = ?, updated_at = ?
-                WHERE id = ?
+                WHERE id = ? AND user_id = ?
                 """,
                 (
                     payload.name,
@@ -122,22 +160,24 @@ class WorkflowStore:
                     int(payload.archived),
                     updated_at,
                     workflow_id,
+                    user_id,
                 ),
             )
         if cursor.rowcount == 0:
             return None
         return WorkflowRecord(id=workflow_id, updated_at=updated_at, **payload.model_dump())
 
-    def delete_workflow(self, workflow_id: str) -> bool:
+    def delete_workflow(self, workflow_id: str, user_id: str) -> bool:
         with self._connect() as connection:
-            cursor = connection.execute("DELETE FROM workflows WHERE id = ?", (workflow_id,))
+            cursor = connection.execute("DELETE FROM workflows WHERE id = ? AND user_id = ?", (workflow_id, user_id))
             if cursor.rowcount > 0:
-                connection.execute("DELETE FROM runs WHERE workflow_id = ?", (workflow_id,))
+                connection.execute("DELETE FROM runs WHERE workflow_id = ? AND user_id = ?", (workflow_id, user_id))
         return cursor.rowcount > 0
 
     def create_run(
         self,
         workflow_id: str | None,
+        user_id: str,
         workflow_name: str,
         input_text: str,
         response: RunResponse,
@@ -147,11 +187,12 @@ class WorkflowStore:
         with self._connect() as connection:
             connection.execute(
                 """
-                INSERT INTO runs (id, workflow_id, workflow_name, input_text, status, steps_json, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO runs (id, user_id, workflow_id, workflow_name, input_text, status, steps_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
+                    user_id,
                     workflow_id,
                     workflow_name,
                     input_text,
@@ -170,51 +211,56 @@ class WorkflowStore:
             steps=response.steps,
         )
 
-    def list_runs(self, workflow_id: str | None = None) -> list[RunRecord]:
+    def list_runs(self, user_id: str, workflow_id: str | None = None) -> list[RunRecord]:
         with self._connect() as connection:
             if workflow_id:
                 rows = connection.execute(
                     """
                     SELECT id, workflow_id, workflow_name, input_text, status, steps_json, created_at
                     FROM runs
-                    WHERE workflow_id = ?
+                    WHERE workflow_id = ? AND user_id = ?
                     ORDER BY created_at DESC
                     """,
-                    (workflow_id,),
+                    (workflow_id, user_id),
                 ).fetchall()
             else:
                 rows = connection.execute(
                     """
                     SELECT id, workflow_id, workflow_name, input_text, status, steps_json, created_at
                     FROM runs
+                    WHERE user_id = ?
                     ORDER BY created_at DESC
-                    """
+                    """,
+                    (user_id,),
                 ).fetchall()
         return [self._row_to_run(row) for row in rows]
 
-    def get_run(self, run_id: str) -> RunRecord | None:
+    def get_run(self, run_id: str, user_id: str) -> RunRecord | None:
         with self._connect() as connection:
             row = connection.execute(
                 """
                 SELECT id, workflow_id, workflow_name, input_text, status, steps_json, created_at
                 FROM runs
-                WHERE id = ?
+                WHERE id = ? AND user_id = ?
                 """,
-                (run_id,),
+                (run_id, user_id),
             ).fetchone()
         return self._row_to_run(row) if row else None
 
-    def delete_run(self, run_id: str) -> bool:
+    def delete_run(self, run_id: str, user_id: str) -> bool:
         with self._connect() as connection:
-            cursor = connection.execute("DELETE FROM runs WHERE id = ?", (run_id,))
+            cursor = connection.execute("DELETE FROM runs WHERE id = ? AND user_id = ?", (run_id, user_id))
         return cursor.rowcount > 0
 
-    def delete_runs(self, workflow_id: str | None = None) -> int:
+    def delete_runs(self, user_id: str, workflow_id: str | None = None) -> int:
         with self._connect() as connection:
             if workflow_id:
-                cursor = connection.execute("DELETE FROM runs WHERE workflow_id = ?", (workflow_id,))
+                cursor = connection.execute(
+                    "DELETE FROM runs WHERE workflow_id = ? AND user_id = ?",
+                    (workflow_id, user_id),
+                )
             else:
-                cursor = connection.execute("DELETE FROM runs")
+                cursor = connection.execute("DELETE FROM runs WHERE user_id = ?", (user_id,))
         return cursor.rowcount
 
     def _row_to_record(self, row: sqlite3.Row) -> WorkflowRecord:

@@ -35,6 +35,7 @@ import {
   Save,
   Search,
   Settings2,
+  Shield,
   Sparkles,
   TerminalSquare,
   Trash2,
@@ -135,6 +136,17 @@ type WorkflowStore = {
   workflows: WorkflowRecord[]
 }
 
+type AuthUser = {
+  id: string
+  username: string
+  created_at: string
+}
+
+type AuthSession = {
+  token: string
+  user: AuthUser
+}
+
 type BackendWorkflowLoadMode = 'manual' | 'startup'
 
 type WorkflowIssue = {
@@ -201,6 +213,7 @@ type WorkflowTemplate = {
 const LEGACY_STORAGE_KEY = 'workflow-studio.current-workflow'
 const WORKFLOWS_STORAGE_KEY = 'workflow-studio.workflows'
 const ACTIVE_WORKFLOW_STORAGE_KEY = 'workflow-studio.active-workflow-id'
+const AUTH_STORAGE_KEY = 'workflow-studio.auth-session'
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
 
 const nodeMeta: Record<
@@ -573,6 +586,25 @@ const loadStoredWorkflow = (): WorkflowDefinition | null => {
   } catch {
     return null
   }
+}
+
+const loadAuthSession = (): AuthSession | null => {
+  try {
+    const raw = window.localStorage.getItem(AUTH_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<AuthSession>
+    return parsed.token && parsed.user?.id ? (parsed as AuthSession) : null
+  } catch {
+    return null
+  }
+}
+
+const persistAuthSession = (session: AuthSession | null) => {
+  if (!session) {
+    window.localStorage.removeItem(AUTH_STORAGE_KEY)
+    return
+  }
+  window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session))
 }
 
 const loadWorkflowStore = (): WorkflowStore => {
@@ -1094,6 +1126,11 @@ function App() {
   const [selectedRunId, setSelectedRunId] = useState('')
   const [runInput, setRunInput] = useState(examples[0])
   const [notice, setNotice] = useState('已加载本地工作流列表。')
+  const [authSession, setAuthSession] = useState<AuthSession | null>(() => loadAuthSession())
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login')
+  const [authUsername, setAuthUsername] = useState('')
+  const [authPassword, setAuthPassword] = useState('')
+  const [authNotice, setAuthNotice] = useState('')
   const [backendStatus, setBackendStatus] = useState<'unknown' | 'online' | 'offline'>('unknown')
   const [workflowSearch, setWorkflowSearch] = useState('')
   const [workflowSortMode, setWorkflowSortMode] = useState<WorkflowSortMode>('updated')
@@ -1237,14 +1274,63 @@ function App() {
   const knowledgeStatusLabel = knowledgeStatus
     ? `${knowledgeStatus.document_count} 个文档 / ${knowledgeStatus.chunk_count} 个片段`
     : '未检查'
+  const authToken = authSession?.token
+
+  const apiFetch = useCallback(
+    (path: string, init: RequestInit = {}) => {
+      const headers = new Headers(init.headers)
+      if (authToken) {
+        headers.set('Authorization', `Bearer ${authToken}`)
+      }
+      return fetch(`${API_BASE_URL}${path}`, { ...init, headers })
+    },
+    [authToken],
+  )
+
+  const handleAuthSubmit = async () => {
+    setAuthNotice('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/${authMode}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: authUsername.trim(), password: authPassword }),
+      })
+      if (!response.ok) throw new Error('auth failed')
+      const session = (await response.json()) as AuthSession
+      setAuthSession(session)
+      persistAuthSession(session)
+      setAuthPassword('')
+      setNotice(`已登录：${session.user.username}`)
+    } catch {
+      setAuthNotice(authMode === 'login' ? '登录失败：请检查账号和密码。' : '注册失败：账号可能已存在。')
+    }
+  }
+
+  const logout = async () => {
+    try {
+      await apiFetch('/api/auth/logout', { method: 'POST' })
+    } catch {
+      // Local logout still clears the browser session.
+    }
+    setAuthSession(null)
+    persistAuthSession(null)
+    setBackendStatus('unknown')
+    setProviderStatus(null)
+    setKnowledgeStatus(null)
+    setKnowledgeDocuments([])
+    setRunHistory([])
+    setSelectedRunId('')
+    setNotice('已退出登录。')
+  }
 
   useEffect(() => {
+    if (!authSession) return
     const controller = new AbortController()
     const currentKey = validationKey
 
     const timer = window.setTimeout(async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/workflows/validate`, {
+        const response = await apiFetch('/api/workflows/validate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(workflowToServerPayload(activeWorkflow)),
@@ -1267,12 +1353,12 @@ function App() {
       controller.abort()
       window.clearTimeout(timer)
     }
-  }, [activeWorkflow, localWorkflowIssues, validationKey])
+  }, [activeWorkflow, apiFetch, authSession, localWorkflowIssues, validationKey])
 
   const validateActiveWorkflow = async () => {
     const currentKey = validationKey
     try {
-      const response = await fetch(`${API_BASE_URL}/api/workflows/validate`, {
+      const response = await apiFetch('/api/workflows/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(workflowToServerPayload(activeWorkflow)),
@@ -1392,11 +1478,11 @@ function App() {
 
   const refreshKnowledgeStatus = async (showNotice = true) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/knowledge/status`)
+      const response = await apiFetch('/api/knowledge/status')
       if (!response.ok) throw new Error('knowledge status failed')
       const status = (await response.json()) as KnowledgeStatus
       setKnowledgeStatus(status)
-      const documentsResponse = await fetch(`${API_BASE_URL}/api/knowledge/documents`)
+      const documentsResponse = await apiFetch('/api/knowledge/documents')
       if (documentsResponse.ok) {
         setKnowledgeDocuments((await documentsResponse.json()) as KnowledgeDocument[])
       }
@@ -1425,7 +1511,7 @@ function App() {
 
     try {
       const content = await file.text()
-      const response = await fetch(`${API_BASE_URL}/api/knowledge/documents`, {
+      const response = await apiFetch('/api/knowledge/documents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ filename: file.name, content }),
@@ -1441,7 +1527,7 @@ function App() {
 
   const deleteKnowledgeDocument = async (name: string) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/knowledge/documents/${encodeURIComponent(name)}`, {
+      const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(name)}`, {
         method: 'DELETE',
       })
       if (!response.ok) throw new Error('delete knowledge failed')
@@ -1555,7 +1641,7 @@ function App() {
   const syncWorkflowToBackend = async (workflow: WorkflowRecord): Promise<WorkflowRecord> => {
     let targetWorkflow = workflow
     if (workflow.serverId) {
-      const latestResponse = await fetch(`${API_BASE_URL}/api/workflows/${workflow.serverId}`)
+      const latestResponse = await apiFetch(`/api/workflows/${workflow.serverId}`)
       if (latestResponse.ok) {
         const latest = (await latestResponse.json()) as ServerWorkflowRecord
         if (isServerWorkflowNewer(workflow, latest)) {
@@ -1580,7 +1666,7 @@ function App() {
     const url = targetWorkflow.serverId
       ? `${API_BASE_URL}/api/workflows/${targetWorkflow.serverId}`
       : `${API_BASE_URL}/api/workflows`
-    const response = await fetch(url, {
+    const response = await apiFetch(url.replace(API_BASE_URL, ''), {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(workflowToServerPayload(targetWorkflow)),
@@ -1701,7 +1787,7 @@ function App() {
 
   const ensureActiveWorkflowMatchesBackend = async () => {
     if (!activeWorkflow.serverId) return true
-    const response = await fetch(`${API_BASE_URL}/api/workflows/${activeWorkflow.serverId}`)
+    const response = await apiFetch(`/api/workflows/${activeWorkflow.serverId}`)
     if (response.status === 404) {
       throw new Error('remote_missing')
     }
@@ -1718,7 +1804,7 @@ function App() {
 
   const loadWorkflowsFromBackend = useCallback(async (mode: BackendWorkflowLoadMode = 'manual') => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/workflows`)
+      const response = await apiFetch('/api/workflows')
       if (!response.ok) throw new Error('load failed')
       const serverWorkflows = (await response.json()) as ServerWorkflowRecord[]
       const imported = serverWorkflows.map(serverToWorkflowRecord)
@@ -1752,13 +1838,14 @@ function App() {
         setNotice('加载失败：后端不可用或请求失败。')
       }
     }
-  }, [workflowStore])
+  }, [apiFetch, workflowStore])
 
   useEffect(() => {
+    if (!authSession) return
     if (didAutoLoadBackendRef.current) return
     didAutoLoadBackendRef.current = true
     void loadWorkflowsFromBackend('startup')
-  }, [loadWorkflowsFromBackend])
+  }, [authSession, loadWorkflowsFromBackend])
 
   const runWorkflowOnBackend = async () => {
     if (!activeWorkflow.serverId) {
@@ -1795,7 +1882,7 @@ function App() {
     if (showBlockingIssues(issues, '后端运行')) return
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/workflows/${activeWorkflow.serverId}/runs`, {
+      const response = await apiFetch(`/api/workflows/${activeWorkflow.serverId}/runs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ input_text: runInput }),
@@ -1831,7 +1918,7 @@ function App() {
     }
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/runs?workflow_id=${activeWorkflow.serverId}`)
+      const response = await apiFetch(`/api/runs?workflow_id=${activeWorkflow.serverId}`)
       if (!response.ok) throw new Error('load runs failed')
       const runs = (await response.json()) as ServerRunRecord[]
       setRunHistory(runs)
@@ -1845,7 +1932,7 @@ function App() {
 
   const selectRunHistory = async (runId: string) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/runs/${runId}`)
+      const response = await apiFetch(`/api/runs/${runId}`)
       if (!response.ok) throw new Error('load run failed')
       const run = (await response.json()) as ServerRunRecord
       setRunSteps(run.steps)
@@ -1862,7 +1949,7 @@ function App() {
 
   const deleteRunHistory = async (runId: string) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/runs/${runId}`, { method: 'DELETE' })
+      const response = await apiFetch(`/api/runs/${runId}`, { method: 'DELETE' })
       if (!response.ok) throw new Error('delete run failed')
       setRunHistory((current) => current.filter((run) => run.id !== runId))
       if (selectedRunId === runId) {
@@ -1887,7 +1974,7 @@ function App() {
     }
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/runs?workflow_id=${activeWorkflow.serverId}`, {
+      const response = await apiFetch(`/api/runs?workflow_id=${activeWorkflow.serverId}`, {
         method: 'DELETE',
       })
       if (!response.ok) throw new Error('clear runs failed')
@@ -1979,7 +2066,7 @@ function App() {
 
     if (activeWorkflow.serverId) {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/workflows/${activeWorkflow.serverId}`, {
+        const response = await apiFetch(`/api/workflows/${activeWorkflow.serverId}`, {
           method: 'DELETE',
         })
         if (!response.ok && response.status !== 404) throw new Error('delete failed')
@@ -2033,7 +2120,7 @@ function App() {
     if (!toggledWorkflow?.serverId) return
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/workflows/${toggledWorkflow.serverId}`, {
+      const response = await apiFetch(`/api/workflows/${toggledWorkflow.serverId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(workflowToServerPayload(toggledWorkflow)),
@@ -2289,6 +2376,52 @@ function App() {
     setSelectedNodeId('llm-1')
     setRunSteps([])
     setNotice('已重置为示例工作流。')
+  }
+
+  if (!authSession) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-panel">
+          <div className="brand auth-brand">
+            <span>
+              <Shield size={22} />
+            </span>
+            <div>
+              <strong>流程工坊</strong>
+              <small>登录后进入工作台</small>
+            </div>
+          </div>
+          <div className="auth-tabs">
+            <button type="button" className={clsx(authMode === 'login' && 'active')} onClick={() => setAuthMode('login')}>
+              登录
+            </button>
+            <button type="button" className={clsx(authMode === 'register' && 'active')} onClick={() => setAuthMode('register')}>
+              注册
+            </button>
+          </div>
+          <label>
+            账号
+            <input value={authUsername} onChange={(event) => setAuthUsername(event.target.value)} placeholder="至少 3 个字符" />
+          </label>
+          <label>
+            密码
+            <input
+              type="password"
+              value={authPassword}
+              onChange={(event) => setAuthPassword(event.target.value)}
+              placeholder="至少 6 个字符"
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void handleAuthSubmit()
+              }}
+            />
+          </label>
+          {authNotice && <p className="auth-notice">{authNotice}</p>}
+          <button type="button" className="primary" onClick={handleAuthSubmit}>
+            {authMode === 'login' ? '登录' : '注册并登录'}
+          </button>
+        </section>
+      </main>
+    )
   }
 
   return (
@@ -2552,6 +2685,9 @@ function App() {
             </button>
             <button type="button" className="ghost" onClick={() => loadWorkflowsFromBackend()}>
               从后端加载
+            </button>
+            <button type="button" className="ghost" onClick={logout}>
+              退出 {authSession.user.username}
             </button>
             <button type="button" className="primary" onClick={runWorkflow}>
               <Play size={17} />
