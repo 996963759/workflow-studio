@@ -26,6 +26,7 @@ from .models import (
     UserRecord,
 )
 from .jobs import RunJobQueue
+from .external_rag import external_rag_status
 from .knowledge import (
     delete_knowledge_document,
     knowledge_status,
@@ -81,7 +82,14 @@ def health() -> dict[str, str]:
 
 @app.get("/api/provider-status")
 def provider_status() -> dict[str, str | bool]:
-    return get_provider_status()
+    status = get_provider_status()
+    rag_status = external_rag_status()
+    return {
+        **status,
+        "external_rag_enabled": rag_status.enabled,
+        "external_rag_provider": rag_status.provider,
+        "external_rag_base_url": rag_status.base_url,
+    }
 
 
 def resolve_workspace_id(user: UserRecord, workspace_id: str | None = Header(default=None, alias="X-Workspace-Id")) -> str:

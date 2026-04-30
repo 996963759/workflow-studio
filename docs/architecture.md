@@ -17,6 +17,7 @@ flowchart LR
   Runner --> KB[团队知识库]
   KB --> Vector[SQLite 向量索引]
   KB --> Files[Markdown / TXT 文件]
+  Runner --> PaiSmart[PaiSmart 外部 RAG]
 ```
 
 ## 前端
@@ -36,6 +37,7 @@ flowchart LR
 - 工作流、运行历史、知识库文件按团队空间隔离，并通过 owner/editor/viewer 角色控制读写。
 - 异步运行队列使用进程内线程池，适合本地和简历演示；生产环境可替换为 Redis/Celery。
 - 知识库使用 Markdown/TXT 文件保存原文，同时在 SQLite 中保存哈希向量索引，检索时混合关键词分和余弦相似度。
+- 知识检索节点也可以选择 PaiSmart 外部 RAG，后端通过 `/api/v1/search/hybrid` 拉取检索片段；失败时回退本地知识库。
 
 ## 执行链路
 

@@ -28,3 +28,7 @@ def sqlite_url(path: Path) -> str:
 
 
 DATABASE_URL = get_env("DATABASE_URL", sqlite_url(DATABASE_PATH))
+EXTERNAL_RAG_ENABLED = get_env("EXTERNAL_RAG_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+PAISMART_BASE_URL = get_env("PAISMART_BASE_URL", "http://127.0.0.1:8080")
+PAISMART_TOKEN = os.getenv("PAISMART_TOKEN", "")
+PAISMART_TIMEOUT_SECONDS = float(get_env("PAISMART_TIMEOUT_SECONDS", "12"))

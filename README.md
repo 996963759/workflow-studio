@@ -65,6 +65,7 @@
 - 团队空间和 owner/editor/viewer 角色权限
 - 异步运行队列，支持任务提交、轮询和运行历史落库
 - 知识库上传后自动写入本地向量索引，检索时混合关键词和相似度
+- 知识检索节点可切换为 PaiSmart 外部 RAG 服务
 - 前端已拆出登录组件，并增加 Playwright E2E 用例
 - 节点支持失败策略和重试次数配置
 - 运行输入可以手动编辑，也可以一键套用示例
@@ -118,6 +119,7 @@
 - 后端遇到条件节点时，会根据判断结果跳过未命中的真 / 假分支。
 - 知识检索节点会从 `server/data/knowledge/` 读取 `.md` 和 `.txt` 文档，并按检索语句返回相关片段。
 - 右侧“知识库”面板可以查看当前后端加载了多少文档和片段，也可以上传或删除 `.md/.txt` 文档。
+- 知识检索节点的“知识来源”可以选择“本地知识库”或“PaiSmart RAG”。选择 PaiSmart 时，后端会调用外部 PaiSmart 检索接口；调用失败会回退本地知识库。
 - 工具节点可以填写请求地址、方法、请求头 JSON 和请求体 JSON；后端运行时会真实调用本机 HTTP 接口。
 - 工具节点默认只允许请求 `localhost`、`127.0.0.1` 或 `::1`，避免误请求外网。
 - 如果后端配置了 `DEEPSEEK_API_KEY`，后端运行里的大模型节点会优先调用 DeepSeek。
@@ -230,6 +232,18 @@ http://127.0.0.1:8000/api/health
 - `WORKFLOW_STUDIO_DB`：SQLite 数据库路径
 - `LOG_LEVEL`：后端日志级别，默认 `INFO`
 - `CORS_ORIGINS`：允许访问 API 的前端地址
+- `EXTERNAL_RAG_ENABLED`：是否启用 PaiSmart 外部 RAG，默认 `false`
+- `PAISMART_BASE_URL`：PaiSmart 服务地址，默认 `http://127.0.0.1:8080`
+- `PAISMART_TOKEN`：调用 PaiSmart 时使用的 Bearer Token，可留空
+- `PAISMART_TIMEOUT_SECONDS`：PaiSmart 请求超时时间
+
+启用 PaiSmart 外部 RAG：
+
+```powershell
+$env:EXTERNAL_RAG_ENABLED="true"
+$env:PAISMART_BASE_URL="http://127.0.0.1:8080"
+server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 --port 8000
+```
 
 ## 数据库迁移
 
@@ -265,7 +279,7 @@ http://127.0.0.1:8000
 server/data/knowledge/
 ```
 
-后端运行“知识检索”节点时会自动读取当前团队空间的文档。上传后会写入 SQLite 本地向量索引，检索时混合关键词命中和哈希向量相似度，不需要额外安装向量数据库。单个上传文件限制为 1MB。项目已内置一个示例文档：
+后端运行“知识检索”节点时，默认读取当前团队空间的本地文档。上传后会写入 SQLite 本地向量索引，检索时混合关键词命中和哈希向量相似度，不需要额外安装向量数据库。也可以在节点配置里把“知识来源”切换为 `PaiSmart RAG`，此时后端会请求 PaiSmart 的 `/api/v1/search/hybrid` 接口。单个上传文件限制为 1MB。项目已内置一个示例文档：
 
 ```text
 server/data/knowledge/customer-support.md

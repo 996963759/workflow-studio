@@ -8,6 +8,7 @@ from urllib.request import Request, urlopen
 
 from openai import OpenAI, OpenAIError
 
+from .external_rag import search_paismart
 from .knowledge import search_knowledge
 from .models import RunResponse, RunStep, WorkflowPayload
 
@@ -337,17 +338,35 @@ def run_knowledge_node(
 ) -> tuple[str, str, str | None]:
     query = render_template(data.get("query"), context).strip() or input_text
     top_k = int(data.get("topK") or 4)
-    matches = search_knowledge(query, top_k, user_id, workspace_id)
+    provider_mode = str(data.get("knowledgeProvider") or "local")
     step_input = query or "未配置检索语句"
+    provider = "本地知识库"
+
+    if provider_mode == "paismart":
+        try:
+            matches = search_paismart(query, top_k)
+            provider = "PaiSmart RAG"
+        except Exception as error:  # noqa: BLE001 - fallback is shown in the run log.
+            matches = search_knowledge(query, top_k, user_id, workspace_id)
+            provider = "本地知识库"
+            if not matches:
+                return (
+                    "PaiSmart RAG 调用失败，且本地知识库没有检索到相关片段。",
+                    step_input,
+                    f"PaiSmart RAG 失败后回退本地知识库：{summarize_error(error)}",
+                )
+            step_input = f"{step_input}\nPaiSmart RAG 调用失败，已回退本地知识库：{summarize_error(error)}"
+    else:
+        matches = search_knowledge(query, top_k, user_id, workspace_id)
 
     if not matches:
-        return "没有在本地知识库中检索到相关片段。", step_input, "本地知识库"
+        return f"没有在{provider}中检索到相关片段。", step_input, provider
 
     output = "\n\n".join(
         f"[{index}. {match.source} | score={match.score}]\n{match.text}"
         for index, match in enumerate(matches, start=1)
     )
-    return output, step_input, "本地知识库"
+    return output, step_input, provider
 
 
 def simulate_run(

@@ -101,3 +101,9 @@ X-Workspace-Id: <workspace_id>
 | --- | --- | --- |
 | GET | `/api/health` | 健康检查 |
 | GET | `/api/provider-status` | DeepSeek / OpenAI 配置状态 |
+
+`/api/provider-status` 还会返回 PaiSmart 外部 RAG 配置状态：
+
+- `external_rag_enabled`
+- `external_rag_provider`
+- `external_rag_base_url`

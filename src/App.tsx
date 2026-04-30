@@ -50,6 +50,7 @@ import { AuthView } from './components/AuthView'
 type NodeKind = 'input' | 'llm' | 'knowledge' | 'tool' | 'condition' | 'output'
 type ConditionOperator = 'contains' | 'equals' | 'not_empty'
 type FailurePolicy = 'stop' | 'continue' | 'skip_downstream'
+type KnowledgeProvider = 'local' | 'paismart'
 
 type WorkflowNodeData = {
   kind: NodeKind
@@ -63,6 +64,7 @@ type WorkflowNodeData = {
   prompt?: string
   query?: string
   topK?: number
+  knowledgeProvider?: KnowledgeProvider
   toolName?: string
   toolUrl?: string
   toolMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
@@ -207,6 +209,9 @@ type ProviderStatus = {
   deepseek_base_url: string
   openai_configured: boolean
   openai_default_model: string
+  external_rag_enabled?: boolean
+  external_rag_provider?: string
+  external_rag_base_url?: string
 }
 
 type KnowledgeStatus = {
@@ -287,6 +292,7 @@ const nodeMeta: Record<
       description: '搜索已上传文档或已连接知识库。',
       query: '{{user_request}}',
       topK: 4,
+      knowledgeProvider: 'local',
       outputKey: 'context',
     },
   },
@@ -3011,6 +3017,16 @@ function App() {
           {selectedNode.data.kind === 'knowledge' && (
             <>
               <label>
+                知识来源
+                <select
+                  value={selectedNode.data.knowledgeProvider ?? 'local'}
+                  onChange={(event) => updateSelectedNode({ knowledgeProvider: event.target.value as KnowledgeProvider })}
+                >
+                  <option value="local">本地知识库</option>
+                  <option value="paismart">PaiSmart RAG</option>
+                </select>
+              </label>
+              <label>
                 检索语句
                 <input
                   value={selectedNode.data.query}
@@ -3266,6 +3282,12 @@ function App() {
             <div>
               <span>后端状态</span>
               <strong>{backendStatus === 'online' ? '在线' : backendStatus === 'offline' ? '离线' : '未检查'}</strong>
+            </div>
+            <div>
+              <span>PaiSmart RAG</span>
+              <strong className={clsx(providerStatus?.external_rag_enabled ? 'ready' : 'fallback')}>
+                {providerStatus?.external_rag_enabled ? '已启用' : '未启用'}
+              </strong>
             </div>
           </div>
           <p className="model-status-note">

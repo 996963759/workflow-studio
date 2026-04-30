@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from server.src.auth import AuthService, set_auth_service
 from server.src import main as api
+from server.src import runner
 from server.src.db import create_session_factory
 from server.src.jobs import RunJobQueue
 from server.src.knowledge import set_knowledge_session_factory
@@ -58,6 +59,7 @@ class ApiTestCase(unittest.TestCase):
         test_db = Path(self.temp_dir.name) / "test.db"
         engine, session_factory = create_session_factory(f"sqlite:///{test_db.as_posix()}")
         self.engine = engine
+        self.previous_search_paismart = runner.search_paismart
         api.store = WorkflowStore(test_db, session_factory=session_factory, engine=engine)
         set_knowledge_session_factory(api.store.SessionLocal)
         api.job_queue = RunJobQueue(api.store)
@@ -74,6 +76,7 @@ class ApiTestCase(unittest.TestCase):
         api.job_queue = RunJobQueue(api.store)
         api.auth_service = self.previous_auth_service
         set_auth_service(self.previous_auth_service)
+        runner.search_paismart = self.previous_search_paismart
         self.temp_dir.cleanup()
 
     def create_auth_headers(self, username: str | None = None) -> dict[str, str]:
@@ -241,6 +244,56 @@ class ApiTestCase(unittest.TestCase):
             headers=self.auth_headers,
         ).json()
         self.assertIn("退款", run["steps"][1]["output"])
+
+    def test_knowledge_node_can_use_paismart_adapter(self) -> None:
+        def fake_search_paismart(query: str, top_k: int):
+            from server.src.knowledge import KnowledgeChunk
+
+            self.assertEqual(query, "外部检索")
+            self.assertEqual(top_k, 2)
+            return [KnowledgeChunk(source="pai-doc#1", text="PaiSmart 返回的企业知识片段", score=0.98)]
+
+        runner.search_paismart = fake_search_paismart
+        workflow = {
+            **valid_workflow(),
+            "nodes": [
+                {
+                    "id": "input-1",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"kind": "input", "label": "用户输入", "outputKey": "user_request"},
+                },
+                {
+                    "id": "knowledge-1",
+                    "position": {"x": 240, "y": 0},
+                    "data": {
+                        "kind": "knowledge",
+                        "label": "PaiSmart 检索",
+                        "knowledgeProvider": "paismart",
+                        "query": "{{user_request}}",
+                        "topK": 2,
+                        "outputKey": "context",
+                    },
+                },
+                {
+                    "id": "output-1",
+                    "position": {"x": 480, "y": 0},
+                    "data": {"kind": "output", "label": "最终输出", "prompt": "{{context}}", "outputKey": "answer"},
+                },
+            ],
+            "edges": [
+                {"id": "e1", "source": "input-1", "target": "knowledge-1"},
+                {"id": "e2", "source": "knowledge-1", "target": "output-1"},
+            ],
+        }
+
+        run = self.client.post(
+            "/api/runs",
+            json={"workflow": workflow, "input_text": "外部检索"},
+            headers=self.auth_headers,
+        ).json()
+        knowledge_step = run["steps"][1]
+        self.assertEqual(knowledge_step["provider"], "PaiSmart RAG")
+        self.assertIn("PaiSmart 返回的企业知识片段", knowledge_step["output"])
 
 
 if __name__ == "__main__":
