@@ -224,6 +224,13 @@ type ModelConfigRecord = {
   updated_at?: string | null
 }
 
+type ModelConfigFeedback = {
+  type: 'ok' | 'error' | 'info'
+  text: string
+}
+
+type ModelConfigAction = 'load' | 'save' | 'test'
+
 type KnowledgeStatus = {
   directory: string
   document_count: number
@@ -614,6 +621,23 @@ const readValidationError = async (response: Response) => {
     return undefined
   }
 }
+
+const readResponseErrorMessage = async (response: Response, fallback: string) => {
+  try {
+    const body = (await response.json()) as { detail?: string | Array<{ msg?: string }> }
+    if (typeof body.detail === 'string' && body.detail.trim()) return body.detail
+    if (Array.isArray(body.detail)) {
+      const message = body.detail.map((item) => item.msg).filter(Boolean).join('；')
+      if (message) return message
+    }
+  } catch {
+    // Keep the caller's fallback when the response is not JSON.
+  }
+  return fallback
+}
+
+const getErrorMessage = (error: unknown, fallback: string) =>
+  error instanceof Error && error.message ? error.message : fallback
 
 const loadStoredWorkflow = (): WorkflowDefinition | null => {
   try {
@@ -1195,6 +1219,8 @@ function App() {
     baseUrl: 'https://api.deepseek.com',
     apiKey: '',
   })
+  const [modelConfigFeedback, setModelConfigFeedback] = useState<ModelConfigFeedback | null>(null)
+  const [modelConfigBusy, setModelConfigBusy] = useState<ModelConfigAction | null>(null)
   const [knowledgeStatus, setKnowledgeStatus] = useState<KnowledgeStatus | null>(null)
   const [knowledgeDocuments, setKnowledgeDocuments] = useState<KnowledgeDocument[]>([])
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([])
@@ -1581,9 +1607,15 @@ function App() {
 
   const loadModelConfig = useCallback(async (showNotice = false) => {
     if (!authSession || !activeWorkspaceId) return null
+    if (showNotice) {
+      setModelConfigBusy('load')
+      setModelConfigFeedback({ type: 'info', text: '正在读取当前团队空间的模型配置...' })
+    }
     try {
       const response = await apiFetch('/api/model-configs/deepseek')
-      if (!response.ok) throw new Error('model config failed')
+      if (!response.ok) {
+        throw new Error(await readResponseErrorMessage(response, '读取模型配置失败：请确认后端在线。'))
+      }
       const config = (await response.json()) as ModelConfigRecord
       setModelConfig(config)
       setModelConfigForm((current) => ({
@@ -1593,54 +1625,96 @@ function App() {
         baseUrl: config.base_url || 'https://api.deepseek.com',
         apiKey: '',
       }))
-      if (showNotice) setNotice('已读取当前团队空间的模型配置。')
+      if (showNotice) {
+        const message = '已读取当前团队空间的模型配置。'
+        setModelConfigFeedback({ type: 'ok', text: message })
+        setNotice(message)
+      }
       return config
-    } catch {
+    } catch (error) {
+      const message = getErrorMessage(error, '读取模型配置失败：请确认后端在线。')
       setModelConfig(null)
-      if (showNotice) setNotice('读取模型配置失败：请确认后端在线。')
+      if (showNotice) {
+        setModelConfigFeedback({ type: 'error', text: message })
+        setNotice(message)
+      }
       return null
+    } finally {
+      if (showNotice) setModelConfigBusy(null)
     }
   }, [activeWorkspaceId, apiFetch, authSession])
 
-  const saveModelConfig = async () => {
+  const persistModelConfig = async () => {
     if (!activeWorkspaceId) {
-      setNotice('请先选择团队空间。')
-      return
+      throw new Error('请先选择团队空间。')
     }
     if (!modelConfig?.has_api_key && !modelConfigForm.apiKey.trim()) {
-      setNotice('首次保存模型配置时需要填写 DeepSeek API Key。')
-      return
+      throw new Error('首次保存模型配置时需要填写 DeepSeek API Key。')
     }
+    const response = await apiFetch('/api/model-configs/deepseek', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        enabled: modelConfigForm.enabled,
+        model: modelConfigForm.model,
+        base_url: modelConfigForm.baseUrl,
+        api_key: modelConfigForm.apiKey.trim() || null,
+      }),
+    })
+    if (!response.ok) {
+      throw new Error(await readResponseErrorMessage(response, '保存模型配置失败：请确认你有当前团队空间的编辑权限。'))
+    }
+    const config = (await response.json()) as ModelConfigRecord
+    setModelConfig(config)
+    setModelConfigForm((current) => ({ ...current, apiKey: '' }))
+    await refreshProviderStatus(false)
+    return config
+  }
+
+  const saveModelConfig = async () => {
+    if (modelConfigBusy) return
+    setModelConfigBusy('save')
+    setModelConfigFeedback({ type: 'info', text: '正在保存 DeepSeek 配置...' })
     try {
-      const response = await apiFetch('/api/model-configs/deepseek', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          enabled: modelConfigForm.enabled,
-          model: modelConfigForm.model,
-          base_url: modelConfigForm.baseUrl,
-          api_key: modelConfigForm.apiKey.trim() || null,
-        }),
-      })
-      if (!response.ok) throw new Error('save model config failed')
-      const config = (await response.json()) as ModelConfigRecord
-      setModelConfig(config)
-      setModelConfigForm((current) => ({ ...current, apiKey: '' }))
-      await refreshProviderStatus(false)
-      setNotice('已保存当前团队空间的 DeepSeek 配置。')
-    } catch {
-      setNotice('保存模型配置失败：请确认你有当前团队空间的编辑权限。')
+      await persistModelConfig()
+      const message = '已保存当前团队空间的 DeepSeek 配置。'
+      setModelConfigFeedback({ type: 'ok', text: message })
+      setNotice(message)
+    } catch (error) {
+      const message = getErrorMessage(error, '保存模型配置失败：请确认你有当前团队空间的编辑权限。')
+      setModelConfigFeedback({ type: 'error', text: message })
+      setNotice(message)
+    } finally {
+      setModelConfigBusy(null)
     }
   }
 
   const testModelConfig = async () => {
+    if (modelConfigBusy) return
+    const hasNewApiKey = Boolean(modelConfigForm.apiKey.trim())
+    setModelConfigBusy('test')
+    setModelConfigFeedback({
+      type: 'info',
+      text: hasNewApiKey ? '检测到新的 API Key，正在先保存再测试...' : '正在测试当前团队空间的 DeepSeek 配置...',
+    })
     try {
+      if (hasNewApiKey) {
+        await persistModelConfig()
+      }
       const response = await apiFetch('/api/model-configs/deepseek/test', { method: 'POST' })
-      if (!response.ok) throw new Error('test model config failed')
+      if (!response.ok) {
+        throw new Error(await readResponseErrorMessage(response, '模型配置测试失败：请确认后端在线。'))
+      }
       const result = (await response.json()) as { ok: boolean; message: string }
+      setModelConfigFeedback({ type: result.ok ? 'ok' : 'error', text: result.message })
       setNotice(result.message)
-    } catch {
-      setNotice('模型配置测试失败：请确认后端在线，且你有当前团队空间的编辑权限。')
+      if (result.ok) await refreshProviderStatus(false)
+    } catch (error) {
+      const message = getErrorMessage(error, '模型配置测试失败：请确认后端在线，且你有当前团队空间的编辑权限。')
+      setModelConfigFeedback({ type: 'error', text: message })
+      setNotice(message)
+    } finally {
+      setModelConfigBusy(null)
     }
   }
 
@@ -3436,16 +3510,36 @@ function App() {
               />
             </label>
             <div className="model-config-actions">
-              <button type="button" className="mini-action" onClick={() => void saveModelConfig()}>
-                保存配置
+              <button
+                type="button"
+                className="mini-action"
+                disabled={Boolean(modelConfigBusy)}
+                onClick={() => void saveModelConfig()}
+              >
+                {modelConfigBusy === 'save' ? '保存中...' : '保存配置'}
               </button>
-              <button type="button" className="mini-action" onClick={() => void testModelConfig()}>
-                测试配置
+              <button
+                type="button"
+                className="mini-action"
+                disabled={Boolean(modelConfigBusy)}
+                onClick={() => void testModelConfig()}
+              >
+                {modelConfigBusy === 'test' ? '测试中...' : '测试配置'}
               </button>
-              <button type="button" className="mini-action" onClick={() => void loadModelConfig(true)}>
-                重新读取
+              <button
+                type="button"
+                className="mini-action"
+                disabled={Boolean(modelConfigBusy)}
+                onClick={() => void loadModelConfig(true)}
+              >
+                {modelConfigBusy === 'load' ? '读取中...' : '重新读取'}
               </button>
             </div>
+            {modelConfigFeedback && (
+              <p className={clsx('model-config-feedback', modelConfigFeedback.type)}>
+                {modelConfigFeedback.text}
+              </p>
+            )}
             <p className="model-status-note">
               {modelConfig?.has_api_key
                 ? `当前团队空间已保存 Key：${modelConfig.masked_api_key ?? '******'}`
