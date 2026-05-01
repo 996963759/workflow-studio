@@ -39,6 +39,7 @@
 - 支持加载并查看后端运行历史
 - 支持搜索、按状态筛选、删除和清空当前工作流的后端运行历史
 - 后端运行大模型节点时支持调用 DeepSeek 或 OpenAI，未配置密钥时自动回退模拟输出
+- 支持在右侧“模型状态”保存当前团队空间的 DeepSeek 配置，保存一次后该空间工作流可复用
 - 大模型节点支持温度、最大输出长度和超时时间配置
 - 后端运行工具节点时支持真实 HTTP 请求，默认只允许请求本机地址
 - 后端知识检索节点会读取本地 Markdown / TXT 文档并返回相关片段
@@ -122,7 +123,8 @@
 - 知识检索节点的“知识来源”可以选择“本地知识库”或“PaiSmart RAG”。选择 PaiSmart 时，后端会调用外部 PaiSmart 检索接口；调用失败会回退本地知识库。
 - 工具节点可以填写请求地址、方法、请求头 JSON 和请求体 JSON；后端运行时会真实调用本机 HTTP 接口。
 - 工具节点默认只允许请求 `localhost`、`127.0.0.1` 或 `::1`，避免误请求外网。
-- 如果后端配置了 `DEEPSEEK_API_KEY`，后端运行里的大模型节点会优先调用 DeepSeek。
+- 可以在右侧“模型状态”里保存当前团队空间的 DeepSeek 配置；保存后，该空间内所有工作流运行都会优先使用这份配置。
+- 如果团队空间没有保存模型配置，但后端配置了 `DEEPSEEK_API_KEY`，大模型节点会使用环境变量里的 DeepSeek。
 - 如果没有 DeepSeek Key，但配置了 `OPENAI_API_KEY`，大模型节点会调用 OpenAI；都没有时继续使用模拟输出。
 - 大模型节点可以单独配置温度、最大输出长度和超时时间，后端真实调用和模拟输出都会读取这些节点参数。
 - 运行日志里的“来源”会显示大模型节点来自 `DeepSeek`、`OpenAI` 还是 `模拟输出`。
@@ -152,8 +154,8 @@
 
 | 页面现象 | 常见原因 | 处理方式 |
 | --- | --- | --- |
-| 模型状态显示 DeepSeek 未配置 | 后端启动前没有设置 `DEEPSEEK_API_KEY` | 在同一个 PowerShell 窗口先设置 Key，再启动后端 |
-| 来源显示模拟输出，且没有错误原因 | 没有配置 DeepSeek/OpenAI Key | 配置 `DEEPSEEK_API_KEY` 后重启后端 |
+| 模型状态显示 DeepSeek 未配置 | 没有保存团队空间 Key，也没有设置 `DEEPSEEK_API_KEY` | 在右侧“模型状态”保存 DeepSeek Key，或在后端启动前设置环境变量 |
+| 来源显示模拟输出，且没有错误原因 | 没有配置团队空间 Key，也没有配置 DeepSeek/OpenAI 环境变量 | 在右侧“模型状态”保存 DeepSeek Key，或配置 `DEEPSEEK_API_KEY` 后重启后端 |
 | 来源显示模拟输出，并出现错误原因 | 已配置 Key，但真实调用失败 | 查看“错误原因”，重点检查 Key、余额、模型名和网络 |
 | 错误原因包含 401/Authentication | Key 错误或无效 | 重新生成 DeepSeek Key 并重启后端 |
 | 错误原因包含 model | 模型名不被当前服务支持 | 改用 `deepseek-v4-flash` 或更新 `DEEPSEEK_MODEL` |
@@ -236,6 +238,7 @@ http://127.0.0.1:8000/api/health
 - `PAISMART_BASE_URL`：PaiSmart 服务地址，默认 `http://127.0.0.1:8080`
 - `PAISMART_TOKEN`：调用 PaiSmart 时使用的 Bearer Token，可留空
 - `PAISMART_TIMEOUT_SECONDS`：PaiSmart 请求超时时间
+- `MODEL_CONFIG_SECRET`：保护团队空间模型 API Key 的本地密钥；共享数据库前请改成自己的长随机字符串
 
 启用 PaiSmart 外部 RAG：
 

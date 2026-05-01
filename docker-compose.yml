@@ -19,6 +19,7 @@ services:
       PAISMART_BASE_URL: ${PAISMART_BASE_URL:-http://127.0.0.1:8080}
       PAISMART_TOKEN: ${PAISMART_TOKEN:-}
       PAISMART_TIMEOUT_SECONDS: ${PAISMART_TIMEOUT_SECONDS:-12}
+      MODEL_CONFIG_SECRET: ${MODEL_CONFIG_SECRET:-workflow-studio-local-model-config-secret}
     volumes:
       - ./server/data:/app/server/data
     restart: unless-stopped

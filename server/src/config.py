@@ -32,3 +32,4 @@ EXTERNAL_RAG_ENABLED = get_env("EXTERNAL_RAG_ENABLED", "false").lower() in {"1",
 PAISMART_BASE_URL = get_env("PAISMART_BASE_URL", "http://127.0.0.1:8080")
 PAISMART_TOKEN = os.getenv("PAISMART_TOKEN", "")
 PAISMART_TIMEOUT_SECONDS = float(get_env("PAISMART_TIMEOUT_SECONDS", "12"))
+MODEL_CONFIG_SECRET = get_env("MODEL_CONFIG_SECRET", "workflow-studio-local-model-config-secret")

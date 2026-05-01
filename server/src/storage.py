@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from .config import DATABASE_PATH, DATABASE_URL
 from .db import SessionLocal, create_session_factory, engine as default_engine
 from .models import (
+    ModelConfigPayload,
+    ModelConfigRecord,
     RunJobRecord,
     RunRecord,
     RunResponse,
@@ -19,7 +21,8 @@ from .models import (
     WorkspaceMemberRecord,
     WorkspaceRecord,
 )
-from .orm import Base, DbRun, DbRunJob, DbUser, DbWorkflow, DbWorkspace, DbWorkspaceMember
+from .orm import Base, DbRun, DbRunJob, DbUser, DbWorkflow, DbWorkspace, DbWorkspaceMember, DbWorkspaceModelConfig
+from .secret_box import mask_secret, protect_secret, reveal_secret
 
 
 ROLE_ORDER = {"viewer": 1, "editor": 2, "owner": 3}
@@ -249,6 +252,110 @@ class WorkflowStore:
                 )
             session.commit()
         return WorkspaceMemberRecord(id=user.id, username=user.username, role=role, created_at=member_created_at)
+
+    def get_model_config(self, workspace_id: str, user_id: str, provider: str) -> ModelConfigRecord | None:
+        if not self.can_access_workspace(workspace_id, user_id, "viewer"):
+            return None
+        with self._connect() as session:
+            row = session.scalar(
+                select(DbWorkspaceModelConfig).where(
+                    DbWorkspaceModelConfig.workspace_id == workspace_id,
+                    DbWorkspaceModelConfig.provider == provider,
+                )
+            )
+        if not row:
+            return ModelConfigRecord(
+                provider=provider,
+                enabled=False,
+                model="deepseek-v4-flash",
+                base_url="https://api.deepseek.com",
+                has_api_key=False,
+                masked_api_key=None,
+                updated_at=None,
+            )
+        masked = None
+        has_api_key = bool(row.api_key_secret)
+        if has_api_key:
+            try:
+                masked = mask_secret(reveal_secret(row.api_key_secret))
+            except ValueError:
+                masked = "****"
+        return ModelConfigRecord(
+            provider=row.provider,
+            enabled=bool(row.enabled),
+            model=row.model,
+            base_url=row.base_url,
+            has_api_key=has_api_key,
+            masked_api_key=masked,
+            updated_at=row.updated_at,
+        )
+
+    def upsert_model_config(
+        self,
+        workspace_id: str,
+        user_id: str,
+        provider: str,
+        payload: ModelConfigPayload,
+    ) -> ModelConfigRecord | None:
+        if not self.can_access_workspace(workspace_id, user_id, "editor"):
+            return None
+        now = utc_now()
+        with self._connect() as session:
+            row = session.scalar(
+                select(DbWorkspaceModelConfig).where(
+                    DbWorkspaceModelConfig.workspace_id == workspace_id,
+                    DbWorkspaceModelConfig.provider == provider,
+                )
+            )
+            if row:
+                row.enabled = payload.enabled
+                row.model = payload.model.strip()
+                row.base_url = payload.base_url.strip()
+                if payload.api_key and payload.api_key.strip():
+                    row.api_key_secret = protect_secret(payload.api_key.strip())
+                row.updated_at = now
+            else:
+                if not payload.api_key or not payload.api_key.strip():
+                    raise ValueError("API key is required when creating a model config")
+                row = DbWorkspaceModelConfig(
+                    id=str(uuid.uuid4()),
+                    workspace_id=workspace_id,
+                    provider=provider,
+                    model=payload.model.strip(),
+                    base_url=payload.base_url.strip(),
+                    api_key_secret=protect_secret(payload.api_key.strip()),
+                    enabled=payload.enabled,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(row)
+            session.commit()
+        return self.get_model_config(workspace_id, user_id, provider)
+
+    def get_runtime_model_config(self, workspace_id: str, provider: str) -> dict[str, str | bool] | None:
+        with self._connect() as session:
+            row = session.scalar(
+                select(DbWorkspaceModelConfig).where(
+                    DbWorkspaceModelConfig.workspace_id == workspace_id,
+                    DbWorkspaceModelConfig.provider == provider,
+                    DbWorkspaceModelConfig.enabled.is_(True),
+                )
+            )
+        if not row:
+            return None
+        try:
+            api_key = reveal_secret(row.api_key_secret)
+        except ValueError:
+            return None
+        if not api_key:
+            return None
+        return {
+            "provider": row.provider,
+            "api_key": api_key,
+            "model": row.model,
+            "base_url": row.base_url or "",
+            "enabled": bool(row.enabled),
+        }
 
     def list_workflows(self, user_id: str, workspace_id: str | None = None) -> list[WorkflowRecord]:
         workspace_id = workspace_id or self.ensure_default_workspace(user_id)

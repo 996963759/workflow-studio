@@ -44,6 +44,16 @@ X-Workspace-Id: <workspace_id>
 - `editor`：创建、更新、删除工作流和知识文档。
 - `viewer`：查看工作流、运行历史和触发运行。
 
+## 模型配置
+
+模型配置按团队空间隔离。前端只展示 API Key 掩码，后端运行大模型节点时优先使用当前团队空间配置。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/model-configs/deepseek` | 查看当前空间 DeepSeek 配置，不返回完整 Key |
+| PUT | `/api/model-configs/deepseek` | 保存当前空间 DeepSeek 配置 |
+| POST | `/api/model-configs/deepseek/test` | 检查当前空间是否已有可用配置 |
+
 ## 工作流
 
 | 方法 | 路径 | 说明 |

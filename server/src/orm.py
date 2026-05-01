@@ -42,6 +42,20 @@ class DbWorkspaceMember(Base):
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 
 
+class DbWorkspaceModelConfig(Base):
+    __tablename__ = "workspace_model_configs"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String, ForeignKey("workspaces.id"), nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String, nullable=False)
+    model: Mapped[str] = mapped_column(String, nullable=False)
+    base_url: Mapped[str | None] = mapped_column(String)
+    api_key_secret: Mapped[str] = mapped_column(Text, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
 class DbWorkflow(Base):
     __tablename__ = "workflows"
 

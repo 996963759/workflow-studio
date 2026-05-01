@@ -295,6 +295,76 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(knowledge_step["provider"], "PaiSmart RAG")
         self.assertIn("PaiSmart 返回的企业知识片段", knowledge_step["output"])
 
+    def test_workspace_model_config_masks_key_and_is_used_by_runner(self) -> None:
+        save_response = self.client.put(
+            "/api/model-configs/deepseek",
+            json={
+                "enabled": True,
+                "model": "deepseek-v4-flash",
+                "base_url": "https://api.deepseek.com",
+                "api_key": "sk-test-workspace-key",
+            },
+            headers=self.auth_headers,
+        )
+        self.assertEqual(save_response.status_code, 200)
+        saved = save_response.json()
+        self.assertTrue(saved["has_api_key"])
+        self.assertNotIn("sk-test-workspace-key", str(saved))
+
+        test_response = self.client.post("/api/model-configs/deepseek/test", headers=self.auth_headers)
+        self.assertEqual(test_response.status_code, 200)
+        self.assertTrue(test_response.json()["ok"])
+
+        captured = {}
+
+        def fake_deepseek_node(data, system_prompt, prompt, runtime_config=None):
+            captured["runtime_config"] = runtime_config
+            return "工作区模型输出", runtime_config["model"]
+
+        previous = runner.run_deepseek_node
+        runner.run_deepseek_node = fake_deepseek_node
+        try:
+            workflow = {
+                **valid_workflow(),
+                "nodes": [
+                    {
+                        "id": "input-1",
+                        "position": {"x": 0, "y": 0},
+                        "data": {"kind": "input", "label": "用户输入", "outputKey": "user_request"},
+                    },
+                    {
+                        "id": "llm-1",
+                        "position": {"x": 240, "y": 0},
+                        "data": {
+                            "kind": "llm",
+                            "label": "模型节点",
+                            "prompt": "{{user_request}}",
+                            "outputKey": "draft",
+                        },
+                    },
+                    {
+                        "id": "output-1",
+                        "position": {"x": 480, "y": 0},
+                        "data": {"kind": "output", "label": "最终输出", "prompt": "{{draft}}", "outputKey": "answer"},
+                    },
+                ],
+                "edges": [
+                    {"id": "e1", "source": "input-1", "target": "llm-1"},
+                    {"id": "e2", "source": "llm-1", "target": "output-1"},
+                ],
+            }
+            run = self.client.post(
+                "/api/runs",
+                json={"workflow": workflow, "input_text": "使用团队空间模型"},
+                headers=self.auth_headers,
+            ).json()
+        finally:
+            runner.run_deepseek_node = previous
+
+        llm_step = run["steps"][1]
+        self.assertEqual(llm_step["provider"], "DeepSeek 工作区配置 - deepseek-v4-flash")
+        self.assertEqual(captured["runtime_config"]["api_key"], "sk-test-workspace-key")
+
 
 if __name__ == "__main__":
     unittest.main()

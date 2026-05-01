@@ -1061,6 +1061,36 @@ textarea:focus {
   margin-top: 7px;
 }
 
+.model-config-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.model-config-form label {
+  color: #334155;
+  display: grid;
+  font-size: 12px;
+  font-weight: 700;
+  gap: 5px;
+}
+
+.model-config-form .inline-check {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.model-config-form .inline-check input {
+  width: auto;
+}
+
+.model-config-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .knowledge-actions {
   display: inline-flex;
   gap: 6px;

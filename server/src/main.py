@@ -11,6 +11,9 @@ from .models import (
     AuthPayload,
     AuthResponse,
     KnowledgeDocumentPayload,
+    ModelConfigPayload,
+    ModelConfigRecord,
+    ModelConfigTestResponse,
     RunRecord,
     RunJobRecord,
     RunRequest,
@@ -116,6 +119,14 @@ def require_workspace_role(minimum_role: str):
 WorkspaceContext = tuple[UserRecord, str]
 
 
+def workspace_model_configs(workspace_id: str) -> dict[str, dict[str, str | bool]]:
+    configs: dict[str, dict[str, str | bool]] = {}
+    deepseek_config = store.get_runtime_model_config(workspace_id, "deepseek")
+    if deepseek_config:
+        configs["deepseek"] = deepseek_config
+    return configs
+
+
 @app.get("/api/workspaces", response_model=list[WorkspaceRecord])
 def list_workspaces(user: UserRecord = Depends(require_auth)) -> list[WorkspaceRecord]:
     store.ensure_default_workspace(user.id, user.username)
@@ -145,6 +156,57 @@ def upsert_workspace_member(
     if member is None:
         raise HTTPException(status_code=404, detail="User not found or workspace access denied")
     return member
+
+
+@app.get("/api/model-configs/{provider}", response_model=ModelConfigRecord)
+def get_model_config(
+    provider: str,
+    context: WorkspaceContext = Depends(require_workspace_role("viewer")),
+) -> ModelConfigRecord:
+    if provider != "deepseek":
+        raise HTTPException(status_code=400, detail="Unsupported model provider")
+    user, workspace_id = context
+    config = store.get_model_config(workspace_id, user.id, provider)
+    if config is None:
+        raise HTTPException(status_code=403, detail="Workspace access denied")
+    return config
+
+
+@app.put("/api/model-configs/{provider}", response_model=ModelConfigRecord)
+def save_model_config(
+    provider: str,
+    payload: ModelConfigPayload,
+    context: WorkspaceContext = Depends(require_workspace_role("editor")),
+) -> ModelConfigRecord:
+    if provider != "deepseek":
+        raise HTTPException(status_code=400, detail="Unsupported model provider")
+    user, workspace_id = context
+    try:
+        config = store.upsert_model_config(workspace_id, user.id, provider, payload)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    if config is None:
+        raise HTTPException(status_code=403, detail="Workspace access denied")
+    return config
+
+
+@app.post("/api/model-configs/{provider}/test", response_model=ModelConfigTestResponse)
+def test_model_config(
+    provider: str,
+    context: WorkspaceContext = Depends(require_workspace_role("editor")),
+) -> ModelConfigTestResponse:
+    if provider != "deepseek":
+        raise HTTPException(status_code=400, detail="Unsupported model provider")
+    _, workspace_id = context
+    runtime_config = store.get_runtime_model_config(workspace_id, provider)
+    if not runtime_config:
+        return ModelConfigTestResponse(ok=False, message="当前团队空间还没有可用的 DeepSeek Key。", provider=provider, model="")
+    return ModelConfigTestResponse(
+        ok=True,
+        message="DeepSeek 配置已保存。运行工作流时会优先使用当前团队空间配置。",
+        provider=provider,
+        model=str(runtime_config.get("model") or ""),
+    )
 
 
 @app.get("/api/knowledge/status")
@@ -273,7 +335,7 @@ def delete_workflow(workflow_id: str, context: WorkspaceContext = Depends(requir
 def run_workflow(payload: RunRequest, context: WorkspaceContext = Depends(require_workspace_role("viewer"))) -> RunResponse:
     user, workspace_id = context
     raise_on_validation_errors(payload.workflow)
-    return simulate_run(payload.workflow, payload.input_text, user.id, workspace_id)
+    return simulate_run(payload.workflow, payload.input_text, user.id, workspace_id, workspace_model_configs(workspace_id))
 
 
 @app.get("/api/runs", response_model=list[RunRecord])
@@ -321,7 +383,7 @@ def run_stored_workflow(
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
     raise_on_validation_errors(workflow)
-    response = simulate_run(workflow, payload.input_text, user.id, workspace_id)
+    response = simulate_run(workflow, payload.input_text, user.id, workspace_id, workspace_model_configs(workspace_id))
     return store.create_run(workflow.id, user.id, workflow.name, payload.input_text, response, workspace_id)
 
 

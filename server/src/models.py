@@ -69,6 +69,30 @@ class WorkspaceMemberPayload(BaseModel):
     role: str = Field(pattern="^(owner|editor|viewer)$")
 
 
+class ModelConfigPayload(BaseModel):
+    enabled: bool = True
+    model: str = Field(default="deepseek-v4-flash", min_length=1, max_length=120)
+    base_url: str = Field(default="https://api.deepseek.com", min_length=1, max_length=300)
+    api_key: str | None = Field(default=None, max_length=300)
+
+
+class ModelConfigRecord(BaseModel):
+    provider: str
+    enabled: bool
+    model: str
+    base_url: str | None = None
+    has_api_key: bool
+    masked_api_key: str | None = None
+    updated_at: str | None = None
+
+
+class ModelConfigTestResponse(BaseModel):
+    ok: bool
+    message: str
+    provider: str
+    model: str
+
+
 class AuthResponse(BaseModel):
     token: str
     user: UserRecord

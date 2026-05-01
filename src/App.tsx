@@ -214,6 +214,16 @@ type ProviderStatus = {
   external_rag_base_url?: string
 }
 
+type ModelConfigRecord = {
+  provider: string
+  enabled: boolean
+  model: string
+  base_url?: string | null
+  has_api_key: boolean
+  masked_api_key?: string | null
+  updated_at?: string | null
+}
+
 type KnowledgeStatus = {
   directory: string
   document_count: number
@@ -1178,6 +1188,13 @@ function App() {
   const [remoteValidation, setRemoteValidation] = useState<RemoteValidationState | null>(null)
   const [providerStatus, setProviderStatus] = useState<ProviderStatus | null>(null)
   const [providerStatusCheckedAt, setProviderStatusCheckedAt] = useState('')
+  const [modelConfig, setModelConfig] = useState<ModelConfigRecord | null>(null)
+  const [modelConfigForm, setModelConfigForm] = useState({
+    enabled: true,
+    model: 'deepseek-v4-flash',
+    baseUrl: 'https://api.deepseek.com',
+    apiKey: '',
+  })
   const [knowledgeStatus, setKnowledgeStatus] = useState<KnowledgeStatus | null>(null)
   const [knowledgeDocuments, setKnowledgeDocuments] = useState<KnowledgeDocument[]>([])
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([])
@@ -1320,6 +1337,10 @@ function App() {
   const activeRunJob = runJobs.find((job) => job.id === activeRunJobId)
   const authToken = authSession?.token
 
+  const updateModelConfigForm = (patch: Partial<typeof modelConfigForm>) => {
+    setModelConfigForm((current) => ({ ...current, ...patch }))
+  }
+
   const apiFetch = useCallback(
     (path: string, init: RequestInit = {}) => {
       const headers = new Headers(init.headers)
@@ -1386,6 +1407,13 @@ function App() {
     persistAuthSession(null)
     setBackendStatus('unknown')
     setProviderStatus(null)
+    setModelConfig(null)
+    setModelConfigForm({
+      enabled: true,
+      model: 'deepseek-v4-flash',
+      baseUrl: 'https://api.deepseek.com',
+      apiKey: '',
+    })
     setKnowledgeStatus(null)
     setKnowledgeDocuments([])
     setWorkspaces([])
@@ -1548,6 +1576,71 @@ function App() {
       setBackendStatus('offline')
       if (showNotice) setNotice('模型状态读取失败：请确认后端在线。')
       return null
+    }
+  }
+
+  const loadModelConfig = useCallback(async (showNotice = false) => {
+    if (!authSession || !activeWorkspaceId) return null
+    try {
+      const response = await apiFetch('/api/model-configs/deepseek')
+      if (!response.ok) throw new Error('model config failed')
+      const config = (await response.json()) as ModelConfigRecord
+      setModelConfig(config)
+      setModelConfigForm((current) => ({
+        ...current,
+        enabled: config.enabled,
+        model: config.model || 'deepseek-v4-flash',
+        baseUrl: config.base_url || 'https://api.deepseek.com',
+        apiKey: '',
+      }))
+      if (showNotice) setNotice('已读取当前团队空间的模型配置。')
+      return config
+    } catch {
+      setModelConfig(null)
+      if (showNotice) setNotice('读取模型配置失败：请确认后端在线。')
+      return null
+    }
+  }, [activeWorkspaceId, apiFetch, authSession])
+
+  const saveModelConfig = async () => {
+    if (!activeWorkspaceId) {
+      setNotice('请先选择团队空间。')
+      return
+    }
+    if (!modelConfig?.has_api_key && !modelConfigForm.apiKey.trim()) {
+      setNotice('首次保存模型配置时需要填写 DeepSeek API Key。')
+      return
+    }
+    try {
+      const response = await apiFetch('/api/model-configs/deepseek', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: modelConfigForm.enabled,
+          model: modelConfigForm.model,
+          base_url: modelConfigForm.baseUrl,
+          api_key: modelConfigForm.apiKey.trim() || null,
+        }),
+      })
+      if (!response.ok) throw new Error('save model config failed')
+      const config = (await response.json()) as ModelConfigRecord
+      setModelConfig(config)
+      setModelConfigForm((current) => ({ ...current, apiKey: '' }))
+      await refreshProviderStatus(false)
+      setNotice('已保存当前团队空间的 DeepSeek 配置。')
+    } catch {
+      setNotice('保存模型配置失败：请确认你有当前团队空间的编辑权限。')
+    }
+  }
+
+  const testModelConfig = async () => {
+    try {
+      const response = await apiFetch('/api/model-configs/deepseek/test', { method: 'POST' })
+      if (!response.ok) throw new Error('test model config failed')
+      const result = (await response.json()) as { ok: boolean; message: string }
+      setNotice(result.message)
+    } catch {
+      setNotice('模型配置测试失败：请确认后端在线，且你有当前团队空间的编辑权限。')
     }
   }
 
@@ -1924,6 +2017,14 @@ function App() {
   }, [authSession, loadWorkspaces])
 
   useEffect(() => {
+    if (!authSession || !activeWorkspaceId) return
+    const timer = window.setTimeout(() => {
+      void loadModelConfig(false)
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [activeWorkspaceId, authSession, loadModelConfig])
+
+  useEffect(() => {
     if (!authSession) return
     if (didAutoLoadBackendRef.current) return
     if (!activeWorkspaceId) return
@@ -1939,6 +2040,13 @@ function App() {
     persistActiveWorkspaceId(workspaceId)
     setKnowledgeStatus(null)
     setKnowledgeDocuments([])
+    setModelConfig(null)
+    setModelConfigForm({
+      enabled: true,
+      model: 'deepseek-v4-flash',
+      baseUrl: 'https://api.deepseek.com',
+      apiKey: '',
+    })
     setRunHistory([])
     setRunJobs([])
     setSelectedRunId('')
@@ -3293,6 +3401,57 @@ function App() {
           <p className="model-status-note">
             {hasRealModelProvider ? '后端运行会优先使用真实模型。' : '未配置模型 Key 时，后端运行会自动使用模拟输出。'}
           </p>
+          <div className="model-config-form">
+            <label className="inline-check">
+              <input
+                type="checkbox"
+                checked={modelConfigForm.enabled}
+                onChange={(event) => updateModelConfigForm({ enabled: event.target.checked })}
+              />
+              启用团队空间 DeepSeek
+            </label>
+            <label>
+              模型
+              <input
+                value={modelConfigForm.model}
+                onChange={(event) => updateModelConfigForm({ model: event.target.value })}
+                placeholder="deepseek-v4-flash"
+              />
+            </label>
+            <label>
+              Base URL
+              <input
+                value={modelConfigForm.baseUrl}
+                onChange={(event) => updateModelConfigForm({ baseUrl: event.target.value })}
+                placeholder="https://api.deepseek.com"
+              />
+            </label>
+            <label>
+              API Key
+              <input
+                type="password"
+                value={modelConfigForm.apiKey}
+                onChange={(event) => updateModelConfigForm({ apiKey: event.target.value })}
+                placeholder={modelConfig?.masked_api_key ?? '首次保存需要填写'}
+              />
+            </label>
+            <div className="model-config-actions">
+              <button type="button" className="mini-action" onClick={() => void saveModelConfig()}>
+                保存配置
+              </button>
+              <button type="button" className="mini-action" onClick={() => void testModelConfig()}>
+                测试配置
+              </button>
+              <button type="button" className="mini-action" onClick={() => void loadModelConfig(true)}>
+                重新读取
+              </button>
+            </div>
+            <p className="model-status-note">
+              {modelConfig?.has_api_key
+                ? `当前团队空间已保存 Key：${modelConfig.masked_api_key ?? '******'}`
+                : '当前团队空间还没有保存模型 Key。'}
+            </p>
+          </div>
           {providerStatusCheckedAt && (
             <time className="model-status-time">
               更新：{new Date(providerStatusCheckedAt).toLocaleString('zh-CN')}

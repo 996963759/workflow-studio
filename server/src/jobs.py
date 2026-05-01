@@ -31,7 +31,11 @@ class RunJobQueue:
             workflow = self.store.get_workflow(workflow_id, user_id, workspace_id)
             if not workflow:
                 raise RuntimeError("Workflow not found")
-            response = simulate_run(workflow, input_text, user_id, workspace_id)
+            model_configs = {}
+            deepseek_config = self.store.get_runtime_model_config(workspace_id, "deepseek")
+            if deepseek_config:
+                model_configs["deepseek"] = deepseek_config
+            response = simulate_run(workflow, input_text, user_id, workspace_id, model_configs)
             run = self.store.create_run(
                 workflow.id,
                 user_id,

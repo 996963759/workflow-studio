@@ -102,8 +102,8 @@ def get_provider_status() -> dict[str, str | bool]:
     }
 
 
-def create_openai_client(api_key_env: str, base_url: str | None = None) -> OpenAI | None:
-    api_key = os.getenv(api_key_env)
+def create_openai_client(api_key_env: str, base_url: str | None = None, api_key: str | None = None) -> OpenAI | None:
+    api_key = api_key or os.getenv(api_key_env)
     if not api_key:
         return None
     if base_url:
@@ -253,12 +253,19 @@ def evaluate_condition(data: dict[str, Any], context: dict[str, str]) -> tuple[b
     return (target in value if target else True), f"判断 {{{{{variable or '未选择变量'}}}}} 是否包含 \"{target}\"。"
 
 
-def run_deepseek_node(data: dict[str, Any], system_prompt: str, prompt: str) -> tuple[str, str]:
-    model = select_deepseek_model(data.get("model"))
+def run_deepseek_node(
+    data: dict[str, Any],
+    system_prompt: str,
+    prompt: str,
+    runtime_config: dict[str, str | bool] | None = None,
+) -> tuple[str, str]:
+    configured_model = runtime_config.get("model") if runtime_config else data.get("model")
+    model = select_deepseek_model(configured_model)
     temperature, max_output_tokens, timeout_seconds = llm_options(data)
     client = create_openai_client(
         "DEEPSEEK_API_KEY",
-        os.getenv("DEEPSEEK_BASE_URL") or DEEPSEEK_BASE_URL,
+        str(runtime_config.get("base_url") or "") if runtime_config else os.getenv("DEEPSEEK_BASE_URL") or DEEPSEEK_BASE_URL,
+        str(runtime_config.get("api_key") or "") if runtime_config else None,
     )
     if not client:
         raise RuntimeError("DEEPSEEK_API_KEY is not configured")
@@ -299,10 +306,25 @@ def run_openai_node(data: dict[str, Any], system_prompt: str, prompt: str) -> tu
     return output or "OpenAI 没有返回文本内容。", model
 
 
-def run_llm_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, str, str | None, str | None]:
+def run_llm_node(
+    data: dict[str, Any],
+    context: dict[str, str],
+    model_configs: dict[str, dict[str, str | bool]] | None = None,
+) -> tuple[str, str, str | None, str | None]:
     system_prompt = render_template(data.get("systemPrompt"), context)
     prompt = render_template(data.get("prompt"), context)
     step_input = "\n\n".join(part for part in [format_llm_options(data), system_prompt, prompt] if part) or "未配置提示词"
+
+    workspace_deepseek = model_configs.get("deepseek") if model_configs else None
+    if workspace_deepseek:
+        try:
+            output, model = run_deepseek_node(data, system_prompt, prompt, workspace_deepseek)
+            return output, step_input, f"DeepSeek 工作区配置 - {model}", None
+        except (OpenAIError, RuntimeError) as error:
+            model = select_deepseek_model(workspace_deepseek.get("model"))
+            reason = summarize_error(error)
+            output = f"DeepSeek 工作区配置 {model} 调用失败，已回退模拟草稿：{prompt[:120]}"
+            return output, step_input, "模拟输出", reason
 
     if os.getenv("DEEPSEEK_API_KEY"):
         try:
@@ -374,6 +396,7 @@ def simulate_run(
     input_text: str,
     user_id: str | None = None,
     workspace_id: str | None = None,
+    model_configs: dict[str, dict[str, str | bool]] | None = None,
 ) -> RunResponse:
     context: dict[str, str] = {}
     nodes = create_execution_order(workflow.nodes, workflow.edges)
@@ -422,7 +445,7 @@ def simulate_run(
         elif kind == "knowledge":
             output, step_input, provider = run_knowledge_node(data, context, input_text, user_id, workspace_id)
         elif kind == "llm":
-            output, step_input, provider, error = run_llm_node(data, context)
+            output, step_input, provider, error = run_llm_node(data, context, model_configs)
         elif kind == "tool":
             provider = "HTTP 工具" if data.get("toolUrl") else "模拟输出"
             def run_tool_once() -> tuple[str, str, str | None]:
