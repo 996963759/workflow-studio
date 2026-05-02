@@ -1,6 +1,6 @@
 # Workflow Studio API
 
-FastAPI backend for Workflow Studio. The backend stores users, sessions, workspaces, workflows, run history, async jobs and knowledge indexes through SQLAlchemy. Local development defaults to SQLite; Docker Compose uses PostgreSQL, Redis and a separate Worker process. It validates workflow structure, records workflow runs, searches per-workspace Markdown/TXT knowledge documents, can call DeepSeek or OpenAI for LLM nodes when an API key is configured, and can execute localhost HTTP tool nodes.
+FastAPI backend for Workflow Studio. The backend stores users, sessions, workspaces, workflows, run history, async jobs and knowledge indexes through SQLAlchemy. Local development defaults to SQLite; Docker Compose uses PostgreSQL, Redis and a separate Worker process. It validates workflow structure, records workflow runs, searches per-workspace Markdown/TXT knowledge documents, can call DeepSeek or OpenAI for LLM nodes, can call Alibaba Cloud Model Studio / DashScope for TTS and image generation nodes, and can execute localhost HTTP tool nodes.
 
 ## Setup
 
@@ -57,12 +57,22 @@ server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 
 
 DeepSeek is preferred when `DEEPSEEK_API_KEY` is present. Without DeepSeek or OpenAI keys, LLM nodes keep returning simulated output.
 
+Optional Alibaba Cloud Model Studio / DashScope runtime:
+
+```powershell
+$env:DASHSCOPE_API_KEY="your DashScope API key"
+server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 --port 8000
+```
+
 Additional environment variables:
 
 - `WORKFLOW_STUDIO_DB`: SQLite database path
 - `DATABASE_URL`: full SQLAlchemy database URL; overrides `WORKFLOW_STUDIO_DB`
 - `RUN_JOB_QUEUE_BACKEND`: `thread`, `database`, or `redis`
 - `REDIS_URL`: Redis URL used by the `redis` queue backend
+- `DASHSCOPE_API_KEY`: enables Alibaba Cloud TTS and image generation nodes
+- `ALIYUN_TTS_MODEL`: default TTS model, `cosyvoice-v2`
+- `ALIYUN_IMAGE_MODEL`: default image model, `wanx2.1-t2i-turbo`
 - `LOG_LEVEL`: Python log level, default `INFO`
 - `CORS_ORIGINS`: comma-separated allowed frontend origins
 

@@ -151,6 +151,46 @@ def validate_workflow(payload: WorkflowPayload) -> WorkflowValidationResult:
                     )
                 )
 
+        if data.get("kind") == "tts":
+            if not str(data.get("ttsText") or data.get("prompt") or "").strip():
+                warnings.append(
+                    WorkflowIssue(
+                        id=f"tts-text-{current_id}",
+                        level="warning",
+                        node_id=current_id,
+                        message=f"TTS 节点「{node_label(node)}」建议填写要合成的文本。",
+                    )
+                )
+            if not number_in_range(data.get("speechRate"), 0.5, 2.0, False):
+                errors.append(
+                    WorkflowIssue(
+                        id=f"speech-rate-{current_id}",
+                        level="error",
+                        node_id=current_id,
+                        message=f"TTS 节点「{node_label(node)}」的语速必须在 0.5 到 2.0 之间。",
+                    )
+                )
+
+        if data.get("kind") == "image":
+            if not str(data.get("imagePrompt") or data.get("prompt") or "").strip():
+                warnings.append(
+                    WorkflowIssue(
+                        id=f"image-prompt-{current_id}",
+                        level="warning",
+                        node_id=current_id,
+                        message=f"图片生成节点「{node_label(node)}」建议填写图片提示词。",
+                    )
+                )
+            if not number_in_range(data.get("imageCount"), 1, 4, True):
+                errors.append(
+                    WorkflowIssue(
+                        id=f"image-count-{current_id}",
+                        level="error",
+                        node_id=current_id,
+                        message=f"图片生成节点「{node_label(node)}」的生成数量必须在 1 到 4 之间。",
+                    )
+                )
+
         failure_policy = data.get("failurePolicy")
         if failure_policy is not None and failure_policy not in FAILURE_POLICIES:
             errors.append(

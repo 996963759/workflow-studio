@@ -15,7 +15,7 @@
 ## 当前功能
 
 - 可拖拽、可连线的可视化工作流画布
-- 节点库：用户输入、大模型、知识检索、工具调用、条件分支、最终回答
+- 节点库：用户输入、大模型、知识检索、工具调用、文字转语音、图片生成、条件分支、最终回答
 - 右侧节点配置面板
 - 根据节点输出变量自动生成变量列表
 - 模拟逐节点运行的运行预览
@@ -45,6 +45,7 @@
 - 支持在右侧“模型状态”保存当前团队空间的 DeepSeek 配置，保存一次后该空间工作流可复用
 - 大模型节点支持温度、最大输出长度和超时时间配置
 - 后端运行工具节点时支持真实 HTTP 请求，默认只允许请求本机地址
+- 后端支持阿里云百炼 / DashScope 文字转语音和图片生成节点，未配置 Key 时自动回退模拟输出
 - 后端知识检索节点会读取本地 Markdown / TXT 文档并返回相关片段
 - 右侧知识库面板支持查看、上传和删除本地知识文档
 - 右侧模型状态面板会显示 DeepSeek / OpenAI 是否已配置
@@ -223,6 +224,13 @@ $env:OPENAI_API_KEY="你的 OpenAI API Key"
 server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 --port 8000
 ```
 
+可选：启用阿里云百炼 / DashScope 多模态节点。
+
+```powershell
+$env:DASHSCOPE_API_KEY="你的阿里云百炼 API Key"
+server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 --port 8000
+```
+
 后端健康检查：
 
 ```text
@@ -236,6 +244,9 @@ http://127.0.0.1:8000/api/health
 - `DEEPSEEK_API_KEY`：启用 DeepSeek 大模型节点
 - `DEEPSEEK_MODEL`：DeepSeek 模型，默认 `deepseek-v4-flash`
 - `OPENAI_API_KEY`：没有 DeepSeek Key 时可启用 OpenAI
+- `DASHSCOPE_API_KEY`：启用阿里云百炼 / DashScope 多模态节点
+- `ALIYUN_TTS_MODEL`：阿里云 TTS 模型，默认 `cosyvoice-v2`
+- `ALIYUN_IMAGE_MODEL`：阿里云图片生成模型，默认 `wanx2.1-t2i-turbo`
 - `WORKFLOW_STUDIO_DB`：SQLite 数据库路径
 - `DATABASE_URL`：完整数据库连接串；配置后优先于 `WORKFLOW_STUDIO_DB`，可使用 PostgreSQL，例如 `postgresql+psycopg://user:password@localhost:5432/workflow_studio`
 - `RUN_JOB_QUEUE_BACKEND`：异步队列模式；本地默认 `thread`，生产推荐 `redis`，无 Redis 时可用 `database`
@@ -352,7 +363,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\doctor.ps1
 
 ## 当前边界
 
-这是本地单机版 / 私有化版工作流平台雏形。当前前端运行逻辑已支持变量传递和模拟执行；后端已提供 FastAPI、SQLite/PostgreSQL 工作流 CRUD、工作流结构校验、同步/异步运行、运行历史接口、本地向量知识库检索、DeepSeek / OpenAI 大模型节点最小真实调用、本机 HTTP 工具调用、本地账号隔离、团队空间和角色权限。Docker Compose 已提供 PostgreSQL、Redis 和独立 Worker 的生产化雏形；真实 embedding/pgvector、外网工具白名单管理和完整审计日志仍未实现。
+这是本地单机版 / 私有化版工作流平台雏形。当前前端运行逻辑已支持变量传递和模拟执行；后端已提供 FastAPI、SQLite/PostgreSQL 工作流 CRUD、工作流结构校验、同步/异步运行、运行历史接口、本地向量知识库检索、DeepSeek / OpenAI 大模型节点最小真实调用、阿里云 TTS / 图片生成多模态节点、本机 HTTP 工具调用、本地账号隔离、团队空间和角色权限。Docker Compose 已提供 PostgreSQL、Redis 和独立 Worker 的生产化雏形；真实 embedding/pgvector 和外网工具白名单管理仍未实现。
 
 ## 本地存储
 

@@ -11,6 +11,12 @@ from openai import OpenAI, OpenAIError
 from .external_rag import search_paismart
 from .knowledge import search_knowledge
 from .models import RunResponse, RunStep, WorkflowPayload
+from .providers.aliyun import (
+    AliyunProviderError,
+    aliyun_configured,
+    run_image_generation,
+    run_tts,
+)
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
@@ -99,6 +105,9 @@ def get_provider_status() -> dict[str, str | bool]:
         "deepseek_base_url": os.getenv("DEEPSEEK_BASE_URL") or DEEPSEEK_BASE_URL,
         "openai_configured": bool(os.getenv("OPENAI_API_KEY")),
         "openai_default_model": DEFAULT_OPENAI_MODEL,
+        "aliyun_configured": aliyun_configured(),
+        "aliyun_tts_model": os.getenv("ALIYUN_TTS_MODEL", "cosyvoice-v2"),
+        "aliyun_image_model": os.getenv("ALIYUN_IMAGE_MODEL", "wanx2.1-t2i-turbo"),
     }
 
 
@@ -391,6 +400,44 @@ def run_knowledge_node(
     return output, step_input, provider
 
 
+def run_tts_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, str, str, str | None]:
+    text = render_template(data.get("ttsText") or data.get("prompt"), context).strip()
+    model = str(data.get("ttsModel") or os.getenv("ALIYUN_TTS_MODEL") or "cosyvoice-v2")
+    voice = str(data.get("ttsVoice") or "longxiaochun")
+    audio_format = str(data.get("audioFormat") or "mp3")
+    speech_rate = clamp_number(data.get("speechRate"), 1.0, 0.5, 2.0)
+    step_input = f"文本：{text or '未配置文本'}\n音色：{voice}\n格式：{audio_format}\n语速：{speech_rate:g}"
+
+    if not text:
+        return "未配置要合成语音的文本。", step_input, "模拟输出", "TTS 文本为空"
+    if not aliyun_configured():
+        return f"阿里云 TTS 未配置 Key，模拟生成音频：{text[:80]}", step_input, "模拟输出", None
+    try:
+        audio_url, used_model = run_tts(text, model, voice, audio_format, speech_rate)
+        return f"音频地址：{audio_url}", step_input, f"阿里云 TTS - {used_model}", None
+    except AliyunProviderError as error:
+        return f"阿里云 TTS 调用失败，已回退模拟音频：{text[:80]}", step_input, "模拟输出", summarize_error(error)
+
+
+def run_image_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, str, str, str | None]:
+    prompt = render_template(data.get("imagePrompt") or data.get("prompt"), context).strip()
+    model = str(data.get("imageModel") or os.getenv("ALIYUN_IMAGE_MODEL") or "wanx2.1-t2i-turbo")
+    size = str(data.get("imageSize") or "1024*1024")
+    count = int(clamp_number(data.get("imageCount"), 1, 1, 4))
+    step_input = f"提示词：{prompt or '未配置提示词'}\n尺寸：{size}\n数量：{count}"
+
+    if not prompt:
+        return "未配置图片生成提示词。", step_input, "模拟输出", "图片提示词为空"
+    if not aliyun_configured():
+        return f"阿里云图片生成未配置 Key，模拟生成 {count} 张图片：{prompt[:80]}", step_input, "模拟输出", None
+    try:
+        urls, used_model = run_image_generation(prompt, model, size, count)
+        output = "\n".join(f"图片 {index}: {url}" for index, url in enumerate(urls, start=1))
+        return output, step_input, f"阿里云图片生成 - {used_model}", None
+    except AliyunProviderError as error:
+        return f"阿里云图片生成调用失败，已回退模拟图片：{prompt[:80]}", step_input, "模拟输出", summarize_error(error)
+
+
 def simulate_run(
     workflow: WorkflowPayload,
     input_text: str,
@@ -446,6 +493,10 @@ def simulate_run(
             output, step_input, provider = run_knowledge_node(data, context, input_text, user_id, workspace_id)
         elif kind == "llm":
             output, step_input, provider, error = run_llm_node(data, context, model_configs)
+        elif kind == "tts":
+            output, step_input, provider, error = run_tts_node(data, context)
+        elif kind == "image":
+            output, step_input, provider, error = run_image_node(data, context)
         elif kind == "tool":
             provider = "HTTP 工具" if data.get("toolUrl") else "模拟输出"
             def run_tool_once() -> tuple[str, str, str | None]:

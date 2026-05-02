@@ -47,7 +47,7 @@ import '@xyflow/react/dist/style.css'
 import './App.css'
 import { AuthView } from './components/AuthView'
 
-type NodeKind = 'input' | 'llm' | 'knowledge' | 'tool' | 'condition' | 'output'
+type NodeKind = 'input' | 'llm' | 'knowledge' | 'tool' | 'tts' | 'image' | 'condition' | 'output'
 type ConditionOperator = 'contains' | 'equals' | 'not_empty'
 type FailurePolicy = 'stop' | 'continue' | 'skip_downstream'
 type KnowledgeProvider = 'local' | 'paismart'
@@ -70,6 +70,15 @@ type WorkflowNodeData = {
   toolMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   toolHeaders?: string
   toolParams?: string
+  ttsText?: string
+  ttsModel?: string
+  ttsVoice?: string
+  audioFormat?: 'mp3' | 'wav'
+  speechRate?: number
+  imagePrompt?: string
+  imageModel?: string
+  imageSize?: string
+  imageCount?: number
   condition?: string
   conditionVariable?: string
   conditionOperator?: ConditionOperator
@@ -236,6 +245,9 @@ type ProviderStatus = {
   deepseek_base_url: string
   openai_configured: boolean
   openai_default_model: string
+  aliyun_configured?: boolean
+  aliyun_tts_model?: string
+  aliyun_image_model?: string
   external_rag_enabled?: boolean
   external_rag_provider?: string
   external_rag_base_url?: string
@@ -354,6 +366,41 @@ const nodeMeta: Record<
       toolHeaders: '{\n  "Content-Type": "application/json"\n}',
       toolParams: '{\n  "query": "{{user_request}}"\n}',
       outputKey: 'tool_result',
+      failurePolicy: 'continue',
+      retryCount: 0,
+    },
+  },
+  tts: {
+    title: '文字转语音',
+    icon: MessageSquareText,
+    description: '阿里云 TTS 合成音频',
+    color: '#0e7490',
+    defaults: {
+      label: '文字转语音',
+      description: '调用阿里云百炼 CosyVoice，把文本合成为音频。',
+      ttsModel: 'cosyvoice-v2',
+      ttsVoice: 'longxiaochun',
+      audioFormat: 'mp3',
+      speechRate: 1,
+      ttsText: '{{draft}}',
+      outputKey: 'audio_url',
+      failurePolicy: 'continue',
+      retryCount: 0,
+    },
+  },
+  image: {
+    title: '图片生成',
+    icon: Sparkles,
+    description: '阿里云图片生成',
+    color: '#c2410c',
+    defaults: {
+      label: '图片生成',
+      description: '调用阿里云百炼通义万相，根据提示词生成图片。',
+      imageModel: 'wanx2.1-t2i-turbo',
+      imagePrompt: '为 {{user_request}} 生成一张干净、专业的配图。',
+      imageSize: '1024*1024',
+      imageCount: 1,
+      outputKey: 'image_urls',
       failurePolicy: 'continue',
       retryCount: 0,
     },
@@ -1061,6 +1108,27 @@ const validateNodeFields = (node: WorkflowNode): FieldIssue[] => {
     }
   }
 
+  if (data.kind === 'tts') {
+    if (!data.ttsText?.trim()) {
+      issues.push({ field: 'ttsText', level: 'warning', message: '建议填写要合成语音的文本。' })
+    }
+    if (data.speechRate !== undefined && (Number.isNaN(data.speechRate) || data.speechRate < 0.5 || data.speechRate > 2)) {
+      issues.push({ field: 'speechRate', level: 'error', message: '语速需要在 0.5 到 2.0 之间。' })
+    }
+  }
+
+  if (data.kind === 'image') {
+    if (!data.imagePrompt?.trim()) {
+      issues.push({ field: 'imagePrompt', level: 'warning', message: '建议填写图片生成提示词。' })
+    }
+    if (
+      data.imageCount !== undefined &&
+      (!Number.isInteger(data.imageCount) || data.imageCount < 1 || data.imageCount > 4)
+    ) {
+      issues.push({ field: 'imageCount', level: 'error', message: '生成数量需要在 1 到 4 之间。' })
+    }
+  }
+
   if (data.failurePolicy && !['stop', 'continue', 'skip_downstream'].includes(data.failurePolicy)) {
     issues.push({ field: 'failurePolicy', level: 'error', message: '失败策略不支持。' })
   }
@@ -1381,12 +1449,16 @@ function App() {
     [nodeIssueLevels, nodes],
   )
 
-  const hasRealModelProvider = Boolean(providerStatus?.deepseek_configured || providerStatus?.openai_configured)
+  const hasRealModelProvider = Boolean(
+    providerStatus?.deepseek_configured || providerStatus?.openai_configured || providerStatus?.aliyun_configured,
+  )
   const activeProviderLabel = providerStatus?.deepseek_configured
     ? `DeepSeek - ${providerStatus.deepseek_model}`
     : providerStatus?.openai_configured
       ? `OpenAI - ${providerStatus.openai_default_model}`
-      : '模拟输出'
+      : providerStatus?.aliyun_configured
+        ? `阿里云 - ${providerStatus.aliyun_tts_model ?? '多模态'}`
+        : '模拟输出'
   const knowledgeStatusLabel = knowledgeStatus
     ? `${knowledgeStatus.document_count} 个文档 / ${knowledgeStatus.chunk_count} 个片段`
     : '未检查'
@@ -1626,7 +1698,9 @@ function App() {
           ? `DeepSeek 已启用，默认模型：${status.deepseek_model}。`
           : status.openai_configured
             ? `OpenAI 已启用，默认模型：${status.openai_default_model}。`
-            : '未检测到模型 Key，后端运行会使用模拟输出。'
+            : status.aliyun_configured
+              ? `阿里云多模态已启用：TTS ${status.aliyun_tts_model ?? '默认'}，图片 ${status.aliyun_image_model ?? '默认'}。`
+              : '未检测到模型 Key，后端运行会使用模拟输出。'
         setNotice(label)
       }
       return status
@@ -1860,7 +1934,16 @@ function App() {
   }
 
   const appendToSelectedField = (
-    field: 'prompt' | 'systemPrompt' | 'query' | 'toolUrl' | 'toolHeaders' | 'toolParams' | 'conditionValue',
+    field:
+      | 'prompt'
+      | 'systemPrompt'
+      | 'query'
+      | 'toolUrl'
+      | 'toolHeaders'
+      | 'toolParams'
+      | 'ttsText'
+      | 'imagePrompt'
+      | 'conditionValue',
     variable: string,
   ) => {
     const current = selectedNode.data[field] ?? ''
@@ -2816,6 +2899,36 @@ function App() {
         return
       }
 
+      if (data.kind === 'tts') {
+        const text = renderTemplate(data.ttsText, context)
+        const output = `阿里云 TTS 模拟生成音频：${text.slice(0, 120)}`
+        steps.push({
+          nodeId: node.id,
+          title: `${index + 1}. ${data.label}`,
+          status: 'done',
+          input: text || '未配置合成文本',
+          output,
+          variable: writeOutput(output),
+          provider: `阿里云 TTS - ${data.ttsModel ?? 'cosyvoice-v2'}`,
+        })
+        return
+      }
+
+      if (data.kind === 'image') {
+        const prompt = renderTemplate(data.imagePrompt, context)
+        const output = `阿里云图片生成模拟输出 ${data.imageCount ?? 1} 张图：${prompt.slice(0, 120)}`
+        steps.push({
+          nodeId: node.id,
+          title: `${index + 1}. ${data.label}`,
+          status: 'done',
+          input: prompt || '未配置图片提示词',
+          output,
+          variable: writeOutput(output),
+          provider: `阿里云图片生成 - ${data.imageModel ?? 'wanx2.1-t2i-turbo'}`,
+        })
+        return
+      }
+
       if (data.kind === 'condition') {
         const result = evaluateStructuredCondition(data, context)
         branchOpen = result.passed
@@ -3494,6 +3607,119 @@ function App() {
             </>
           )}
 
+          {selectedNode.data.kind === 'tts' && (
+            <>
+              <label>
+                阿里云 TTS 模型
+                <input
+                  value={selectedNode.data.ttsModel ?? 'cosyvoice-v2'}
+                  onChange={(event) => updateSelectedNode({ ttsModel: event.target.value })}
+                />
+              </label>
+              <label>
+                音色
+                <input
+                  value={selectedNode.data.ttsVoice ?? 'longxiaochun'}
+                  onChange={(event) => updateSelectedNode({ ttsVoice: event.target.value })}
+                />
+              </label>
+              <div className="llm-params-grid">
+                <label>
+                  音频格式
+                  <select
+                    value={selectedNode.data.audioFormat ?? 'mp3'}
+                    onChange={(event) => updateSelectedNode({ audioFormat: event.target.value as 'mp3' | 'wav' })}
+                  >
+                    <option value="mp3">mp3</option>
+                    <option value="wav">wav</option>
+                  </select>
+                </label>
+                <label>
+                  语速
+                  <input
+                    min={0.5}
+                    max={2}
+                    step={0.1}
+                    type="number"
+                    value={selectedNode.data.speechRate ?? 1}
+                    onChange={(event) => updateSelectedNode({ speechRate: Number(event.target.value) })}
+                  />
+                  {renderFieldIssues('speechRate')}
+                </label>
+              </div>
+              <label>
+                合成文本
+                <textarea
+                  rows={5}
+                  value={selectedNode.data.ttsText ?? ''}
+                  onChange={(event) => updateSelectedNode({ ttsText: event.target.value })}
+                />
+                {renderFieldIssues('ttsText')}
+              </label>
+              <div className="insert-row">
+                {variableKeys.map((variable) => (
+                  <button key={variable} type="button" onClick={() => appendToSelectedField('ttsText', variable)}>
+                    {`{{${variable}}}`}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          {selectedNode.data.kind === 'image' && (
+            <>
+              <label>
+                阿里云图片模型
+                <input
+                  value={selectedNode.data.imageModel ?? 'wanx2.1-t2i-turbo'}
+                  onChange={(event) => updateSelectedNode({ imageModel: event.target.value })}
+                />
+              </label>
+              <div className="llm-params-grid">
+                <label>
+                  图片尺寸
+                  <select
+                    value={selectedNode.data.imageSize ?? '1024*1024'}
+                    onChange={(event) => updateSelectedNode({ imageSize: event.target.value })}
+                  >
+                    <option value="1024*1024">1024*1024</option>
+                    <option value="768*1024">768*1024</option>
+                    <option value="1024*768">1024*768</option>
+                    <option value="720*1280">720*1280</option>
+                    <option value="1280*720">1280*720</option>
+                  </select>
+                </label>
+                <label>
+                  生成数量
+                  <input
+                    min={1}
+                    max={4}
+                    type="number"
+                    value={selectedNode.data.imageCount ?? 1}
+                    onChange={(event) => updateSelectedNode({ imageCount: Number(event.target.value) })}
+                  />
+                  {renderFieldIssues('imageCount')}
+                </label>
+              </div>
+              <label>
+                图片提示词
+                <textarea
+                  rows={5}
+                  value={selectedNode.data.imagePrompt ?? ''}
+                  onChange={(event) => updateSelectedNode({ imagePrompt: event.target.value })}
+                />
+                {renderFieldIssues('imagePrompt')}
+              </label>
+              <div className="insert-row">
+                {variableKeys.map((variable) => (
+                  <button key={variable} type="button" onClick={() => appendToSelectedField('imagePrompt', variable)}>
+                    {`{{${variable}}}`}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
           {selectedNode.data.kind === 'condition' && (
             <div className="condition-form">
               <label>
@@ -3651,6 +3877,16 @@ function App() {
               <strong className={clsx(providerStatus?.openai_configured ? 'ready' : 'fallback')}>
                 {providerStatus?.openai_configured ? '已配置' : '未配置'}
               </strong>
+            </div>
+            <div>
+              <span>阿里云多模态</span>
+              <strong className={clsx(providerStatus?.aliyun_configured ? 'ready' : 'fallback')}>
+                {providerStatus?.aliyun_configured ? '已配置' : '未配置'}
+              </strong>
+            </div>
+            <div>
+              <span>图片模型</span>
+              <strong>{providerStatus?.aliyun_image_model ?? '未读取'}</strong>
             </div>
             <div>
               <span>后端状态</span>

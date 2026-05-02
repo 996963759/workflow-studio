@@ -372,6 +372,72 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(knowledge_step["provider"], "PaiSmart RAG")
         self.assertIn("PaiSmart 返回的企业知识片段", knowledge_step["output"])
 
+    def test_aliyun_multimodal_nodes_fall_back_without_key(self) -> None:
+        workflow = {
+            **valid_workflow(),
+            "nodes": [
+                {
+                    "id": "input-1",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"kind": "input", "label": "用户输入", "outputKey": "user_request"},
+                },
+                {
+                    "id": "tts-1",
+                    "position": {"x": 240, "y": 0},
+                    "data": {
+                        "kind": "tts",
+                        "label": "语音播报",
+                        "ttsText": "{{user_request}}",
+                        "ttsModel": "cosyvoice-v2",
+                        "ttsVoice": "longxiaochun",
+                        "audioFormat": "mp3",
+                        "speechRate": 1,
+                        "outputKey": "audio_url",
+                    },
+                },
+                {
+                    "id": "image-1",
+                    "position": {"x": 480, "y": 0},
+                    "data": {
+                        "kind": "image",
+                        "label": "配图生成",
+                        "imagePrompt": "给 {{user_request}} 生成一张配图",
+                        "imageModel": "wanx2.1-t2i-turbo",
+                        "imageSize": "1024*1024",
+                        "imageCount": 1,
+                        "outputKey": "image_urls",
+                    },
+                },
+                {
+                    "id": "output-1",
+                    "position": {"x": 720, "y": 0},
+                    "data": {
+                        "kind": "output",
+                        "label": "最终输出",
+                        "prompt": "{{audio_url}}\n{{image_urls}}",
+                        "outputKey": "answer",
+                    },
+                },
+            ],
+            "edges": [
+                {"id": "e1", "source": "input-1", "target": "tts-1"},
+                {"id": "e2", "source": "tts-1", "target": "image-1"},
+                {"id": "e3", "source": "image-1", "target": "output-1"},
+            ],
+        }
+
+        run = self.client.post(
+            "/api/runs",
+            json={"workflow": workflow, "input_text": "新品发布"},
+            headers=self.auth_headers,
+        )
+        self.assertEqual(run.status_code, 200)
+        steps = run.json()["steps"]
+        self.assertEqual(steps[1]["provider"], "模拟输出")
+        self.assertIn("阿里云 TTS 未配置 Key", steps[1]["output"])
+        self.assertEqual(steps[2]["provider"], "模拟输出")
+        self.assertIn("阿里云图片生成未配置 Key", steps[2]["output"])
+
     def test_workspace_model_config_masks_key_and_is_used_by_runner(self) -> None:
         save_response = self.client.put(
             "/api/model-configs/deepseek",
