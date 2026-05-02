@@ -103,7 +103,7 @@ X-Workspace-Id: <workspace_id>
 | POST | `/api/knowledge/documents` | 上传 Markdown / TXT |
 | DELETE | `/api/knowledge/documents/{filename}` | 删除文档 |
 
-知识库按团队空间隔离。上传文档后，后端会把文档切片并写入 SQLite 本地向量索引；检索时混合关键词命中和向量相似度。
+知识库按团队空间隔离。上传文档后，后端会把文档切片并写入数据库向量索引；检索时混合关键词命中和向量相似度。
 
 ## 状态
 
@@ -111,6 +111,12 @@ X-Workspace-Id: <workspace_id>
 | --- | --- | --- |
 | GET | `/api/health` | 健康检查 |
 | GET | `/api/provider-status` | DeepSeek / OpenAI 配置状态 |
+
+`/api/health` 会返回：
+
+- `status`
+- `database`
+- `queue_backend`
 
 `/api/provider-status` 还会返回 PaiSmart 外部 RAG 配置状态：
 

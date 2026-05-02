@@ -536,6 +536,37 @@ class WorkflowStore:
             job.updated_at = utc_now()
             session.commit()
 
+    def claim_run_job(self, job_id: str | None = None) -> RunJobRecord | None:
+        with self._connect() as session:
+            statement = select(DbRunJob).where(DbRunJob.status == "queued")
+            if job_id:
+                statement = statement.where(DbRunJob.id == job_id)
+            statement = statement.order_by(DbRunJob.created_at.asc())
+            if session.bind and session.bind.dialect.name == "postgresql":
+                statement = statement.with_for_update(skip_locked=True)
+            job = session.scalar(statement)
+            if not job:
+                return None
+            job.status = "running"
+            job.error = None
+            job.updated_at = utc_now()
+            session.commit()
+            return self._job_to_record(job)
+
+    def requeue_interrupted_run_jobs(self) -> int:
+        with self._connect() as session:
+            result = session.execute(
+                update(DbRunJob)
+                .where(DbRunJob.status == "running", DbRunJob.run_id.is_(None))
+                .values(
+                    status="queued",
+                    error="服务重启后已自动重新入队。",
+                    updated_at=utc_now(),
+                )
+            )
+            session.commit()
+        return result.rowcount
+
     def get_run_job(self, job_id: str, user_id: str, workspace_id: str | None = None) -> RunJobRecord | None:
         workspace_id = workspace_id or self.ensure_default_workspace(user_id)
         with self._connect() as session:
@@ -543,6 +574,53 @@ class WorkflowStore:
                 select(DbRunJob).where(DbRunJob.id == job_id, DbRunJob.workspace_id == workspace_id)
             )
         return self._job_to_record(job) if job else None
+
+    def get_run_job_user_id(self, job_id: str) -> str:
+        with self._connect() as session:
+            user_id = session.scalar(select(DbRunJob.user_id).where(DbRunJob.id == job_id))
+        if not user_id:
+            raise RuntimeError("Run job not found")
+        return user_id
+
+    def get_run_job_workspace_id(self, job_id: str) -> str:
+        with self._connect() as session:
+            workspace_id = session.scalar(select(DbRunJob.workspace_id).where(DbRunJob.id == job_id))
+        if not workspace_id:
+            raise RuntimeError("Run job not found")
+        return workspace_id
+
+    def get_workflow_for_job(self, workflow_id: str, job_id: str) -> WorkflowRecord | None:
+        with self._connect() as session:
+            job = session.scalar(select(DbRunJob).where(DbRunJob.id == job_id))
+            if not job:
+                return None
+            workflow = session.scalar(
+                select(DbWorkflow).where(
+                    DbWorkflow.id == workflow_id,
+                    DbWorkflow.workspace_id == job.workspace_id,
+                )
+            )
+        return self._workflow_to_record(workflow) if workflow else None
+
+    def get_runtime_model_config_for_job(self, job_id: str, provider: str) -> dict[str, str | bool] | None:
+        workspace_id = self.get_run_job_workspace_id(job_id)
+        return self.get_runtime_model_config(workspace_id, provider)
+
+    def create_run_for_job(
+        self,
+        job_id: str,
+        workflow_id: str | None,
+        workflow_name: str,
+        input_text: str,
+        response: RunResponse,
+    ) -> RunRecord:
+        with self._connect() as session:
+            job = session.scalar(select(DbRunJob).where(DbRunJob.id == job_id))
+            if not job:
+                raise RuntimeError("Run job not found")
+            user_id = job.user_id
+            workspace_id = job.workspace_id
+        return self.create_run(workflow_id, user_id, workflow_name, input_text, response, workspace_id)
 
     def list_run_jobs(
         self,

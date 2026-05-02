@@ -80,7 +80,8 @@ async def log_requests(request: Request, call_next):
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    database = store.engine.url.get_backend_name() if store.engine else "unknown"
+    return {"status": "ok", "database": database, "queue_backend": job_queue.backend}
 
 
 @app.get("/api/provider-status")

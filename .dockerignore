@@ -1,0 +1,12 @@
+.git
+.venv
+node_modules
+dist
+test-results
+server/.venv
+server/data/*.db
+server/data/*.db-*
+server/data/knowledge/*/*
+npm-debug.log*
+__pycache__
+*.pyc

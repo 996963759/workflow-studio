@@ -90,7 +90,10 @@ class ApiTestCase(unittest.TestCase):
     def test_health(self) -> None:
         response = self.client.get("/api/health")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"status": "ok"})
+        body = response.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["database"], "sqlite")
+        self.assertEqual(body["queue_backend"], "thread")
 
     def test_rejects_invalid_workflow(self) -> None:
         response = self.client.post("/api/workflows", json=invalid_workflow(), headers=self.auth_headers)
@@ -197,6 +200,35 @@ class ApiTestCase(unittest.TestCase):
         run = self.client.get(f"/api/runs/{latest['run_id']}", headers=self.auth_headers)
         self.assertEqual(run.status_code, 200)
         self.assertEqual(run.json()["input_text"], "异步运行")
+
+    def test_database_worker_claims_queued_job(self) -> None:
+        created = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers).json()
+        user = self.client.get("/api/auth/me", headers=self.auth_headers).json()
+        workspace = self.client.get("/api/workspaces", headers=self.auth_headers).json()[0]
+        queue = RunJobQueue(api.store, backend="database")
+
+        job = queue.enqueue(user["id"], workspace["id"], created["id"], "数据库队列运行")
+        self.assertEqual(job.status, "queued")
+
+        self.assertTrue(queue.run_next_queued_job())
+        latest = self.client.get(f"/api/run-jobs/{job.id}", headers=self.auth_headers).json()
+        self.assertEqual(latest["status"], "succeeded")
+        self.assertTrue(latest["run_id"])
+
+    def test_interrupted_jobs_are_requeued_for_worker_restart(self) -> None:
+        created = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers).json()
+        user = self.client.get("/api/auth/me", headers=self.auth_headers).json()
+        workspace = self.client.get("/api/workspaces", headers=self.auth_headers).json()[0]
+        job = api.store.create_run_job(user["id"], workspace["id"], created["id"], "重启恢复")
+
+        claimed = api.store.claim_run_job(job.id)
+        self.assertIsNotNone(claimed)
+        self.assertEqual(claimed.status, "running")
+
+        self.assertEqual(api.store.requeue_interrupted_run_jobs(), 1)
+        latest = self.client.get(f"/api/run-jobs/{job.id}", headers=self.auth_headers).json()
+        self.assertEqual(latest["status"], "queued")
+        self.assertIn("重新入队", latest["error"])
 
     def test_workspace_knowledge_upload_indexes_and_searches(self) -> None:
         upload = self.client.post(

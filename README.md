@@ -234,6 +234,9 @@ http://127.0.0.1:8000/api/health
 - `DEEPSEEK_MODEL`：DeepSeek 模型，默认 `deepseek-v4-flash`
 - `OPENAI_API_KEY`：没有 DeepSeek Key 时可启用 OpenAI
 - `WORKFLOW_STUDIO_DB`：SQLite 数据库路径
+- `DATABASE_URL`：完整数据库连接串；配置后优先于 `WORKFLOW_STUDIO_DB`，可使用 PostgreSQL，例如 `postgresql+psycopg://user:password@localhost:5432/workflow_studio`
+- `RUN_JOB_QUEUE_BACKEND`：异步队列模式；本地默认 `thread`，生产推荐 `redis`，无 Redis 时可用 `database`
+- `REDIS_URL`：Redis 队列地址，生产 Docker Compose 默认使用 `redis://redis:6379/0`
 - `LOG_LEVEL`：后端日志级别，默认 `INFO`
 - `CORS_ORIGINS`：允许访问 API 的前端地址
 - `EXTERNAL_RAG_ENABLED`：是否启用 PaiSmart 外部 RAG，默认 `false`
@@ -270,10 +273,19 @@ server\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "描述变
 docker compose up --build
 ```
 
-容器会构建前端并启动 FastAPI，访问：
+容器会启动 PostgreSQL、Redis、FastAPI API 和独立 Worker。API 会自动执行 Alembic 迁移，异步任务会先落库再进入 Redis 队列；如果 Worker 或服务重启，未完成任务会自动重新入队。
+
+访问：
 
 ```text
 http://127.0.0.1:8000
+```
+
+查看服务状态：
+
+```powershell
+docker compose ps
+docker compose logs -f api worker
 ```
 
 ## 本地知识库
@@ -337,7 +349,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\doctor.ps1
 
 ## 当前边界
 
-这是本地单机版 / 私有化版工作流平台雏形。当前前端运行逻辑已支持变量传递和模拟执行；后端已提供 FastAPI、SQLite 工作流 CRUD、工作流结构校验、同步/异步运行、运行历史接口、本地向量知识库检索、DeepSeek / OpenAI 大模型节点最小真实调用、本机 HTTP 工具调用、本地账号隔离、团队空间和角色权限。当前异步队列是进程内队列，生产部署前建议替换为 Redis/Celery；外网工具白名单管理仍未实现。
+这是本地单机版 / 私有化版工作流平台雏形。当前前端运行逻辑已支持变量传递和模拟执行；后端已提供 FastAPI、SQLite/PostgreSQL 工作流 CRUD、工作流结构校验、同步/异步运行、运行历史接口、本地向量知识库检索、DeepSeek / OpenAI 大模型节点最小真实调用、本机 HTTP 工具调用、本地账号隔离、团队空间和角色权限。Docker Compose 已提供 PostgreSQL、Redis 和独立 Worker 的生产化雏形；真实 embedding/pgvector、外网工具白名单管理和完整审计日志仍未实现。
 
 ## 本地存储
 

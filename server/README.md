@@ -1,6 +1,6 @@
 # Workflow Studio API
 
-FastAPI backend for Workflow Studio. The current backend stores users, sessions, workflows and archive status in a local SQLite database, validates workflow structure, records workflow runs, searches per-user Markdown/TXT knowledge documents, can call DeepSeek or OpenAI for LLM nodes when an API key is configured, and can execute localhost HTTP tool nodes. It also includes request logging, configurable CORS/database settings, and unittest coverage for the core API lifecycle.
+FastAPI backend for Workflow Studio. The backend stores users, sessions, workspaces, workflows, run history, async jobs and knowledge indexes through SQLAlchemy. Local development defaults to SQLite; Docker Compose uses PostgreSQL, Redis and a separate Worker process. It validates workflow structure, records workflow runs, searches per-workspace Markdown/TXT knowledge documents, can call DeepSeek or OpenAI for LLM nodes when an API key is configured, and can execute localhost HTTP tool nodes.
 
 ## Setup
 
@@ -29,6 +29,12 @@ Manual backend run:
 server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 --port 8000
 ```
 
+Manual worker run when `RUN_JOB_QUEUE_BACKEND=database` or `redis`:
+
+```powershell
+server\.venv\Scripts\python.exe -m server.src.worker
+```
+
 Optional DeepSeek runtime:
 
 ```powershell
@@ -54,6 +60,9 @@ DeepSeek is preferred when `DEEPSEEK_API_KEY` is present. Without DeepSeek or Op
 Additional environment variables:
 
 - `WORKFLOW_STUDIO_DB`: SQLite database path
+- `DATABASE_URL`: full SQLAlchemy database URL; overrides `WORKFLOW_STUDIO_DB`
+- `RUN_JOB_QUEUE_BACKEND`: `thread`, `database`, or `redis`
+- `REDIS_URL`: Redis URL used by the `redis` queue backend
 - `LOG_LEVEL`: Python log level, default `INFO`
 - `CORS_ORIGINS`: comma-separated allowed frontend origins
 
