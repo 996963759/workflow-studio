@@ -128,7 +128,15 @@ def workspace_model_configs(workspace_id: str) -> dict[str, dict[str, str | bool
     deepseek_config = store.get_runtime_model_config(workspace_id, "deepseek")
     if deepseek_config:
         configs["deepseek"] = deepseek_config
+    aliyun_config = store.get_runtime_model_config(workspace_id, "aliyun")
+    if aliyun_config:
+        configs["aliyun"] = aliyun_config
     return configs
+
+
+def ensure_supported_model_provider(provider: str) -> None:
+    if provider not in {"deepseek", "aliyun"}:
+        raise HTTPException(status_code=400, detail="Unsupported model provider")
 
 
 @app.get("/api/workspaces", response_model=list[WorkspaceRecord])
@@ -185,8 +193,7 @@ def get_model_config(
     provider: str,
     context: WorkspaceContext = Depends(require_workspace_role("viewer")),
 ) -> ModelConfigRecord:
-    if provider != "deepseek":
-        raise HTTPException(status_code=400, detail="Unsupported model provider")
+    ensure_supported_model_provider(provider)
     user, workspace_id = context
     config = store.get_model_config(workspace_id, user.id, provider)
     if config is None:
@@ -200,8 +207,7 @@ def save_model_config(
     payload: ModelConfigPayload,
     context: WorkspaceContext = Depends(require_workspace_role("editor")),
 ) -> ModelConfigRecord:
-    if provider != "deepseek":
-        raise HTTPException(status_code=400, detail="Unsupported model provider")
+    ensure_supported_model_provider(provider)
     user, workspace_id = context
     try:
         config = store.upsert_model_config(workspace_id, user.id, provider, payload)
@@ -226,15 +232,20 @@ def test_model_config(
     provider: str,
     context: WorkspaceContext = Depends(require_workspace_role("editor")),
 ) -> ModelConfigTestResponse:
-    if provider != "deepseek":
-        raise HTTPException(status_code=400, detail="Unsupported model provider")
+    ensure_supported_model_provider(provider)
     _, workspace_id = context
     runtime_config = store.get_runtime_model_config(workspace_id, provider)
     if not runtime_config:
-        return ModelConfigTestResponse(ok=False, message="当前团队空间还没有可用的 DeepSeek Key。", provider=provider, model="")
+        message = (
+            "当前团队空间还没有可用的阿里云百炼 Key。"
+            if provider == "aliyun"
+            else "当前团队空间还没有可用的 DeepSeek Key。"
+        )
+        return ModelConfigTestResponse(ok=False, message=message, provider=provider, model="")
+    label = "阿里云百炼" if provider == "aliyun" else "DeepSeek"
     return ModelConfigTestResponse(
         ok=True,
-        message="DeepSeek 配置已保存。运行工作流时会优先使用当前团队空间配置。",
+        message=f"{label} 配置已保存。运行工作流时会优先使用当前团队空间配置。",
         provider=provider,
         model=str(runtime_config.get("model") or ""),
     )

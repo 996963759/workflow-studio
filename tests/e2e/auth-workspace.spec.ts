@@ -17,4 +17,6 @@ test('注册后进入中文工作台并显示团队空间和运行队列入口',
   await expect(page.getByText('版本与审计')).toBeVisible()
   await expect(page.getByRole('button', { name: '文字转语音' })).toBeVisible()
   await expect(page.getByRole('button', { name: '图片生成' })).toBeVisible()
+  await expect(page.getByText('阿里云百炼', { exact: true })).toBeVisible()
+  await expect(page.getByText('默认 TTS 模型')).toBeVisible()
 })

@@ -264,11 +264,45 @@ type ModelConfigRecord = {
 }
 
 type ModelConfigFeedback = {
+  provider: ProviderConfigKey
   type: 'ok' | 'error' | 'info'
   text: string
 }
 
 type ModelConfigAction = 'load' | 'save' | 'test'
+type ProviderConfigKey = 'deepseek' | 'aliyun'
+
+type ProviderConfigState = {
+  record: ModelConfigRecord | null
+  form: {
+    enabled: boolean
+    model: string
+    baseUrl: string
+    apiKey: string
+  }
+}
+
+const PROVIDER_CONFIG_DEFAULTS: Record<ProviderConfigKey, ProviderConfigState['form']> = {
+  deepseek: {
+    enabled: true,
+    model: 'deepseek-v4-flash',
+    baseUrl: 'https://api.deepseek.com',
+    apiKey: '',
+  },
+  aliyun: {
+    enabled: true,
+    model: 'cosyvoice-v2',
+    baseUrl: 'https://dashscope.aliyuncs.com',
+    apiKey: '',
+  },
+}
+
+const PROVIDER_CONFIG_LABELS: Record<ProviderConfigKey, string> = {
+  deepseek: 'DeepSeek',
+  aliyun: '阿里云百炼',
+}
+
+const createDefaultProviderConfigForm = (provider: ProviderConfigKey) => ({ ...PROVIDER_CONFIG_DEFAULTS[provider] })
 
 type KnowledgeStatus = {
   directory: string
@@ -1308,12 +1342,11 @@ function App() {
   const [providerStatus, setProviderStatus] = useState<ProviderStatus | null>(null)
   const [providerStatusCheckedAt, setProviderStatusCheckedAt] = useState('')
   const [modelConfig, setModelConfig] = useState<ModelConfigRecord | null>(null)
-  const [modelConfigForm, setModelConfigForm] = useState({
-    enabled: true,
-    model: 'deepseek-v4-flash',
-    baseUrl: 'https://api.deepseek.com',
-    apiKey: '',
+  const [aliyunConfig, setAliyunConfig] = useState<ProviderConfigState>({
+    record: null,
+    form: createDefaultProviderConfigForm('aliyun'),
   })
+  const [modelConfigForm, setModelConfigForm] = useState(createDefaultProviderConfigForm('deepseek'))
   const [modelConfigFeedback, setModelConfigFeedback] = useState<ModelConfigFeedback | null>(null)
   const [modelConfigBusy, setModelConfigBusy] = useState<ModelConfigAction | null>(null)
   const [knowledgeStatus, setKnowledgeStatus] = useState<KnowledgeStatus | null>(null)
@@ -1449,15 +1482,21 @@ function App() {
     [nodeIssueLevels, nodes],
   )
 
-  const hasRealModelProvider = Boolean(
-    providerStatus?.deepseek_configured || providerStatus?.openai_configured || providerStatus?.aliyun_configured,
-  )
-  const activeProviderLabel = providerStatus?.deepseek_configured
-    ? `DeepSeek - ${providerStatus.deepseek_model}`
+  const deepseekWorkspaceConfigured = Boolean(modelConfig?.enabled && modelConfig.has_api_key)
+  const aliyunWorkspaceConfigured = Boolean(aliyunConfig.record?.enabled && aliyunConfig.record.has_api_key)
+  const deepseekConfigured = Boolean(providerStatus?.deepseek_configured || deepseekWorkspaceConfigured)
+  const aliyunConfigured = Boolean(providerStatus?.aliyun_configured || aliyunWorkspaceConfigured)
+  const hasRealModelProvider = Boolean(deepseekConfigured || providerStatus?.openai_configured || aliyunConfigured)
+  const activeProviderLabel = deepseekConfigured
+    ? deepseekWorkspaceConfigured
+      ? `DeepSeek 工作区 - ${modelConfig?.model ?? 'deepseek-v4-flash'}`
+      : `DeepSeek - ${providerStatus?.deepseek_model ?? 'deepseek-v4-flash'}`
     : providerStatus?.openai_configured
       ? `OpenAI - ${providerStatus.openai_default_model}`
-      : providerStatus?.aliyun_configured
-        ? `阿里云 - ${providerStatus.aliyun_tts_model ?? '多模态'}`
+      : aliyunConfigured
+        ? aliyunWorkspaceConfigured
+          ? `阿里云工作区 - ${aliyunConfig.record?.model ?? 'cosyvoice-v2'}`
+          : `阿里云 - ${providerStatus?.aliyun_tts_model ?? '多模态'}`
         : '模拟输出'
   const knowledgeStatusLabel = knowledgeStatus
     ? `${knowledgeStatus.document_count} 个文档 / ${knowledgeStatus.chunk_count} 个片段`
@@ -1468,6 +1507,13 @@ function App() {
 
   const updateModelConfigForm = (patch: Partial<typeof modelConfigForm>) => {
     setModelConfigForm((current) => ({ ...current, ...patch }))
+  }
+
+  const updateAliyunConfigForm = (patch: Partial<ProviderConfigState['form']>) => {
+    setAliyunConfig((current) => ({
+      ...current,
+      form: { ...current.form, ...patch },
+    }))
   }
 
   const apiFetch = useCallback(
@@ -1537,11 +1583,10 @@ function App() {
     setBackendStatus('unknown')
     setProviderStatus(null)
     setModelConfig(null)
-    setModelConfigForm({
-      enabled: true,
-      model: 'deepseek-v4-flash',
-      baseUrl: 'https://api.deepseek.com',
-      apiKey: '',
+    setModelConfigForm(createDefaultProviderConfigForm('deepseek'))
+    setAliyunConfig({
+      record: null,
+      form: createDefaultProviderConfigForm('aliyun'),
     })
     setKnowledgeStatus(null)
     setKnowledgeDocuments([])
@@ -1713,118 +1758,155 @@ function App() {
     }
   }
 
-  const loadModelConfig = useCallback(async (showNotice = false) => {
+  const applyProviderConfig = useCallback((provider: ProviderConfigKey, config: ModelConfigRecord) => {
+    const defaults = PROVIDER_CONFIG_DEFAULTS[provider]
+    const form = {
+      ...defaults,
+      enabled: config.has_api_key || config.updated_at ? config.enabled : defaults.enabled,
+      model: config.model || defaults.model,
+      baseUrl: config.base_url || defaults.baseUrl,
+      apiKey: '',
+    }
+
+    if (provider === 'deepseek') {
+      setModelConfig(config)
+      setModelConfigForm(form)
+    } else {
+      setAliyunConfig({ record: config, form })
+    }
+  }, [])
+
+  const loadProviderModelConfig = useCallback(async (provider: ProviderConfigKey, showNotice = false) => {
     if (!authSession || !activeWorkspaceId) return null
+    const label = PROVIDER_CONFIG_LABELS[provider]
     if (showNotice) {
       setModelConfigBusy('load')
-      setModelConfigFeedback({ type: 'info', text: '正在读取当前团队空间的模型配置...' })
+      setModelConfigFeedback({ provider, type: 'info', text: `正在读取当前团队空间的 ${label} 配置...` })
     }
     try {
-      const response = await apiFetch('/api/model-configs/deepseek')
+      const response = await apiFetch(`/api/model-configs/${provider}`)
       if (!response.ok) {
-        throw new Error(await readResponseErrorMessage(response, '读取模型配置失败：请确认后端在线。'))
+        throw new Error(await readResponseErrorMessage(response, `读取 ${label} 配置失败：请确认后端在线。`))
       }
       const config = (await response.json()) as ModelConfigRecord
-      setModelConfig(config)
-      setModelConfigForm((current) => ({
-        ...current,
-        enabled: config.enabled,
-        model: config.model || 'deepseek-v4-flash',
-        baseUrl: config.base_url || 'https://api.deepseek.com',
-        apiKey: '',
-      }))
+      applyProviderConfig(provider, config)
       if (showNotice) {
-        const message = '已读取当前团队空间的模型配置。'
-        setModelConfigFeedback({ type: 'ok', text: message })
+        const message = `已读取当前团队空间的 ${label} 配置。`
+        setModelConfigFeedback({ provider, type: 'ok', text: message })
         setNotice(message)
       }
       return config
     } catch (error) {
-      const message = getErrorMessage(error, '读取模型配置失败：请确认后端在线。')
-      setModelConfig(null)
+      const message = getErrorMessage(error, `读取 ${label} 配置失败：请确认后端在线。`)
+      if (provider === 'deepseek') {
+        setModelConfig(null)
+      } else {
+        setAliyunConfig((current) => ({ ...current, record: null }))
+      }
       if (showNotice) {
-        setModelConfigFeedback({ type: 'error', text: message })
+        setModelConfigFeedback({ provider, type: 'error', text: message })
         setNotice(message)
       }
       return null
     } finally {
       if (showNotice) setModelConfigBusy(null)
     }
-  }, [activeWorkspaceId, apiFetch, authSession])
+  }, [activeWorkspaceId, apiFetch, applyProviderConfig, authSession])
 
-  const persistModelConfig = async () => {
+  const loadModelConfig = useCallback(
+    (showNotice = false) => loadProviderModelConfig('deepseek', showNotice),
+    [loadProviderModelConfig],
+  )
+
+  const loadAliyunConfig = useCallback(
+    (showNotice = false) => loadProviderModelConfig('aliyun', showNotice),
+    [loadProviderModelConfig],
+  )
+
+  const persistProviderModelConfig = async (provider: ProviderConfigKey) => {
     if (!activeWorkspaceId) {
       throw new Error('请先选择团队空间。')
     }
-    if (!modelConfig?.has_api_key && !modelConfigForm.apiKey.trim()) {
-      throw new Error('首次保存模型配置时需要填写 DeepSeek API Key。')
+    const label = PROVIDER_CONFIG_LABELS[provider]
+    const currentRecord = provider === 'deepseek' ? modelConfig : aliyunConfig.record
+    const currentForm = provider === 'deepseek' ? modelConfigForm : aliyunConfig.form
+    if (!currentRecord?.has_api_key && !currentForm.apiKey.trim()) {
+      throw new Error(`首次保存 ${label} 配置时需要填写 API Key。`)
     }
-    const response = await apiFetch('/api/model-configs/deepseek', {
+    const response = await apiFetch(`/api/model-configs/${provider}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        enabled: modelConfigForm.enabled,
-        model: modelConfigForm.model,
-        base_url: modelConfigForm.baseUrl,
-        api_key: modelConfigForm.apiKey.trim() || null,
+        enabled: currentForm.enabled,
+        model: currentForm.model,
+        base_url: currentForm.baseUrl,
+        api_key: currentForm.apiKey.trim() || null,
       }),
     })
     if (!response.ok) {
-      throw new Error(await readResponseErrorMessage(response, '保存模型配置失败：请确认你有当前团队空间的编辑权限。'))
+      throw new Error(await readResponseErrorMessage(response, `保存 ${label} 配置失败：请确认你有当前团队空间的编辑权限。`))
     }
     const config = (await response.json()) as ModelConfigRecord
-    setModelConfig(config)
-    setModelConfigForm((current) => ({ ...current, apiKey: '' }))
+    applyProviderConfig(provider, config)
     await refreshProviderStatus(false)
     return config
   }
 
-  const saveModelConfig = async () => {
+  const saveProviderModelConfig = async (provider: ProviderConfigKey) => {
     if (modelConfigBusy) return
+    const label = PROVIDER_CONFIG_LABELS[provider]
     setModelConfigBusy('save')
-    setModelConfigFeedback({ type: 'info', text: '正在保存 DeepSeek 配置...' })
+    setModelConfigFeedback({ provider, type: 'info', text: `正在保存 ${label} 配置...` })
     try {
-      await persistModelConfig()
-      const message = '已保存当前团队空间的 DeepSeek 配置。'
-      setModelConfigFeedback({ type: 'ok', text: message })
+      await persistProviderModelConfig(provider)
+      const message = `已保存当前团队空间的 ${label} 配置。`
+      setModelConfigFeedback({ provider, type: 'ok', text: message })
       setNotice(message)
     } catch (error) {
-      const message = getErrorMessage(error, '保存模型配置失败：请确认你有当前团队空间的编辑权限。')
-      setModelConfigFeedback({ type: 'error', text: message })
+      const message = getErrorMessage(error, `保存 ${label} 配置失败：请确认你有当前团队空间的编辑权限。`)
+      setModelConfigFeedback({ provider, type: 'error', text: message })
       setNotice(message)
     } finally {
       setModelConfigBusy(null)
     }
   }
 
-  const testModelConfig = async () => {
+  const testProviderModelConfig = async (provider: ProviderConfigKey) => {
     if (modelConfigBusy) return
-    const hasNewApiKey = Boolean(modelConfigForm.apiKey.trim())
+    const label = PROVIDER_CONFIG_LABELS[provider]
+    const currentForm = provider === 'deepseek' ? modelConfigForm : aliyunConfig.form
+    const hasNewApiKey = Boolean(currentForm.apiKey.trim())
     setModelConfigBusy('test')
     setModelConfigFeedback({
+      provider,
       type: 'info',
-      text: hasNewApiKey ? '检测到新的 API Key，正在先保存再测试...' : '正在测试当前团队空间的 DeepSeek 配置...',
+      text: hasNewApiKey ? '检测到新的 API Key，正在先保存再测试...' : `正在测试当前团队空间的 ${label} 配置...`,
     })
     try {
       if (hasNewApiKey) {
-        await persistModelConfig()
+        await persistProviderModelConfig(provider)
       }
-      const response = await apiFetch('/api/model-configs/deepseek/test', { method: 'POST' })
+      const response = await apiFetch(`/api/model-configs/${provider}/test`, { method: 'POST' })
       if (!response.ok) {
-        throw new Error(await readResponseErrorMessage(response, '模型配置测试失败：请确认后端在线。'))
+        throw new Error(await readResponseErrorMessage(response, `${label} 配置测试失败：请确认后端在线。`))
       }
       const result = (await response.json()) as { ok: boolean; message: string }
-      setModelConfigFeedback({ type: result.ok ? 'ok' : 'error', text: result.message })
+      setModelConfigFeedback({ provider, type: result.ok ? 'ok' : 'error', text: result.message })
       setNotice(result.message)
       if (result.ok) await refreshProviderStatus(false)
     } catch (error) {
-      const message = getErrorMessage(error, '模型配置测试失败：请确认后端在线，且你有当前团队空间的编辑权限。')
-      setModelConfigFeedback({ type: 'error', text: message })
+      const message = getErrorMessage(error, `${label} 配置测试失败：请确认后端在线，且你有当前团队空间的编辑权限。`)
+      setModelConfigFeedback({ provider, type: 'error', text: message })
       setNotice(message)
     } finally {
       setModelConfigBusy(null)
     }
   }
+
+  const saveModelConfig = () => saveProviderModelConfig('deepseek')
+  const testModelConfig = () => testProviderModelConfig('deepseek')
+  const saveAliyunConfig = () => saveProviderModelConfig('aliyun')
+  const testAliyunConfig = () => testProviderModelConfig('aliyun')
 
   const refreshKnowledgeStatus = async (showNotice = true) => {
     try {
@@ -2351,9 +2433,10 @@ function App() {
     if (!authSession || !activeWorkspaceId) return
     const timer = window.setTimeout(() => {
       void loadModelConfig(false)
+      void loadAliyunConfig(false)
     }, 0)
     return () => window.clearTimeout(timer)
-  }, [activeWorkspaceId, authSession, loadModelConfig])
+  }, [activeWorkspaceId, authSession, loadAliyunConfig, loadModelConfig])
 
   useEffect(() => {
     if (!authSession || !activeWorkspaceId) return
@@ -2382,11 +2465,10 @@ function App() {
     setKnowledgeStatus(null)
     setKnowledgeDocuments([])
     setModelConfig(null)
-    setModelConfigForm({
-      enabled: true,
-      model: 'deepseek-v4-flash',
-      baseUrl: 'https://api.deepseek.com',
-      apiKey: '',
+    setModelConfigForm(createDefaultProviderConfigForm('deepseek'))
+    setAliyunConfig({
+      record: null,
+      form: createDefaultProviderConfigForm('aliyun'),
     })
     setRunHistory([])
     setRunJobs([])
@@ -2427,8 +2509,8 @@ function App() {
     }
 
     const status = await refreshProviderStatus(false)
-    if (status && !status.deepseek_configured && !status.openai_configured) {
-      setNotice('未检测到 DeepSeek 或 OpenAI Key，本次后端运行会使用模拟输出。')
+    if (status && !deepseekConfigured && !status.openai_configured) {
+      setNotice('未检测到 DeepSeek 或 OpenAI Key，大模型对话节点会使用模拟输出；阿里云多模态节点如已配置仍会真实调用。')
     }
 
     const issues = await validateActiveWorkflow()
@@ -3864,13 +3946,13 @@ function App() {
           <div className="model-status-grid">
             <div>
               <span>DeepSeek</span>
-              <strong className={clsx(providerStatus?.deepseek_configured ? 'ready' : 'fallback')}>
-                {providerStatus?.deepseek_configured ? '已配置' : '未配置'}
+              <strong className={clsx(deepseekConfigured ? 'ready' : 'fallback')}>
+                {deepseekConfigured ? '已配置' : '未配置'}
               </strong>
             </div>
             <div>
               <span>默认模型</span>
-              <strong>{providerStatus?.deepseek_model ?? '未读取'}</strong>
+              <strong>{modelConfig?.model ?? providerStatus?.deepseek_model ?? '未读取'}</strong>
             </div>
             <div>
               <span>OpenAI</span>
@@ -3880,13 +3962,13 @@ function App() {
             </div>
             <div>
               <span>阿里云多模态</span>
-              <strong className={clsx(providerStatus?.aliyun_configured ? 'ready' : 'fallback')}>
-                {providerStatus?.aliyun_configured ? '已配置' : '未配置'}
+              <strong className={clsx(aliyunConfigured ? 'ready' : 'fallback')}>
+                {aliyunConfigured ? '已配置' : '未配置'}
               </strong>
             </div>
             <div>
-              <span>图片模型</span>
-              <strong>{providerStatus?.aliyun_image_model ?? '未读取'}</strong>
+              <span>阿里云模型</span>
+              <strong>{aliyunConfig.record?.model ?? providerStatus?.aliyun_tts_model ?? '未读取'}</strong>
             </div>
             <div>
               <span>后端状态</span>
@@ -3903,75 +3985,158 @@ function App() {
             {hasRealModelProvider ? '后端运行会优先使用真实模型。' : '未配置模型 Key 时，后端运行会自动使用模拟输出。'}
           </p>
           <div className="model-config-form">
-            <label className="inline-check">
-              <input
-                type="checkbox"
-                checked={modelConfigForm.enabled}
-                onChange={(event) => updateModelConfigForm({ enabled: event.target.checked })}
-              />
-              启用团队空间 DeepSeek
-            </label>
-            <label>
-              模型
-              <input
-                value={modelConfigForm.model}
-                onChange={(event) => updateModelConfigForm({ model: event.target.value })}
-                placeholder="deepseek-v4-flash"
-              />
-            </label>
-            <label>
-              Base URL
-              <input
-                value={modelConfigForm.baseUrl}
-                onChange={(event) => updateModelConfigForm({ baseUrl: event.target.value })}
-                placeholder="https://api.deepseek.com"
-              />
-            </label>
-            <label>
-              API Key
-              <input
-                type="password"
-                value={modelConfigForm.apiKey}
-                onChange={(event) => updateModelConfigForm({ apiKey: event.target.value })}
-                placeholder={modelConfig?.masked_api_key ?? '首次保存需要填写'}
-              />
-            </label>
-            <div className="model-config-actions">
-              <button
-                type="button"
-                className="mini-action"
-                disabled={Boolean(modelConfigBusy)}
-                onClick={() => void saveModelConfig()}
-              >
-                {modelConfigBusy === 'save' ? '保存中...' : '保存配置'}
-              </button>
-              <button
-                type="button"
-                className="mini-action"
-                disabled={Boolean(modelConfigBusy)}
-                onClick={() => void testModelConfig()}
-              >
-                {modelConfigBusy === 'test' ? '测试中...' : '测试配置'}
-              </button>
-              <button
-                type="button"
-                className="mini-action"
-                disabled={Boolean(modelConfigBusy)}
-                onClick={() => void loadModelConfig(true)}
-              >
-                {modelConfigBusy === 'load' ? '读取中...' : '重新读取'}
-              </button>
-            </div>
-            {modelConfigFeedback && (
-              <p className={clsx('model-config-feedback', modelConfigFeedback.type)}>
-                {modelConfigFeedback.text}
+            <div className="model-config-block">
+              <div className="model-config-heading">
+                <strong>DeepSeek 大模型</strong>
+                <span>用于大模型对话节点</span>
+              </div>
+              <label className="inline-check">
+                <input
+                  type="checkbox"
+                  checked={modelConfigForm.enabled}
+                  onChange={(event) => updateModelConfigForm({ enabled: event.target.checked })}
+                />
+                启用团队空间 DeepSeek
+              </label>
+              <label>
+                模型
+                <input
+                  value={modelConfigForm.model}
+                  onChange={(event) => updateModelConfigForm({ model: event.target.value })}
+                  placeholder="deepseek-v4-flash"
+                />
+              </label>
+              <label>
+                Base URL
+                <input
+                  value={modelConfigForm.baseUrl}
+                  onChange={(event) => updateModelConfigForm({ baseUrl: event.target.value })}
+                  placeholder="https://api.deepseek.com"
+                />
+              </label>
+              <label>
+                API Key
+                <input
+                  type="password"
+                  value={modelConfigForm.apiKey}
+                  onChange={(event) => updateModelConfigForm({ apiKey: event.target.value })}
+                  placeholder={modelConfig?.masked_api_key ?? '首次保存需要填写'}
+                />
+              </label>
+              <div className="model-config-actions">
+                <button
+                  type="button"
+                  className="mini-action"
+                  disabled={Boolean(modelConfigBusy)}
+                  onClick={() => void saveModelConfig()}
+                >
+                  {modelConfigBusy === 'save' && modelConfigFeedback?.provider === 'deepseek' ? '保存中...' : '保存配置'}
+                </button>
+                <button
+                  type="button"
+                  className="mini-action"
+                  disabled={Boolean(modelConfigBusy)}
+                  onClick={() => void testModelConfig()}
+                >
+                  {modelConfigBusy === 'test' && modelConfigFeedback?.provider === 'deepseek' ? '测试中...' : '测试配置'}
+                </button>
+                <button
+                  type="button"
+                  className="mini-action"
+                  disabled={Boolean(modelConfigBusy)}
+                  onClick={() => void loadModelConfig(true)}
+                >
+                  {modelConfigBusy === 'load' && modelConfigFeedback?.provider === 'deepseek' ? '读取中...' : '重新读取'}
+                </button>
+              </div>
+              {modelConfigFeedback?.provider === 'deepseek' && (
+                <p className={clsx('model-config-feedback', modelConfigFeedback.type)}>
+                  {modelConfigFeedback.text}
+                </p>
+              )}
+              <p className="model-status-note">
+                {modelConfig?.has_api_key
+                  ? `当前团队空间已保存 Key：${modelConfig.masked_api_key ?? '******'}`
+                  : '当前团队空间还没有保存 DeepSeek Key。'}
               </p>
-            )}
-            <p className="model-status-note">
-              {modelConfig?.has_api_key
-                ? `当前团队空间已保存 Key：${modelConfig.masked_api_key ?? '******'}`
-                : '当前团队空间还没有保存模型 Key。'}
-            </p>
+            </div>
+
+            <div className="model-config-block">
+              <div className="model-config-heading">
+                <strong>阿里云百炼</strong>
+                <span>用于文字转语音和图片生成节点</span>
+              </div>
+              <label className="inline-check">
+                <input
+                  type="checkbox"
+                  checked={aliyunConfig.form.enabled}
+                  onChange={(event) => updateAliyunConfigForm({ enabled: event.target.checked })}
+                />
+                启用团队空间阿里云百炼
+              </label>
+              <label>
+                默认 TTS 模型
+                <input
+                  value={aliyunConfig.form.model}
+                  onChange={(event) => updateAliyunConfigForm({ model: event.target.value })}
+                  placeholder="cosyvoice-v2"
+                />
+              </label>
+              <label>
+                Base URL
+                <input
+                  value={aliyunConfig.form.baseUrl}
+                  onChange={(event) => updateAliyunConfigForm({ baseUrl: event.target.value })}
+                  placeholder="https://dashscope.aliyuncs.com"
+                />
+              </label>
+              <label>
+                API Key
+                <input
+                  type="password"
+                  value={aliyunConfig.form.apiKey}
+                  onChange={(event) => updateAliyunConfigForm({ apiKey: event.target.value })}
+                  placeholder={aliyunConfig.record?.masked_api_key ?? '首次保存需要填写'}
+                />
+              </label>
+              <div className="model-config-actions">
+                <button
+                  type="button"
+                  className="mini-action"
+                  disabled={Boolean(modelConfigBusy)}
+                  onClick={() => void saveAliyunConfig()}
+                >
+                  {modelConfigBusy === 'save' && modelConfigFeedback?.provider === 'aliyun' ? '保存中...' : '保存配置'}
+                </button>
+                <button
+                  type="button"
+                  className="mini-action"
+                  disabled={Boolean(modelConfigBusy)}
+                  onClick={() => void testAliyunConfig()}
+                >
+                  {modelConfigBusy === 'test' && modelConfigFeedback?.provider === 'aliyun' ? '测试中...' : '测试配置'}
+                </button>
+                <button
+                  type="button"
+                  className="mini-action"
+                  disabled={Boolean(modelConfigBusy)}
+                  onClick={() => void loadAliyunConfig(true)}
+                >
+                  {modelConfigBusy === 'load' && modelConfigFeedback?.provider === 'aliyun' ? '读取中...' : '重新读取'}
+                </button>
+              </div>
+              {modelConfigFeedback?.provider === 'aliyun' && (
+                <p className={clsx('model-config-feedback', modelConfigFeedback.type)}>
+                  {modelConfigFeedback.text}
+                </p>
+              )}
+              <p className="model-status-note">
+                {aliyunConfig.record?.has_api_key
+                  ? `当前团队空间已保存 Key：${aliyunConfig.record.masked_api_key ?? '******'}`
+                  : '当前团队空间还没有保存阿里云百炼 Key。'}
+              </p>
+              <p className="model-status-note">保存后，文字转语音和图片生成节点会优先使用当前团队空间配置。</p>
+            </div>
           </div>
           {providerStatusCheckedAt && (
             <time className="model-status-time">

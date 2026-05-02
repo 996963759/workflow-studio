@@ -83,6 +83,9 @@ class RunJobQueue:
             deepseek_config = self.store.get_runtime_model_config_for_job(job.id, "deepseek")
             if deepseek_config:
                 model_configs["deepseek"] = deepseek_config
+            aliyun_config = self.store.get_runtime_model_config_for_job(job.id, "aliyun")
+            if aliyun_config:
+                model_configs["aliyun"] = aliyun_config
             response = simulate_run(
                 workflow,
                 job.input_text,

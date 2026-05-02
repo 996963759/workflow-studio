@@ -22,18 +22,33 @@ def dashscope_api_key() -> str:
     return os.getenv("DASHSCOPE_API_KEY", "").strip()
 
 
-def aliyun_configured() -> bool:
-    return bool(dashscope_api_key())
+def aliyun_configured(runtime_config: dict[str, str | bool] | None = None) -> bool:
+    return bool(runtime_config and runtime_config.get("api_key")) or bool(dashscope_api_key())
 
 
-def _request_json(path: str, payload: dict[str, Any] | None = None, headers: dict[str, str] | None = None) -> dict[str, Any]:
-    api_key = dashscope_api_key()
+def _runtime_api_key(runtime_config: dict[str, str | bool] | None = None) -> str:
+    return str(runtime_config.get("api_key") or "").strip() if runtime_config else dashscope_api_key()
+
+
+def _runtime_base_url(runtime_config: dict[str, str | bool] | None = None) -> str:
+    if runtime_config and runtime_config.get("base_url"):
+        return str(runtime_config["base_url"]).rstrip("/")
+    return DASHSCOPE_BASE_URL
+
+
+def _request_json(
+    path: str,
+    payload: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
+    runtime_config: dict[str, str | bool] | None = None,
+) -> dict[str, Any]:
+    api_key = _runtime_api_key(runtime_config)
     if not api_key:
         raise AliyunProviderError("DASHSCOPE_API_KEY is not configured")
 
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
     request = Request(
-        f"{DASHSCOPE_BASE_URL}{path}",
+        f"{_runtime_base_url(runtime_config)}{path}",
         data=body,
         headers={
             "Authorization": f"Bearer {api_key}",
@@ -69,6 +84,7 @@ def run_tts(
     voice: str = "longxiaochun",
     audio_format: str = "mp3",
     speech_rate: float = 1.0,
+    runtime_config: dict[str, str | bool] | None = None,
 ) -> tuple[str, str]:
     payload = {
         "model": model or DEFAULT_TTS_MODEL,
@@ -81,7 +97,7 @@ def run_tts(
             "speech_rate": speech_rate,
         },
     }
-    body = _request_json("/api/v1/services/aigc/multimodal-generation/generation", payload)
+    body = _request_json("/api/v1/services/aigc/multimodal-generation/generation", payload, runtime_config=runtime_config)
     audio_url = _extract_audio_url(body)
     if not audio_url:
         raise AliyunProviderError(f"DashScope TTS response did not include audio url: {json.dumps(body, ensure_ascii=False)[:300]}")
@@ -109,11 +125,11 @@ def _extract_image_urls(body: dict[str, Any]) -> list[str]:
     return []
 
 
-def _poll_task(task_id: str) -> dict[str, Any]:
+def _poll_task(task_id: str, runtime_config: dict[str, str | bool] | None = None) -> dict[str, Any]:
     deadline = time.time() + DASHSCOPE_MAX_POLL_SECONDS
     last_body: dict[str, Any] = {}
     while time.time() < deadline:
-        body = _request_json(f"/api/v1/tasks/{task_id}")
+        body = _request_json(f"/api/v1/tasks/{task_id}", runtime_config=runtime_config)
         last_body = body
         output = body.get("output")
         status = output.get("task_status") if isinstance(output, dict) else None
@@ -130,6 +146,7 @@ def run_image_generation(
     model: str = DEFAULT_IMAGE_MODEL,
     size: str = "1024*1024",
     count: int = 1,
+    runtime_config: dict[str, str | bool] | None = None,
 ) -> tuple[list[str], str]:
     payload = {
         "model": model or DEFAULT_IMAGE_MODEL,
@@ -143,11 +160,12 @@ def run_image_generation(
         "/api/v1/services/aigc/text2image/image-synthesis",
         payload,
         {"X-DashScope-Async": "enable"},
+        runtime_config,
     )
     task_id = _extract_task_id(body)
     if not task_id:
         raise AliyunProviderError(f"DashScope image response did not include task_id: {json.dumps(body, ensure_ascii=False)[:300]}")
-    result = _poll_task(task_id)
+    result = _poll_task(task_id, runtime_config)
     urls = _extract_image_urls(result)
     if not urls:
         raise AliyunProviderError(f"DashScope image task did not include image urls: {json.dumps(result, ensure_ascii=False)[:300]}")

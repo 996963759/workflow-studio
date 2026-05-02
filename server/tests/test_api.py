@@ -508,6 +508,78 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(llm_step["provider"], "DeepSeek 工作区配置 - deepseek-v4-flash")
         self.assertEqual(captured["runtime_config"]["api_key"], "sk-test-workspace-key")
 
+    def test_workspace_aliyun_config_masks_key_and_is_used_by_tts_runner(self) -> None:
+        save_response = self.client.put(
+            "/api/model-configs/aliyun",
+            json={
+                "enabled": True,
+                "model": "cosyvoice-v2",
+                "base_url": "https://dashscope.aliyuncs.com",
+                "api_key": "sk-aliyun-workspace-key",
+            },
+            headers=self.auth_headers,
+        )
+        self.assertEqual(save_response.status_code, 200)
+        saved = save_response.json()
+        self.assertTrue(saved["has_api_key"])
+        self.assertNotIn("sk-aliyun-workspace-key", str(saved))
+
+        test_response = self.client.post("/api/model-configs/aliyun/test", headers=self.auth_headers)
+        self.assertEqual(test_response.status_code, 200)
+        self.assertTrue(test_response.json()["ok"])
+
+        captured = {}
+
+        def fake_run_tts(text, model="cosyvoice-v2", voice="longxiaochun", audio_format="mp3", speech_rate=1.0, runtime_config=None):
+            captured["runtime_config"] = runtime_config
+            captured["model"] = model
+            return "https://example.test/audio.mp3", model
+
+        previous = runner.run_tts
+        runner.run_tts = fake_run_tts
+        try:
+            workflow = {
+                **valid_workflow(),
+                "nodes": [
+                    {
+                        "id": "input-1",
+                        "position": {"x": 0, "y": 0},
+                        "data": {"kind": "input", "label": "用户输入", "outputKey": "user_request"},
+                    },
+                    {
+                        "id": "tts-1",
+                        "position": {"x": 240, "y": 0},
+                        "data": {
+                            "kind": "tts",
+                            "label": "文字转语音",
+                            "ttsText": "{{user_request}}",
+                            "outputKey": "audio",
+                        },
+                    },
+                    {
+                        "id": "output-1",
+                        "position": {"x": 480, "y": 0},
+                        "data": {"kind": "output", "label": "最终输出", "prompt": "{{audio}}", "outputKey": "answer"},
+                    },
+                ],
+                "edges": [
+                    {"id": "e1", "source": "input-1", "target": "tts-1"},
+                    {"id": "e2", "source": "tts-1", "target": "output-1"},
+                ],
+            }
+            run = self.client.post(
+                "/api/runs",
+                json={"workflow": workflow, "input_text": "欢迎使用工作流"},
+                headers=self.auth_headers,
+            ).json()
+        finally:
+            runner.run_tts = previous
+
+        tts_step = run["steps"][1]
+        self.assertEqual(tts_step["provider"], "阿里云 TTS - cosyvoice-v2")
+        self.assertEqual(captured["runtime_config"]["api_key"], "sk-aliyun-workspace-key")
+        self.assertEqual(captured["model"], "cosyvoice-v2")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -400,9 +400,13 @@ def run_knowledge_node(
     return output, step_input, provider
 
 
-def run_tts_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, str, str, str | None]:
+def run_tts_node(
+    data: dict[str, Any],
+    context: dict[str, str],
+    runtime_config: dict[str, str | bool] | None = None,
+) -> tuple[str, str, str, str | None]:
     text = render_template(data.get("ttsText") or data.get("prompt"), context).strip()
-    model = str(data.get("ttsModel") or os.getenv("ALIYUN_TTS_MODEL") or "cosyvoice-v2")
+    model = str(data.get("ttsModel") or (runtime_config or {}).get("model") or os.getenv("ALIYUN_TTS_MODEL") or "cosyvoice-v2")
     voice = str(data.get("ttsVoice") or "longxiaochun")
     audio_format = str(data.get("audioFormat") or "mp3")
     speech_rate = clamp_number(data.get("speechRate"), 1.0, 0.5, 2.0)
@@ -410,16 +414,20 @@ def run_tts_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, st
 
     if not text:
         return "未配置要合成语音的文本。", step_input, "模拟输出", "TTS 文本为空"
-    if not aliyun_configured():
+    if not aliyun_configured(runtime_config):
         return f"阿里云 TTS 未配置 Key，模拟生成音频：{text[:80]}", step_input, "模拟输出", None
     try:
-        audio_url, used_model = run_tts(text, model, voice, audio_format, speech_rate)
+        audio_url, used_model = run_tts(text, model, voice, audio_format, speech_rate, runtime_config)
         return f"音频地址：{audio_url}", step_input, f"阿里云 TTS - {used_model}", None
     except AliyunProviderError as error:
         return f"阿里云 TTS 调用失败，已回退模拟音频：{text[:80]}", step_input, "模拟输出", summarize_error(error)
 
 
-def run_image_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, str, str, str | None]:
+def run_image_node(
+    data: dict[str, Any],
+    context: dict[str, str],
+    runtime_config: dict[str, str | bool] | None = None,
+) -> tuple[str, str, str, str | None]:
     prompt = render_template(data.get("imagePrompt") or data.get("prompt"), context).strip()
     model = str(data.get("imageModel") or os.getenv("ALIYUN_IMAGE_MODEL") or "wanx2.1-t2i-turbo")
     size = str(data.get("imageSize") or "1024*1024")
@@ -428,10 +436,10 @@ def run_image_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, 
 
     if not prompt:
         return "未配置图片生成提示词。", step_input, "模拟输出", "图片提示词为空"
-    if not aliyun_configured():
+    if not aliyun_configured(runtime_config):
         return f"阿里云图片生成未配置 Key，模拟生成 {count} 张图片：{prompt[:80]}", step_input, "模拟输出", None
     try:
-        urls, used_model = run_image_generation(prompt, model, size, count)
+        urls, used_model = run_image_generation(prompt, model, size, count, runtime_config)
         output = "\n".join(f"图片 {index}: {url}" for index, url in enumerate(urls, start=1))
         return output, step_input, f"阿里云图片生成 - {used_model}", None
     except AliyunProviderError as error:
@@ -494,9 +502,9 @@ def simulate_run(
         elif kind == "llm":
             output, step_input, provider, error = run_llm_node(data, context, model_configs)
         elif kind == "tts":
-            output, step_input, provider, error = run_tts_node(data, context)
+            output, step_input, provider, error = run_tts_node(data, context, model_configs.get("aliyun") if model_configs else None)
         elif kind == "image":
-            output, step_input, provider, error = run_image_node(data, context)
+            output, step_input, provider, error = run_image_node(data, context, model_configs.get("aliyun") if model_configs else None)
         elif kind == "tool":
             provider = "HTTP 工具" if data.get("toolUrl") else "模拟输出"
             def run_tool_once() -> tuple[str, str, str | None]:

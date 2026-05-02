@@ -1069,8 +1069,31 @@ textarea:focus {
 
 .model-config-form {
   display: grid;
-  gap: 8px;
+  gap: 10px;
   margin-top: 10px;
+}
+
+.model-config-block {
+  border: 1px solid #d8ded4;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 9px;
+}
+
+.model-config-heading {
+  display: grid;
+  gap: 2px;
+}
+
+.model-config-heading strong {
+  color: #1f2937;
+  font-size: 13px;
+}
+
+.model-config-heading span {
+  color: #64748b;
+  font-size: 11px;
 }
 
 .model-config-form label {

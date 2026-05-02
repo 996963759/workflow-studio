@@ -277,11 +277,13 @@ class WorkflowStore:
                 )
             )
         if not row:
+            default_model = "cosyvoice-v2" if provider == "aliyun" else "deepseek-v4-flash"
+            default_base_url = "https://dashscope.aliyuncs.com" if provider == "aliyun" else "https://api.deepseek.com"
             return ModelConfigRecord(
                 provider=provider,
                 enabled=False,
-                model="deepseek-v4-flash",
-                base_url="https://api.deepseek.com",
+                model=default_model,
+                base_url=default_base_url,
                 has_api_key=False,
                 masked_api_key=None,
                 updated_at=None,
