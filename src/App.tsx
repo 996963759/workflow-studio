@@ -124,6 +124,33 @@ type ServerWorkflowRecord = {
   updated_at: string
 }
 
+type WorkflowVersionRecord = {
+  id: string
+  workflow_id: string
+  sequence: number
+  name: string
+  version: string
+  nodes: WorkflowNode[]
+  edges: Edge[]
+  archived: boolean
+  created_by: string
+  note?: string | null
+  created_at: string
+}
+
+type AuditLogRecord = {
+  id: string
+  workspace_id: string
+  actor_user_id: string
+  actor_username: string
+  action: string
+  resource_type: string
+  resource_id?: string | null
+  summary: string
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
 type ServerRunRecord = {
   id: string
   workflow_id: string | null
@@ -1225,6 +1252,10 @@ function App() {
   const [knowledgeDocuments, setKnowledgeDocuments] = useState<KnowledgeDocument[]>([])
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([])
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(() => loadActiveWorkspaceId())
+  const [workflowVersions, setWorkflowVersions] = useState<WorkflowVersionRecord[]>([])
+  const [auditLogs, setAuditLogs] = useState<AuditLogRecord[]>([])
+  const [versionNote, setVersionNote] = useState('')
+  const [workflowMetaBusy, setWorkflowMetaBusy] = useState<'versions' | 'audit' | 'save-version' | 'restore' | null>(null)
   const [runJobs, setRunJobs] = useState<RunJobRecord[]>([])
   const [activeRunJobId, setActiveRunJobId] = useState('')
   const [lastBackendSyncAt, setLastBackendSyncAt] = useState('')
@@ -1449,6 +1480,9 @@ function App() {
     setActiveRunJobId('')
     setRunHistory([])
     setSelectedRunId('')
+    setWorkflowVersions([])
+    setAuditLogs([])
+    setVersionNote('')
     setNotice('已退出登录。')
   }
 
@@ -1929,6 +1963,136 @@ function App() {
     return applyServerWorkflowToLocalRecord(workflow, saved, syncedAt)
   }
 
+  const loadWorkflowVersions = useCallback(async (workflowId = activeWorkflow.serverId, showNotice = true) => {
+    if (!workflowId) {
+      setWorkflowVersions([])
+      if (showNotice) setNotice('当前工作流还没有同步到后端，暂无版本历史。')
+      return []
+    }
+    setWorkflowMetaBusy('versions')
+    try {
+      const response = await apiFetch(`/api/workflows/${workflowId}/versions`)
+      if (!response.ok) {
+        throw new Error(await readResponseErrorMessage(response, '读取版本历史失败。'))
+      }
+      const versions = (await response.json()) as WorkflowVersionRecord[]
+      setWorkflowVersions(versions)
+      setBackendStatus('online')
+      if (showNotice) setNotice(`已加载 ${versions.length} 个工作流版本。`)
+      return versions
+    } catch (error) {
+      const message = getErrorMessage(error, '读取版本历史失败：请确认后端在线。')
+      setBackendStatus('offline')
+      if (showNotice) setNotice(message)
+      return []
+    } finally {
+      setWorkflowMetaBusy(null)
+    }
+  }, [activeWorkflow.serverId, apiFetch])
+
+  const loadAuditLogs = useCallback(async (workflowId = activeWorkflow.serverId, showNotice = true) => {
+    if (!workflowId) {
+      setAuditLogs([])
+      if (showNotice) setNotice('当前工作流还没有同步到后端，暂无审计记录。')
+      return []
+    }
+    setWorkflowMetaBusy('audit')
+    try {
+      const response = await apiFetch(`/api/audit-logs?resource_type=workflow&resource_id=${workflowId}`)
+      if (!response.ok) {
+        throw new Error(await readResponseErrorMessage(response, '读取审计记录失败。'))
+      }
+      const logs = (await response.json()) as AuditLogRecord[]
+      setAuditLogs(logs)
+      setBackendStatus('online')
+      if (showNotice) setNotice(`已加载 ${logs.length} 条审计记录。`)
+      return logs
+    } catch (error) {
+      const message = getErrorMessage(error, '读取审计记录失败：请确认后端在线。')
+      setBackendStatus('offline')
+      if (showNotice) setNotice(message)
+      return []
+    } finally {
+      setWorkflowMetaBusy(null)
+    }
+  }, [activeWorkflow.serverId, apiFetch])
+
+  const saveWorkflowVersion = async () => {
+    if (!activeWorkflow.serverId) {
+      setNotice('请先点击“同步到后端”，再保存版本。')
+      return
+    }
+    if (activeWorkflowSyncState === 'dirty') {
+      setNotice('当前工作流有未同步改动。请先同步到后端，再保存版本。')
+      return
+    }
+    setWorkflowMetaBusy('save-version')
+    try {
+      const response = await apiFetch(`/api/workflows/${activeWorkflow.serverId}/versions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: versionNote.trim() || null }),
+      })
+      if (!response.ok) {
+        throw new Error(await readResponseErrorMessage(response, '保存版本失败。'))
+      }
+      const version = (await response.json()) as WorkflowVersionRecord
+      setWorkflowVersions((current) => [version, ...current])
+      setVersionNote('')
+      setBackendStatus('online')
+      setNotice(`已保存工作流版本 #${version.sequence}。`)
+      void loadAuditLogs(activeWorkflow.serverId, false)
+    } catch (error) {
+      setBackendStatus('offline')
+      setNotice(getErrorMessage(error, '保存版本失败：请确认后端在线。'))
+    } finally {
+      setWorkflowMetaBusy(null)
+    }
+  }
+
+  const restoreWorkflowVersion = async (version: WorkflowVersionRecord) => {
+    if (!activeWorkflow.serverId) return
+    if (activeWorkflowSyncState === 'dirty') {
+      setNotice('当前有未同步改动。请先同步或从后端加载后，再恢复版本。')
+      return
+    }
+    const confirmed = window.confirm(`确认恢复到版本 #${version.sequence}？当前后端工作流会被替换，并生成新的恢复快照。`)
+    if (!confirmed) return
+    setWorkflowMetaBusy('restore')
+    try {
+      const response = await apiFetch(`/api/workflows/${activeWorkflow.serverId}/versions/${version.id}/restore`, {
+        method: 'POST',
+      })
+      if (!response.ok) {
+        throw new Error(await readResponseErrorMessage(response, '恢复版本失败。'))
+      }
+      const restored = (await response.json()) as ServerWorkflowRecord
+      const syncedAt = new Date().toISOString()
+      const restoredLocal = applyServerWorkflowToLocalRecord(activeWorkflow, restored, syncedAt)
+      const next = {
+        ...workflowStore,
+        workflows: workflowStore.workflows.map((workflow) =>
+          workflow.id === activeWorkflow.id ? restoredLocal : workflow,
+        ),
+      }
+      setWorkflowStore(next)
+      persistWorkflowStore(next)
+      setSelectedNodeId(restored.nodes[0]?.id ?? '')
+      setRunSteps([])
+      setSelectedRunId('')
+      setBackendStatus('online')
+      setLastBackendSyncAt(syncedAt)
+      setNotice(`已恢复到版本 #${version.sequence}。`)
+      void loadWorkflowVersions(restored.id, false)
+      void loadAuditLogs(restored.id, false)
+    } catch (error) {
+      setBackendStatus('offline')
+      setNotice(getErrorMessage(error, '恢复版本失败：请确认后端在线。'))
+    } finally {
+      setWorkflowMetaBusy(null)
+    }
+  }
+
   const syncActiveWorkflowToBackend = async () => {
     const issues = await validateActiveWorkflow()
     if (showBlockingIssues(issues, '同步')) return
@@ -1946,6 +2110,10 @@ function App() {
       setBackendStatus('online')
       setLastBackendSyncAt(syncedWorkflow.syncedAt ?? new Date().toISOString())
       setNotice('当前工作流已同步到后端。')
+      if (syncedWorkflow.serverId) {
+        void loadWorkflowVersions(syncedWorkflow.serverId, false)
+        void loadAuditLogs(syncedWorkflow.serverId, false)
+      }
     } catch (error) {
       if (error instanceof Error && error.message === 'remote_newer') {
         setBackendStatus('online')
@@ -2025,6 +2193,8 @@ function App() {
     setRunSteps([])
     setBackendStatus('online')
     setLastBackendSyncAt(syncedAt)
+    void loadWorkflowVersions(serverWorkflow.id, false)
+    void loadAuditLogs(serverWorkflow.id, false)
   }
 
   const ensureActiveWorkflowMatchesBackend = async () => {
@@ -2069,6 +2239,10 @@ function App() {
       setRunSteps([])
       setBackendStatus('online')
       setLastBackendSyncAt(syncedAt)
+      if (firstLoaded.serverId) {
+        void loadWorkflowVersions(firstLoaded.serverId, false)
+        void loadAuditLogs(firstLoaded.serverId, false)
+      }
       setNotice(
         mode === 'startup'
           ? `已自动从后端加载 ${imported.length} 个工作流：新增 ${appendedCount} 个，更新 ${updatedCount} 个，冲突保留 ${conflictCount} 个，本地未同步工作流已保留。`
@@ -2080,7 +2254,7 @@ function App() {
         setNotice('加载失败：后端不可用或请求失败。')
       }
     }
-  }, [apiFetch, workflowStore])
+  }, [apiFetch, loadAuditLogs, loadWorkflowVersions, workflowStore])
 
   useEffect(() => {
     if (!authSession) return
@@ -2097,6 +2271,16 @@ function App() {
     }, 0)
     return () => window.clearTimeout(timer)
   }, [activeWorkspaceId, authSession, loadModelConfig])
+
+  useEffect(() => {
+    if (!authSession || !activeWorkspaceId) return
+    if (!activeWorkflow.serverId) return
+    const timer = window.setTimeout(() => {
+      void loadWorkflowVersions(activeWorkflow.serverId, false)
+      void loadAuditLogs(activeWorkflow.serverId, false)
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [activeWorkspaceId, activeWorkflow.serverId, authSession, loadAuditLogs, loadWorkflowVersions])
 
   useEffect(() => {
     if (!authSession) return
@@ -2126,6 +2310,9 @@ function App() {
     setSelectedRunId('')
     setActiveRunJobId('')
     setRunSteps([])
+    setWorkflowVersions([])
+    setAuditLogs([])
+    setVersionNote('')
     didAutoLoadBackendRef.current = false
     setNotice('已切换团队空间，请重新加载后端工作流和知识库状态。')
   }
@@ -2354,6 +2541,10 @@ function App() {
     const nextWorkflow = next.workflows.find((workflow) => workflow.id === workflowId)
     setSelectedNodeId(nextWorkflow?.nodes[0]?.id ?? '')
     setRunSteps([])
+    setSelectedRunId('')
+    setWorkflowVersions([])
+    setAuditLogs([])
+    setVersionNote('')
     setNotice('已切换工作流。')
   }
 
@@ -3602,6 +3793,91 @@ function App() {
             )}
           </div>
           {knowledgeStatus && <time className="model-status-time">{knowledgeStatus.directory}</time>}
+        </section>
+
+        <section className="panel workflow-meta-panel">
+          <div className="panel-title between">
+            <span>
+              <Archive size={16} />
+              版本与审计
+            </span>
+            <div className="workflow-meta-actions">
+              <button
+                type="button"
+                className="mini-action"
+                disabled={!activeWorkflow.serverId || Boolean(workflowMetaBusy)}
+                onClick={() => void loadWorkflowVersions()}
+              >
+                {workflowMetaBusy === 'versions' ? '刷新中...' : '版本'}
+              </button>
+              <button
+                type="button"
+                className="mini-action"
+                disabled={!activeWorkflow.serverId || Boolean(workflowMetaBusy)}
+                onClick={() => void loadAuditLogs()}
+              >
+                {workflowMetaBusy === 'audit' ? '刷新中...' : '审计'}
+              </button>
+            </div>
+          </div>
+          {!activeWorkflow.serverId ? (
+            <p className="model-status-note">当前工作流还没有同步到后端，暂无版本历史和审计记录。</p>
+          ) : (
+            <>
+              <label className="version-note-input">
+                版本备注
+                <input
+                  value={versionNote}
+                  onChange={(event) => setVersionNote(event.target.value)}
+                  placeholder="例如：面试演示稳定版"
+                />
+              </label>
+              <button
+                type="button"
+                className="workflow-version-save"
+                disabled={Boolean(workflowMetaBusy) || activeWorkflowSyncState === 'dirty'}
+                onClick={() => void saveWorkflowVersion()}
+              >
+                {workflowMetaBusy === 'save-version' ? '保存中...' : '保存当前版本'}
+              </button>
+              <div className="workflow-version-list">
+                {workflowVersions.length === 0 ? (
+                  <p>暂无版本记录。</p>
+                ) : (
+                  workflowVersions.slice(0, 5).map((version) => (
+                    <article key={version.id}>
+                      <div>
+                        <strong>版本 #{version.sequence}</strong>
+                        <span>{new Date(version.created_at).toLocaleString('zh-CN')}</span>
+                        <small>{version.note || version.name}</small>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={Boolean(workflowMetaBusy) || activeWorkflowSyncState === 'dirty'}
+                        onClick={() => void restoreWorkflowVersion(version)}
+                      >
+                        恢复
+                      </button>
+                    </article>
+                  ))
+                )}
+              </div>
+              <div className="audit-log-list">
+                {auditLogs.length === 0 ? (
+                  <p>暂无审计记录。</p>
+                ) : (
+                  auditLogs.slice(0, 6).map((log) => (
+                    <article key={log.id}>
+                      <strong>{log.summary}</strong>
+                      <span>
+                        {log.actor_username} · {new Date(log.created_at).toLocaleString('zh-CN')}
+                      </span>
+                    </article>
+                  ))
+                )}
+              </div>
+            </>
+          )}
         </section>
 
         <section className="panel runner">

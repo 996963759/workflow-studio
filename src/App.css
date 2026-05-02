@@ -1131,6 +1131,117 @@ textarea:focus {
   gap: 6px;
 }
 
+.workflow-meta-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.workflow-meta-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.version-note-input {
+  display: grid;
+  gap: 5px;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.workflow-version-save {
+  border: 1px solid #193f34;
+  border-radius: 7px;
+  background: #193f34;
+  color: #ffffff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 9px;
+}
+
+.workflow-version-save:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.workflow-version-list,
+.audit-log-list {
+  display: grid;
+  gap: 7px;
+}
+
+.workflow-version-list p,
+.audit-log-list p {
+  color: #64748b;
+  font-size: 12px;
+  margin: 0;
+}
+
+.workflow-version-list article,
+.audit-log-list article {
+  display: grid;
+  gap: 5px;
+  border: 1px solid #e1e7dc;
+  border-radius: 7px;
+  background: #ffffff;
+  padding: 8px;
+}
+
+.workflow-version-list article {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.workflow-version-list article > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.workflow-version-list strong,
+.audit-log-list strong {
+  overflow: hidden;
+  color: #111827;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-version-list span,
+.audit-log-list span,
+.workflow-version-list small {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-version-list button {
+  border: 1px solid #d8ded4;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #334155;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 5px 7px;
+}
+
+.workflow-version-list button:hover {
+  border-color: #9aa68f;
+  background: #f7f8f3;
+}
+
+.workflow-version-list button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .knowledge-document-list {
   display: grid;
   gap: 7px;
