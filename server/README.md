@@ -105,6 +105,10 @@ Supported file types are `.md` and `.txt`. Knowledge nodes use simple local keyw
 - `GET /api/workflows/{workflow_id}`
 - `PUT /api/workflows/{workflow_id}`
 - `DELETE /api/workflows/{workflow_id}`
+- `GET /api/workflows/{workflow_id}/versions`
+- `POST /api/workflows/{workflow_id}/versions`
+- `POST /api/workflows/{workflow_id}/versions/{version_id}/restore`
+- `GET /api/audit-logs`
 - `POST /api/runs`
 - `GET /api/runs`
 - `GET /api/runs?workflow_id={workflow_id}`

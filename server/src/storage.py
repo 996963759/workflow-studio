@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -18,10 +18,23 @@ from .models import (
     RunResponse,
     WorkflowPayload,
     WorkflowRecord,
+    WorkflowVersionRecord,
+    AuditLogRecord,
     WorkspaceMemberRecord,
     WorkspaceRecord,
 )
-from .orm import Base, DbRun, DbRunJob, DbUser, DbWorkflow, DbWorkspace, DbWorkspaceMember, DbWorkspaceModelConfig
+from .orm import (
+    Base,
+    DbAuditLog,
+    DbRun,
+    DbRunJob,
+    DbUser,
+    DbWorkflow,
+    DbWorkflowVersion,
+    DbWorkspace,
+    DbWorkspaceMember,
+    DbWorkspaceModelConfig,
+)
 from .secret_box import mask_secret, protect_secret, reveal_secret
 
 
@@ -392,6 +405,8 @@ class WorkflowStore:
         )
         with self._connect() as session:
             session.add(workflow)
+            session.flush()
+            self._create_workflow_version(session, workflow, user_id, "创建工作流")
             session.commit()
         return WorkflowRecord(id=workflow_id, updated_at=updated_at, **payload.model_dump())
 
@@ -416,6 +431,7 @@ class WorkflowStore:
             workflow.edges_json = json.dumps(payload.edges, ensure_ascii=False)
             workflow.archived = payload.archived
             workflow.updated_at = updated_at
+            self._create_workflow_version(session, workflow, user_id, "更新工作流")
             session.commit()
         return WorkflowRecord(id=workflow_id, updated_at=updated_at, **payload.model_dump())
 
@@ -427,10 +443,165 @@ class WorkflowStore:
             )
             if not workflow:
                 return False
+            session.execute(delete(DbWorkflowVersion).where(DbWorkflowVersion.workflow_id == workflow_id))
             session.delete(workflow)
             session.execute(delete(DbRun).where(DbRun.workflow_id == workflow_id, DbRun.workspace_id == workspace_id))
             session.commit()
         return True
+
+    def create_workflow_version(
+        self,
+        workflow_id: str,
+        user_id: str,
+        workspace_id: str | None = None,
+        note: str | None = None,
+    ) -> WorkflowVersionRecord | None:
+        workspace_id = workspace_id or self.ensure_default_workspace(user_id)
+        with self._connect() as session:
+            workflow = session.scalar(
+                select(DbWorkflow).where(DbWorkflow.id == workflow_id, DbWorkflow.workspace_id == workspace_id)
+            )
+            if not workflow:
+                return None
+            version = self._create_workflow_version(session, workflow, user_id, note or "手动保存版本")
+            session.commit()
+        return self._workflow_version_to_record(version)
+
+    def list_workflow_versions(
+        self,
+        workflow_id: str,
+        user_id: str,
+        workspace_id: str | None = None,
+    ) -> list[WorkflowVersionRecord] | None:
+        workspace_id = workspace_id or self.ensure_default_workspace(user_id)
+        if not self.can_access_workspace(workspace_id, user_id):
+            return None
+        with self._connect() as session:
+            exists = session.scalar(
+                select(DbWorkflow.id).where(DbWorkflow.id == workflow_id, DbWorkflow.workspace_id == workspace_id)
+            )
+            if not exists:
+                return None
+            versions = session.scalars(
+                select(DbWorkflowVersion)
+                .where(DbWorkflowVersion.workflow_id == workflow_id, DbWorkflowVersion.workspace_id == workspace_id)
+                .order_by(DbWorkflowVersion.sequence.desc())
+            ).all()
+        return [self._workflow_version_to_record(version) for version in versions]
+
+    def restore_workflow_version(
+        self,
+        workflow_id: str,
+        version_id: str,
+        user_id: str,
+        workspace_id: str | None = None,
+    ) -> WorkflowRecord | None:
+        workspace_id = workspace_id or self.ensure_default_workspace(user_id)
+        updated_at = utc_now()
+        with self._connect() as session:
+            workflow = session.scalar(
+                select(DbWorkflow).where(DbWorkflow.id == workflow_id, DbWorkflow.workspace_id == workspace_id)
+            )
+            version = session.scalar(
+                select(DbWorkflowVersion).where(
+                    DbWorkflowVersion.id == version_id,
+                    DbWorkflowVersion.workflow_id == workflow_id,
+                    DbWorkflowVersion.workspace_id == workspace_id,
+                )
+            )
+            if not workflow or not version:
+                return None
+            workflow.name = version.name
+            workflow.version = version.version
+            workflow.nodes_json = version.nodes_json
+            workflow.edges_json = version.edges_json
+            workflow.archived = bool(version.archived)
+            workflow.updated_at = updated_at
+            self._create_workflow_version(session, workflow, user_id, f"恢复到版本 #{version.sequence}")
+            session.commit()
+            payload = WorkflowPayload(
+                name=workflow.name,
+                version=workflow.version,
+                nodes=json.loads(workflow.nodes_json),
+                edges=json.loads(workflow.edges_json),
+                archived=bool(workflow.archived),
+            )
+        return WorkflowRecord(id=workflow_id, updated_at=updated_at, **payload.model_dump())
+
+    def append_audit_log(
+        self,
+        workspace_id: str,
+        actor_user_id: str,
+        action: str,
+        resource_type: str,
+        summary: str,
+        resource_id: str | None = None,
+        metadata: dict | None = None,
+    ) -> AuditLogRecord:
+        now = utc_now()
+        with self._connect() as session:
+            username = session.scalar(select(DbUser.username).where(DbUser.id == actor_user_id)) or "unknown"
+            row = DbAuditLog(
+                id=str(uuid.uuid4()),
+                workspace_id=workspace_id,
+                actor_user_id=actor_user_id,
+                actor_username=username,
+                action=action,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                summary=summary,
+                metadata_json=json.dumps(metadata or {}, ensure_ascii=False),
+                created_at=now,
+            )
+            session.add(row)
+            session.commit()
+        return self._audit_log_to_record(row)
+
+    def list_audit_logs(
+        self,
+        workspace_id: str,
+        user_id: str,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        limit: int = 100,
+    ) -> list[AuditLogRecord] | None:
+        if not self.can_access_workspace(workspace_id, user_id):
+            return None
+        with self._connect() as session:
+            statement = select(DbAuditLog).where(DbAuditLog.workspace_id == workspace_id)
+            if resource_type:
+                statement = statement.where(DbAuditLog.resource_type == resource_type)
+            if resource_id:
+                statement = statement.where(DbAuditLog.resource_id == resource_id)
+            rows = session.scalars(statement.order_by(DbAuditLog.created_at.desc()).limit(min(max(limit, 1), 200))).all()
+        return [self._audit_log_to_record(row) for row in rows]
+
+    def _create_workflow_version(
+        self,
+        session: Session,
+        workflow: DbWorkflow,
+        user_id: str,
+        note: str | None = None,
+    ) -> DbWorkflowVersion:
+        latest_sequence = session.scalar(
+            select(func.max(DbWorkflowVersion.sequence)).where(DbWorkflowVersion.workflow_id == workflow.id)
+        )
+        row = DbWorkflowVersion(
+            id=str(uuid.uuid4()),
+            workflow_id=workflow.id,
+            workspace_id=workflow.workspace_id or "",
+            sequence=(latest_sequence or 0) + 1,
+            name=workflow.name,
+            version=workflow.version,
+            nodes_json=workflow.nodes_json,
+            edges_json=workflow.edges_json,
+            archived=bool(workflow.archived),
+            created_by=user_id,
+            note=note,
+            created_at=utc_now(),
+        )
+        session.add(row)
+        return row
 
     def create_run(
         self,
@@ -668,6 +839,35 @@ class WorkflowStore:
             error=job.error,
             created_at=job.created_at,
             updated_at=job.updated_at,
+        )
+
+    def _workflow_version_to_record(self, version: DbWorkflowVersion) -> WorkflowVersionRecord:
+        return WorkflowVersionRecord(
+            id=version.id,
+            workflow_id=version.workflow_id,
+            sequence=version.sequence,
+            name=version.name,
+            version=version.version,
+            nodes=json.loads(version.nodes_json),
+            edges=json.loads(version.edges_json),
+            archived=bool(version.archived),
+            created_by=version.created_by,
+            note=version.note,
+            created_at=version.created_at,
+        )
+
+    def _audit_log_to_record(self, row: DbAuditLog) -> AuditLogRecord:
+        return AuditLogRecord(
+            id=row.id,
+            workspace_id=row.workspace_id,
+            actor_user_id=row.actor_user_id,
+            actor_username=row.actor_username,
+            action=row.action,
+            resource_type=row.resource_type,
+            resource_id=row.resource_id,
+            summary=row.summary,
+            metadata=json.loads(row.metadata_json),
+            created_at=row.created_at,
         )
 
 

@@ -16,6 +16,19 @@ class WorkflowRecord(WorkflowPayload):
     updated_at: str
 
 
+class WorkflowVersionRecord(WorkflowPayload):
+    id: str
+    workflow_id: str
+    sequence: int
+    created_by: str
+    created_at: str
+    note: str | None = None
+
+
+class WorkflowVersionCreatePayload(BaseModel):
+    note: str | None = Field(default=None, max_length=200)
+
+
 class WorkflowIssue(BaseModel):
     id: str
     level: str
@@ -140,3 +153,16 @@ class RunJobRecord(BaseModel):
     error: str | None = None
     created_at: str
     updated_at: str
+
+
+class AuditLogRecord(BaseModel):
+    id: str
+    workspace_id: str
+    actor_user_id: str
+    actor_username: str
+    action: str
+    resource_type: str
+    resource_id: str | None = None
+    summary: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str

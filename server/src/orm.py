@@ -70,6 +70,38 @@ class DbWorkflow(Base):
     updated_at: Mapped[str] = mapped_column(String, nullable=False)
 
 
+class DbWorkflowVersion(Base):
+    __tablename__ = "workflow_versions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    workflow_id: Mapped[str] = mapped_column(String, ForeignKey("workflows.id"), nullable=False, index=True)
+    workspace_id: Mapped[str] = mapped_column(String, ForeignKey("workspaces.id"), nullable=False, index=True)
+    sequence: Mapped[int] = mapped_column(nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    version: Mapped[str] = mapped_column(String, nullable=False)
+    nodes_json: Mapped[str] = mapped_column(Text, nullable=False)
+    edges_json: Mapped[str] = mapped_column(Text, nullable=False)
+    archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_by: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
+    note: Mapped[str | None] = mapped_column(String)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class DbAuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String, ForeignKey("workspaces.id"), nullable=False, index=True)
+    actor_user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
+    actor_username: Mapped[str] = mapped_column(String, nullable=False)
+    action: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    resource_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    resource_id: Mapped[str | None] = mapped_column(String, index=True)
+    summary: Mapped[str] = mapped_column(String, nullable=False)
+    metadata_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
 class DbRun(Base):
     __tablename__ = "runs"
 

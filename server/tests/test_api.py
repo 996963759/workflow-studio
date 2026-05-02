@@ -115,6 +115,51 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(fetch_response.status_code, 200)
         self.assertTrue(fetch_response.json()["archived"])
 
+    def test_workflow_versions_restore_and_audit_logs(self) -> None:
+        create_response = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers)
+        self.assertEqual(create_response.status_code, 201)
+        created = create_response.json()
+
+        updated_payload = {**valid_workflow(), "name": "Changed Workflow"}
+        update_response = self.client.put(
+            f"/api/workflows/{created['id']}",
+            json=updated_payload,
+            headers=self.auth_headers,
+        )
+        self.assertEqual(update_response.status_code, 200)
+
+        manual_version = self.client.post(
+            f"/api/workflows/{created['id']}/versions",
+            json={"note": "面试演示版本"},
+            headers=self.auth_headers,
+        )
+        self.assertEqual(manual_version.status_code, 201)
+        self.assertEqual(manual_version.json()["note"], "面试演示版本")
+
+        versions = self.client.get(f"/api/workflows/{created['id']}/versions", headers=self.auth_headers)
+        self.assertEqual(versions.status_code, 200)
+        self.assertGreaterEqual(len(versions.json()), 3)
+        oldest_version = versions.json()[-1]
+        self.assertEqual(oldest_version["sequence"], 1)
+        self.assertEqual(oldest_version["name"], valid_workflow()["name"])
+
+        restore = self.client.post(
+            f"/api/workflows/{created['id']}/versions/{oldest_version['id']}/restore",
+            headers=self.auth_headers,
+        )
+        self.assertEqual(restore.status_code, 200)
+        self.assertEqual(restore.json()["name"], valid_workflow()["name"])
+
+        logs = self.client.get(
+            f"/api/audit-logs?resource_type=workflow&resource_id={created['id']}",
+            headers=self.auth_headers,
+        )
+        self.assertEqual(logs.status_code, 200)
+        actions = [item["action"] for item in logs.json()]
+        self.assertIn("workflow.create", actions)
+        self.assertIn("workflow.update", actions)
+        self.assertIn("workflow.version_restore", actions)
+
     def test_deleting_workflow_deletes_runs(self) -> None:
         created = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers).json()
         run_response = self.client.post(

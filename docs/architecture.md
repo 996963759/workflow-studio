@@ -10,6 +10,8 @@ flowchart LR
   API --> Auth[认证与权限]
   API --> Store[SQLAlchemy Store]
   Store --> DB[(SQLite / PostgreSQL)]
+  Store --> Versions[工作流版本快照]
+  Store --> Audit[审计日志]
   API --> Jobs[异步运行队列]
   Jobs --> Redis[(Redis 可选)]
   Jobs --> Worker[独立 Worker]
@@ -34,10 +36,12 @@ flowchart LR
 ## 后端
 
 - FastAPI 提供 API。
-- SQLAlchemy ORM 管理 `users`、`sessions`、`workspaces`、`workspace_members`、`workflows`、`runs`、`run_jobs`、`knowledge_chunks`。
+- SQLAlchemy ORM 管理 `users`、`sessions`、`workspaces`、`workspace_members`、`workflows`、`workflow_versions`、`audit_logs`、`runs`、`run_jobs`、`knowledge_chunks`。
 - Alembic 管理数据库迁移。
 - Bearer Token 鉴权。
 - 工作流、运行历史、知识库文件按团队空间隔离，并通过 owner/editor/viewer 角色控制读写。
+- 工作流创建和更新会自动生成版本快照，也支持手动保存版本和恢复指定版本。
+- 审计日志记录工作流、团队成员、模型配置和运行入队等关键操作，按团队空间查询。
 - 团队空间可以保存 DeepSeek 模型配置；API Key 后端保护存储，前端只显示掩码，工作流运行时优先使用空间配置。
 - 异步运行队列支持三种模式：`thread` 用于本地开发，`database` 用于无 Redis 的持久队列，`redis` 用于 Docker Compose 生产化部署。
 - 队列任务会先写入 `run_jobs` 表。Worker 启动时会把未完成的 running 任务重新入队，避免服务重启后卡死。

@@ -10,6 +10,7 @@ from .auth import AuthService, current_token, login, register, require_auth, set
 from .models import (
     AuthPayload,
     AuthResponse,
+    AuditLogRecord,
     KnowledgeDocumentPayload,
     ModelConfigPayload,
     ModelConfigRecord,
@@ -25,6 +26,8 @@ from .models import (
     WorkflowPayload,
     WorkflowRecord,
     WorkflowRunRequest,
+    WorkflowVersionCreatePayload,
+    WorkflowVersionRecord,
     WorkflowValidationResult,
     UserRecord,
 )
@@ -136,7 +139,16 @@ def list_workspaces(user: UserRecord = Depends(require_auth)) -> list[WorkspaceR
 
 @app.post("/api/workspaces", response_model=WorkspaceRecord, status_code=201)
 def create_workspace(payload: WorkspaceCreatePayload, user: UserRecord = Depends(require_auth)) -> WorkspaceRecord:
-    return store.create_workspace(user.id, payload.name)
+    workspace = store.create_workspace(user.id, payload.name)
+    store.append_audit_log(
+        workspace.id,
+        user.id,
+        "workspace.create",
+        "workspace",
+        f"创建团队空间：{workspace.name}",
+        workspace.id,
+    )
+    return workspace
 
 
 @app.get("/api/workspaces/{workspace_id}/members", response_model=list[WorkspaceMemberRecord])
@@ -156,6 +168,15 @@ def upsert_workspace_member(
     member = store.upsert_workspace_member(workspace_id, user.id, payload.username, payload.role)
     if member is None:
         raise HTTPException(status_code=404, detail="User not found or workspace access denied")
+    store.append_audit_log(
+        workspace_id,
+        user.id,
+        "workspace.member_upsert",
+        "workspace_member",
+        f"设置成员 {member.username} 为 {member.role}",
+        member.id,
+        {"role": member.role},
+    )
     return member
 
 
@@ -188,6 +209,15 @@ def save_model_config(
         raise HTTPException(status_code=400, detail=str(error)) from error
     if config is None:
         raise HTTPException(status_code=403, detail="Workspace access denied")
+    store.append_audit_log(
+        workspace_id,
+        user.id,
+        "model_config.save",
+        "model_config",
+        f"保存 {provider} 模型配置",
+        provider,
+        {"enabled": config.enabled, "model": config.model, "has_api_key": config.has_api_key},
+    )
     return config
 
 
@@ -296,7 +326,17 @@ def create_workflow(
 ) -> WorkflowRecord:
     user, workspace_id = context
     raise_on_validation_errors(payload)
-    return store.create_workflow(payload, user.id, workspace_id)
+    workflow = store.create_workflow(payload, user.id, workspace_id)
+    store.append_audit_log(
+        workspace_id,
+        user.id,
+        "workflow.create",
+        "workflow",
+        f"创建工作流：{workflow.name}",
+        workflow.id,
+        {"version": workflow.version},
+    )
+    return workflow
 
 
 @app.get("/api/workflows/{workflow_id}", response_model=WorkflowRecord)
@@ -311,6 +351,62 @@ def get_workflow(
     return workflow
 
 
+@app.get("/api/workflows/{workflow_id}/versions", response_model=list[WorkflowVersionRecord])
+def list_workflow_versions(
+    workflow_id: str,
+    context: WorkspaceContext = Depends(require_workspace_role("viewer")),
+) -> list[WorkflowVersionRecord]:
+    user, workspace_id = context
+    versions = store.list_workflow_versions(workflow_id, user.id, workspace_id)
+    if versions is None:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    return versions
+
+
+@app.post("/api/workflows/{workflow_id}/versions", response_model=WorkflowVersionRecord, status_code=201)
+def create_workflow_version(
+    workflow_id: str,
+    payload: WorkflowVersionCreatePayload,
+    context: WorkspaceContext = Depends(require_workspace_role("editor")),
+) -> WorkflowVersionRecord:
+    user, workspace_id = context
+    version = store.create_workflow_version(workflow_id, user.id, workspace_id, payload.note)
+    if not version:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    store.append_audit_log(
+        workspace_id,
+        user.id,
+        "workflow.version_create",
+        "workflow",
+        f"保存工作流版本 #{version.sequence}：{version.name}",
+        workflow_id,
+        {"version_id": version.id, "sequence": version.sequence},
+    )
+    return version
+
+
+@app.post("/api/workflows/{workflow_id}/versions/{version_id}/restore", response_model=WorkflowRecord)
+def restore_workflow_version(
+    workflow_id: str,
+    version_id: str,
+    context: WorkspaceContext = Depends(require_workspace_role("editor")),
+) -> WorkflowRecord:
+    user, workspace_id = context
+    workflow = store.restore_workflow_version(workflow_id, version_id, user.id, workspace_id)
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow version not found")
+    store.append_audit_log(
+        workspace_id,
+        user.id,
+        "workflow.version_restore",
+        "workflow",
+        f"恢复工作流版本：{workflow.name}",
+        workflow_id,
+        {"version_id": version_id},
+    )
+    return workflow
+
+
 @app.put("/api/workflows/{workflow_id}", response_model=WorkflowRecord)
 def update_workflow(
     workflow_id: str,
@@ -322,14 +418,46 @@ def update_workflow(
     workflow = store.update_workflow(workflow_id, payload, user.id, workspace_id)
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
+    store.append_audit_log(
+        workspace_id,
+        user.id,
+        "workflow.update",
+        "workflow",
+        f"更新工作流：{workflow.name}",
+        workflow.id,
+        {"version": workflow.version},
+    )
     return workflow
 
 
 @app.delete("/api/workflows/{workflow_id}", status_code=204)
 def delete_workflow(workflow_id: str, context: WorkspaceContext = Depends(require_workspace_role("editor"))) -> None:
     user, workspace_id = context
+    workflow = store.get_workflow(workflow_id, user.id, workspace_id)
     if not store.delete_workflow(workflow_id, user.id, workspace_id):
         raise HTTPException(status_code=404, detail="Workflow not found")
+    store.append_audit_log(
+        workspace_id,
+        user.id,
+        "workflow.delete",
+        "workflow",
+        f"删除工作流：{workflow.name if workflow else workflow_id}",
+        workflow_id,
+    )
+
+
+@app.get("/api/audit-logs", response_model=list[AuditLogRecord])
+def list_audit_logs(
+    resource_type: str | None = None,
+    resource_id: str | None = None,
+    limit: int = 100,
+    context: WorkspaceContext = Depends(require_workspace_role("viewer")),
+) -> list[AuditLogRecord]:
+    user, workspace_id = context
+    logs = store.list_audit_logs(workspace_id, user.id, resource_type, resource_id, limit)
+    if logs is None:
+        raise HTTPException(status_code=403, detail="Workspace access denied")
+    return logs
 
 
 @app.post("/api/runs", response_model=RunResponse)
@@ -385,7 +513,17 @@ def run_stored_workflow(
         raise HTTPException(status_code=404, detail="Workflow not found")
     raise_on_validation_errors(workflow)
     response = simulate_run(workflow, payload.input_text, user.id, workspace_id, workspace_model_configs(workspace_id))
-    return store.create_run(workflow.id, user.id, workflow.name, payload.input_text, response, workspace_id)
+    run = store.create_run(workflow.id, user.id, workflow.name, payload.input_text, response, workspace_id)
+    store.append_audit_log(
+        workspace_id,
+        user.id,
+        "workflow.run",
+        "workflow",
+        f"同步运行工作流：{workflow.name}",
+        workflow.id,
+        {"run_id": run.id, "status": run.status},
+    )
+    return run
 
 
 @app.post("/api/workflows/{workflow_id}/run-jobs", response_model=RunJobRecord, status_code=202)
@@ -399,7 +537,17 @@ def enqueue_stored_workflow_run(
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
     raise_on_validation_errors(workflow)
-    return job_queue.enqueue(user.id, workspace_id, workflow_id, payload.input_text)
+    job = job_queue.enqueue(user.id, workspace_id, workflow_id, payload.input_text)
+    store.append_audit_log(
+        workspace_id,
+        user.id,
+        "workflow.run_enqueue",
+        "workflow",
+        f"异步入队工作流：{workflow.name}",
+        workflow_id,
+        {"job_id": job.id},
+    )
+    return job
 
 
 @app.get("/api/run-jobs", response_model=list[RunJobRecord])

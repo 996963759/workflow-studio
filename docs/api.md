@@ -64,6 +64,20 @@ X-Workspace-Id: <workspace_id>
 | GET | `/api/workflows/{workflow_id}` | 获取工作流 |
 | PUT | `/api/workflows/{workflow_id}` | 更新工作流 |
 | DELETE | `/api/workflows/{workflow_id}` | 删除工作流并清理运行历史 |
+| GET | `/api/workflows/{workflow_id}/versions` | 查看工作流版本快照 |
+| POST | `/api/workflows/{workflow_id}/versions` | 手动保存当前工作流版本 |
+| POST | `/api/workflows/{workflow_id}/versions/{version_id}/restore` | 恢复到指定版本，并生成新的恢复快照 |
+
+创建和更新工作流时，后端会自动生成版本快照。恢复版本不会覆盖历史版本，而是把恢复后的工作流保存为新的版本。
+
+## 审计日志
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/audit-logs` | 查看当前团队空间最近审计日志 |
+| GET | `/api/audit-logs?resource_type=workflow&resource_id={id}` | 查看某个资源的审计日志 |
+
+审计日志按团队空间隔离，记录操作者、动作、资源、摘要、元数据和时间。
 
 ## 运行历史
 
