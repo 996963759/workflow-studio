@@ -828,6 +828,10 @@ const readResponseErrorMessage = async (response: Response, fallback: string) =>
 const getErrorMessage = (error: unknown, fallback: string) =>
   error instanceof Error && error.message ? error.message : fallback
 
+const extractFirstUrl = (value: string) => value.match(/https?:\/\/[^\s)）"'，。]+/)?.[0]
+
+const isAudioStep = (step: RunStep) => step.provider?.includes('TTS') || step.output.includes('音频地址')
+
 const loadStoredWorkflow = (): WorkflowDefinition | null => {
   try {
     const raw = window.localStorage.getItem(LEGACY_STORAGE_KEY)
@@ -4498,60 +4502,83 @@ function App() {
                     复制整次结果
                   </button>
                 </div>
-                {runSteps.map((step) => (
-                  <article key={step.nodeId}>
-                    <span className={clsx('status-dot', step.status)} />
-                    <div>
-                      <strong>{step.title}</strong>
-                      <dl>
-                        <div>
-                          <dt>
-                            输入
-                            <button type="button" onClick={() => copyText('节点输入', step.input)}>
-                              <Copy size={12} />
-                              复制
-                            </button>
-                          </dt>
-                          <dd>{step.input}</dd>
-                        </div>
-                        <div>
-                          <dt>
-                            输出
-                            <button type="button" onClick={() => copyText('节点输出', step.output)}>
-                              <Copy size={12} />
-                              复制
-                            </button>
-                          </dt>
-                          <dd>{step.output}</dd>
-                        </div>
-                        {step.variable && (
+                {runSteps.map((step) => {
+                  const outputUrl = extractFirstUrl(step.output)
+                  const audioUrl = outputUrl && isAudioStep(step) ? outputUrl : ''
+                  return (
+                    <article key={step.nodeId}>
+                      <span className={clsx('status-dot', step.status)} />
+                      <div>
+                        <strong>{step.title}</strong>
+                        <dl>
                           <div>
-                            <dt>写入</dt>
-                            <dd>{step.variable}</dd>
-                          </div>
-                        )}
-                        {step.provider && (
-                          <div>
-                            <dt>来源</dt>
-                            <dd>{step.provider}</dd>
-                          </div>
-                        )}
-                        {step.error && (
-                          <div className="run-error-detail">
                             <dt>
-                              错误原因
-                              <button type="button" onClick={() => copyText('错误原因', step.error)}>
+                              输入
+                              <button type="button" onClick={() => copyText('节点输入', step.input)}>
                                 <Copy size={12} />
                                 复制
                               </button>
                             </dt>
-                            <dd>{step.error}</dd>
+                            <dd>{step.input}</dd>
                           </div>
-                        )}
-                      </dl>
-                    </div>
-                  </article>
-                ))}
+                          <div>
+                            <dt>
+                              输出
+                              <button type="button" onClick={() => copyText('节点输出', step.output)}>
+                                <Copy size={12} />
+                                复制
+                              </button>
+                            </dt>
+                            <dd>{step.output}</dd>
+                          </div>
+                          {audioUrl && (
+                            <div className="audio-output">
+                              <dt>音频播放</dt>
+                              <dd>
+                                <audio controls src={audioUrl}>
+                                  当前浏览器不支持音频播放。
+                                </audio>
+                                <div className="audio-output-actions">
+                                  <a href={audioUrl} target="_blank" rel="noreferrer">
+                                    打开音频
+                                  </a>
+                                  <button type="button" onClick={() => copyText('音频链接', audioUrl)}>
+                                    <Copy size={12} />
+                                    复制链接
+                                  </button>
+                                </div>
+                              </dd>
+                            </div>
+                          )}
+                          {step.variable && (
+                            <div>
+                              <dt>写入</dt>
+                              <dd>{step.variable}</dd>
+                            </div>
+                          )}
+                          {step.provider && (
+                            <div>
+                              <dt>来源</dt>
+                              <dd>{step.provider}</dd>
+                            </div>
+                          )}
+                          {step.error && (
+                            <div className="run-error-detail">
+                              <dt>
+                                错误原因
+                                <button type="button" onClick={() => copyText('错误原因', step.error)}>
+                                  <Copy size={12} />
+                                  复制
+                                </button>
+                              </dt>
+                              <dd>{step.error}</dd>
+                            </div>
+                          )}
+                        </dl>
+                      </div>
+                    </article>
+                  )
+                })}
               </>
             )}
           </div>

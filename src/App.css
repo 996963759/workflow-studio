@@ -1615,6 +1615,49 @@ textarea:focus {
   margin: 0;
 }
 
+.audio-output {
+  border: 1px solid #bae6fd;
+  border-radius: 7px;
+  background: #f0f9ff;
+  padding: 7px;
+}
+
+.audio-output audio {
+  display: block;
+  width: 100%;
+  min-height: 34px;
+}
+
+.audio-output-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.audio-output-actions a,
+.audio-output-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #7dd3fc;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #075985;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 7px;
+  text-decoration: none;
+}
+
+.audio-output-actions a:hover,
+.audio-output-actions button:hover {
+  border-color: #0284c7;
+  background: #e0f2fe;
+}
+
 .run-error-detail {
   border: 1px solid #fecaca;
   border-radius: 7px;
