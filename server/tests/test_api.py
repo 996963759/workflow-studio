@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from server.src.auth import AuthService, set_auth_service
 from server.src import main as api
 from server.src import runner
+from server.src.providers import aliyun
 from server.src.db import create_session_factory
 from server.src.jobs import RunJobQueue
 from server.src.knowledge import set_knowledge_session_factory
@@ -579,6 +580,38 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(tts_step["provider"], "阿里云 TTS - cosyvoice-v2")
         self.assertEqual(captured["runtime_config"]["api_key"], "sk-aliyun-workspace-key")
         self.assertEqual(captured["model"], "cosyvoice-v2")
+
+    def test_aliyun_tts_uses_speech_synthesizer_endpoint(self) -> None:
+        captured = {}
+
+        def fake_request_json(path, payload=None, headers=None, runtime_config=None):
+            captured["path"] = path
+            captured["payload"] = payload
+            captured["headers"] = headers
+            captured["runtime_config"] = runtime_config
+            return {"output": {"audio_url": "https://example.test/audio.mp3"}}
+
+        previous = aliyun._request_json
+        aliyun._request_json = fake_request_json
+        try:
+            audio_url, model = aliyun.run_tts(
+                "欢迎使用工作流",
+                "cosyvoice-v2",
+                "longxiaochun",
+                "mp3",
+                1.2,
+                {"api_key": "sk-test", "base_url": "https://dashscope.aliyuncs.com"},
+            )
+        finally:
+            aliyun._request_json = previous
+
+        self.assertEqual(audio_url, "https://example.test/audio.mp3")
+        self.assertEqual(model, "cosyvoice-v2")
+        self.assertEqual(captured["path"], "/api/v1/services/audio/tts/SpeechSynthesizer")
+        self.assertEqual(captured["payload"]["input"]["text"], "欢迎使用工作流")
+        self.assertEqual(captured["payload"]["input"]["voice"], "longxiaochun")
+        self.assertEqual(captured["payload"]["input"]["format"], "mp3")
+        self.assertEqual(captured["payload"]["input"]["rate"], 120)
 
 
 if __name__ == "__main__":

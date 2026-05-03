@@ -70,6 +70,8 @@ def _request_json(
 def _extract_audio_url(body: dict[str, Any]) -> str | None:
     output = body.get("output")
     if isinstance(output, dict):
+        if isinstance(output.get("audio_url"), str):
+            return output["audio_url"]
         audio = output.get("audio")
         if isinstance(audio, dict) and isinstance(audio.get("url"), str):
             return audio["url"]
@@ -86,18 +88,17 @@ def run_tts(
     speech_rate: float = 1.0,
     runtime_config: dict[str, str | bool] | None = None,
 ) -> tuple[str, str]:
+    rate = int(round(float(speech_rate or 1.0) * 100))
     payload = {
         "model": model or DEFAULT_TTS_MODEL,
         "input": {
             "text": text,
             "voice": voice or "longxiaochun",
-        },
-        "parameters": {
             "format": audio_format or "mp3",
-            "speech_rate": speech_rate,
+            "rate": max(50, min(rate, 200)),
         },
     }
-    body = _request_json("/api/v1/services/aigc/multimodal-generation/generation", payload, runtime_config=runtime_config)
+    body = _request_json("/api/v1/services/audio/tts/SpeechSynthesizer", payload, runtime_config=runtime_config)
     audio_url = _extract_audio_url(body)
     if not audio_url:
         raise AliyunProviderError(f"DashScope TTS response did not include audio url: {json.dumps(body, ensure_ascii=False)[:300]}")
