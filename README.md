@@ -249,8 +249,11 @@ http://127.0.0.1:8000/api/health
 - `ALIYUN_IMAGE_MODEL`：阿里云图片生成模型，默认 `wanx2.1-t2i-turbo`
 - `WORKFLOW_STUDIO_DB`：SQLite 数据库路径
 - `DATABASE_URL`：完整数据库连接串；配置后优先于 `WORKFLOW_STUDIO_DB`，可使用 PostgreSQL，例如 `postgresql+psycopg://user:password@localhost:5432/workflow_studio`
-- `RUN_JOB_QUEUE_BACKEND`：异步队列模式；本地默认 `thread`，生产推荐 `redis`，无 Redis 时可用 `database`
+- `RUN_JOB_QUEUE_BACKEND`：异步队列模式；本地默认 `thread`，可选 `database` / `redis` / `kafka`，Docker Compose 默认 `kafka`
 - `REDIS_URL`：Redis 队列地址，生产 Docker Compose 默认使用 `redis://redis:6379/0`
+- `KAFKA_BOOTSTRAP_SERVERS`：Kafka 地址，Docker Compose 默认 `kafka:9092`
+- `KAFKA_RUN_JOB_TOPIC`：Kafka 任务 Topic，默认 `workflow-studio-run-jobs`
+- `KAFKA_CONSUMER_GROUP`：Worker 消费组，默认 `workflow-studio-workers`
 - `LOG_LEVEL`：后端日志级别，默认 `INFO`
 - `CORS_ORIGINS`：允许访问 API 的前端地址
 - `EXTERNAL_RAG_ENABLED`：是否启用 PaiSmart 外部 RAG，默认 `false`
@@ -287,7 +290,7 @@ server\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "描述变
 docker compose up --build
 ```
 
-容器会启动 PostgreSQL、Redis、FastAPI API 和独立 Worker。API 会自动执行 Alembic 迁移，异步任务会先落库再进入 Redis 队列；如果 Worker 或服务重启，未完成任务会自动重新入队。
+容器会启动 PostgreSQL、Redis、Kafka、FastAPI API 和独立 Worker。API 会自动执行 Alembic 迁移，异步任务会先落库再把 `job_id` 发布到 Kafka；如果 Worker 或服务重启，未完成任务会自动重新入队。Redis 仍保留为可选队列后端。
 
 访问：
 

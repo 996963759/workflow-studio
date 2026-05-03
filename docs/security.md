@@ -10,7 +10,7 @@
 - 单个知识文档限制为 1MB。
 - 模型 API Key 通过环境变量配置，不返回给前端。
 - 团队空间级模型 API Key 会在后端做本地保护存储，前端只返回掩码，不回显完整 Key。
-- Docker Compose 部署默认使用 PostgreSQL 和 Redis，异步任务状态会落库，Worker 重启后可恢复未完成任务。
+- Docker Compose 部署默认使用 PostgreSQL、Kafka 和独立 Worker，异步任务状态会落库，Worker 重启后可恢复未完成任务。
 - 团队空间级审计日志会记录关键写操作和运行入队操作。
 
 ## 当前边界
@@ -25,7 +25,7 @@
 ## 生产化建议
 
 - 生产环境使用 PostgreSQL，并设置高强度 `POSTGRES_PASSWORD` 和 `MODEL_CONFIG_SECRET`。
-- 生产异步任务使用 Redis + 独立 Worker，并为 Redis/PostgreSQL 设置持久卷和备份。
+- 生产异步任务使用 Kafka 或 Redis + 独立 Worker，并为消息队列/PostgreSQL 设置持久卷、备份和监控。
 - 增加 token 过期、刷新和撤销策略。
 - 增加成员邀请和管理员后台。
 - 部署时使用 HTTPS 和反向代理。

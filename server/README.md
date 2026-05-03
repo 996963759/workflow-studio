@@ -29,7 +29,7 @@ Manual backend run:
 server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 --port 8000
 ```
 
-Manual worker run when `RUN_JOB_QUEUE_BACKEND=database` or `redis`:
+Manual worker run when `RUN_JOB_QUEUE_BACKEND=database`, `redis`, or `kafka`:
 
 ```powershell
 server\.venv\Scripts\python.exe -m server.src.worker
@@ -68,8 +68,11 @@ Additional environment variables:
 
 - `WORKFLOW_STUDIO_DB`: SQLite database path
 - `DATABASE_URL`: full SQLAlchemy database URL; overrides `WORKFLOW_STUDIO_DB`
-- `RUN_JOB_QUEUE_BACKEND`: `thread`, `database`, or `redis`
+- `RUN_JOB_QUEUE_BACKEND`: `thread`, `database`, `redis`, or `kafka`
 - `REDIS_URL`: Redis URL used by the `redis` queue backend
+- `KAFKA_BOOTSTRAP_SERVERS`: Kafka bootstrap servers used by the `kafka` queue backend
+- `KAFKA_RUN_JOB_TOPIC`: Kafka topic for run job IDs
+- `KAFKA_CONSUMER_GROUP`: Kafka worker consumer group
 - `DASHSCOPE_API_KEY`: enables Alibaba Cloud TTS and image generation nodes
 - `ALIYUN_TTS_MODEL`: default TTS model, `cosyvoice-v2`
 - `ALIYUN_IMAGE_MODEL`: default image model, `wanx2.1-t2i-turbo`

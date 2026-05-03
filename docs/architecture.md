@@ -43,7 +43,7 @@ flowchart LR
 - 工作流创建和更新会自动生成版本快照，也支持手动保存版本和恢复指定版本。
 - 审计日志记录工作流、团队成员、模型配置和运行入队等关键操作，按团队空间查询。
 - 团队空间可以保存 DeepSeek 模型配置；API Key 后端保护存储，前端只显示掩码，工作流运行时优先使用空间配置。
-- 异步运行队列支持三种模式：`thread` 用于本地开发，`database` 用于无 Redis 的持久队列，`redis` 用于 Docker Compose 生产化部署。
+- 异步运行队列支持四种模式：`thread` 用于本地开发，`database` 用于无消息队列的持久轮询，`redis` 用于轻量队列，`kafka` 用于 Docker Compose 默认部署。
 - 队列任务会先写入 `run_jobs` 表。Worker 启动时会把未完成的 running 任务重新入队，避免服务重启后卡死。
 - 知识库使用 Markdown/TXT 文件保存原文，同时在数据库中保存哈希向量索引，检索时混合关键词分和余弦相似度。
 - 知识检索节点也可以选择 PaiSmart 外部 RAG，后端通过 `/api/v1/search/hybrid` 拉取检索片段；失败时回退本地知识库。
@@ -55,7 +55,7 @@ sequenceDiagram
   participant UI as 前端
   participant API as FastAPI
   participant DB as SQLite/PostgreSQL
-  participant Queue as Redis/DB 队列
+  participant Queue as Kafka/Redis/DB 队列
   participant Worker as Worker
   participant Runner as 执行器
   UI->>API: POST /api/workflows/{id}/run-jobs

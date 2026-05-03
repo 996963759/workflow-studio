@@ -11,7 +11,21 @@ except ImportError:  # pragma: no cover - local SQLite tests do not need Redis.
     class RedisError(Exception):
         pass
 
+try:
+    from kafka import KafkaConsumer, KafkaProducer
+    from kafka.errors import KafkaError
+except ImportError:  # pragma: no cover - local SQLite tests do not need Kafka.
+    KafkaConsumer = None  # type: ignore[assignment]
+    KafkaProducer = None  # type: ignore[assignment]
+
+    class KafkaError(Exception):
+        pass
+
 from .config import (
+    KAFKA_BOOTSTRAP_SERVERS,
+    KAFKA_CONSUMER_GROUP,
+    KAFKA_POLL_TIMEOUT_MS,
+    KAFKA_RUN_JOB_TOPIC,
     REDIS_RUN_JOB_QUEUE,
     REDIS_URL,
     RUN_JOB_POLL_INTERVAL_SECONDS,
@@ -34,11 +48,21 @@ class RunJobQueue:
         backend: str = RUN_JOB_QUEUE_BACKEND,
         redis_url: str = REDIS_URL,
         redis_queue: str = REDIS_RUN_JOB_QUEUE,
+        kafka_bootstrap_servers: str = KAFKA_BOOTSTRAP_SERVERS,
+        kafka_topic: str = KAFKA_RUN_JOB_TOPIC,
+        kafka_consumer_group: str = KAFKA_CONSUMER_GROUP,
+        kafka_poll_timeout_ms: int = KAFKA_POLL_TIMEOUT_MS,
     ) -> None:
         self.store = store
         self.backend = backend
         self.redis_queue = redis_queue
+        self.kafka_bootstrap_servers = kafka_bootstrap_servers
+        self.kafka_topic = kafka_topic
+        self.kafka_consumer_group = kafka_consumer_group
+        self.kafka_poll_timeout_ms = kafka_poll_timeout_ms
         self.redis_client = self._create_redis_client(redis_url) if backend == "redis" else None
+        self.kafka_producer = self._create_kafka_producer(kafka_bootstrap_servers) if backend == "kafka" else None
+        self.kafka_consumer = None
 
     def _create_redis_client(self, redis_url: str):
         if Redis is None:
@@ -46,6 +70,37 @@ class RunJobQueue:
             self.backend = "database"
             return None
         return Redis.from_url(redis_url, decode_responses=True)
+
+    def _create_kafka_producer(self, bootstrap_servers: str):
+        if KafkaProducer is None:
+            logger.warning("kafka-python package is not installed; falling back to database queue")
+            self.backend = "database"
+            return None
+        try:
+            return KafkaProducer(
+                bootstrap_servers=[server.strip() for server in bootstrap_servers.split(",") if server.strip()],
+                value_serializer=lambda value: value.encode("utf-8"),
+                acks="all",
+            )
+        except KafkaError:
+            logger.exception("failed to create kafka producer; falling back to database queue")
+            self.backend = "database"
+            return None
+
+    def _create_kafka_consumer(self):
+        if KafkaConsumer is None:
+            logger.warning("kafka-python package is not installed; falling back to database queue")
+            self.backend = "database"
+            return None
+        return KafkaConsumer(
+            self.kafka_topic,
+            bootstrap_servers=[server.strip() for server in self.kafka_bootstrap_servers.split(",") if server.strip()],
+            group_id=self.kafka_consumer_group,
+            enable_auto_commit=False,
+            auto_offset_reset="earliest",
+            value_deserializer=lambda value: value.decode("utf-8"),
+            consumer_timeout_ms=self.kafka_poll_timeout_ms,
+        )
 
     def enqueue(self, user_id: str, workspace_id: str, workflow_id: str, input_text: str) -> RunJobRecord:
         job = self.store.create_run_job(user_id, workspace_id, workflow_id, input_text)
@@ -56,6 +111,12 @@ class RunJobQueue:
                 self.redis_client.lpush(self.redis_queue, job.id)  # type: ignore[union-attr]
             except RedisError:
                 logger.exception("failed to publish run job to redis; job stays queued job_id=%s", job.id)
+        elif self.backend == "kafka":
+            try:
+                future = self.kafka_producer.send(self.kafka_topic, job.id)  # type: ignore[union-attr]
+                future.get(timeout=10)
+            except KafkaError:
+                logger.exception("failed to publish run job to kafka; job stays queued job_id=%s", job.id)
         return job
 
     def run_job_by_id(self, job_id: str) -> bool:
@@ -134,4 +195,24 @@ class RunJobWorker:
                 return self.queue.run_next_queued_job()
             _, job_id = item
             return self.queue.run_job_by_id(job_id)
+        if self.queue.backend == "kafka":
+            if self.queue.kafka_consumer is None:
+                try:
+                    self.queue.kafka_consumer = self.queue._create_kafka_consumer()
+                except KafkaError:
+                    logger.exception("failed to create kafka consumer; falling back to database polling once")
+                    return self.queue.run_next_queued_job()
+            if self.queue.kafka_consumer is None:
+                return self.queue.run_next_queued_job()
+            try:
+                records = self.queue.kafka_consumer.poll(timeout_ms=self.queue.kafka_poll_timeout_ms, max_records=1)
+            except KafkaError:
+                logger.exception("kafka dequeue failed; falling back to database polling once")
+                return self.queue.run_next_queued_job()
+            for messages in records.values():
+                for message in messages:
+                    ran = self.queue.run_job_by_id(message.value)
+                    self.queue.kafka_consumer.commit()
+                    return ran
+            return self.queue.run_next_queued_job()
         return self.queue.run_next_queued_job()

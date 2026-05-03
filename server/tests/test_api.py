@@ -12,7 +12,7 @@ from server.src import main as api
 from server.src import runner
 from server.src.providers import aliyun
 from server.src.db import create_session_factory
-from server.src.jobs import RunJobQueue
+from server.src.jobs import RunJobQueue, RunJobWorker
 from server.src.knowledge import set_knowledge_session_factory
 from server.src.storage import WorkflowStore
 
@@ -257,6 +257,54 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(job.status, "queued")
 
         self.assertTrue(queue.run_next_queued_job())
+        latest = self.client.get(f"/api/run-jobs/{job.id}", headers=self.auth_headers).json()
+        self.assertEqual(latest["status"], "succeeded")
+        self.assertTrue(latest["run_id"])
+
+    def test_kafka_queue_publishes_and_worker_claims_job(self) -> None:
+        created = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers).json()
+        user = self.client.get("/api/auth/me", headers=self.auth_headers).json()
+        workspace = self.client.get("/api/workspaces", headers=self.auth_headers).json()[0]
+
+        class FakeFuture:
+            def get(self, timeout=None):
+                return None
+
+        class FakeProducer:
+            def __init__(self):
+                self.messages = []
+
+            def send(self, topic, value):
+                self.messages.append((topic, value))
+                return FakeFuture()
+
+        class FakeConsumer:
+            def __init__(self, job_id):
+                self.job_id = job_id
+                self.committed = False
+
+            def poll(self, timeout_ms=None, max_records=None):
+                if not self.job_id:
+                    return {}
+                job_id = self.job_id
+                self.job_id = ""
+                return {"partition-0": [type("Message", (), {"value": job_id})()]}
+
+            def commit(self):
+                self.committed = True
+
+        queue = RunJobQueue(api.store, backend="database")
+        queue.backend = "kafka"
+        producer = FakeProducer()
+        queue.kafka_producer = producer
+        job = queue.enqueue(user["id"], workspace["id"], created["id"], "Kafka 队列运行")
+
+        self.assertEqual(producer.messages, [(queue.kafka_topic, job.id)])
+        queue.kafka_consumer = FakeConsumer(job.id)
+        worker = RunJobWorker(queue)
+
+        self.assertTrue(worker._run_once())
+        self.assertTrue(queue.kafka_consumer.committed)
         latest = self.client.get(f"/api/run-jobs/{job.id}", headers=self.auth_headers).json()
         self.assertEqual(latest["status"], "succeeded")
         self.assertTrue(latest["run_id"])

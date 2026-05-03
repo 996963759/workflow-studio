@@ -26,6 +26,26 @@ services:
       retries: 5
     restart: unless-stopped
 
+  kafka:
+    image: bitnami/kafka:4.0
+    environment:
+      KAFKA_ENABLE_KRAFT: "yes"
+      KAFKA_CFG_PROCESS_ROLES: broker,controller
+      KAFKA_CFG_NODE_ID: 1
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -35,6 +55,8 @@ services:
       db:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
     ports:
       - "8000:8000"
@@ -58,8 +80,11 @@ services:
       PAISMART_TOKEN: ${PAISMART_TOKEN:-}
       PAISMART_TIMEOUT_SECONDS: ${PAISMART_TIMEOUT_SECONDS:-12}
       MODEL_CONFIG_SECRET: ${MODEL_CONFIG_SECRET:-workflow-studio-local-model-config-secret}
-      RUN_JOB_QUEUE_BACKEND: ${RUN_JOB_QUEUE_BACKEND:-redis}
+      RUN_JOB_QUEUE_BACKEND: ${RUN_JOB_QUEUE_BACKEND:-kafka}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      KAFKA_RUN_JOB_TOPIC: ${KAFKA_RUN_JOB_TOPIC:-workflow-studio-run-jobs}
+      KAFKA_CONSUMER_GROUP: ${KAFKA_CONSUMER_GROUP:-workflow-studio-workers}
     volumes:
       - ./server/data:/app/server/data
     healthcheck:
@@ -78,6 +103,8 @@ services:
       db:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
       api:
         condition: service_healthy
@@ -101,8 +128,11 @@ services:
       PAISMART_TOKEN: ${PAISMART_TOKEN:-}
       PAISMART_TIMEOUT_SECONDS: ${PAISMART_TIMEOUT_SECONDS:-12}
       MODEL_CONFIG_SECRET: ${MODEL_CONFIG_SECRET:-workflow-studio-local-model-config-secret}
-      RUN_JOB_QUEUE_BACKEND: ${RUN_JOB_QUEUE_BACKEND:-redis}
+      RUN_JOB_QUEUE_BACKEND: ${RUN_JOB_QUEUE_BACKEND:-kafka}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      KAFKA_RUN_JOB_TOPIC: ${KAFKA_RUN_JOB_TOPIC:-workflow-studio-run-jobs}
+      KAFKA_CONSUMER_GROUP: ${KAFKA_CONSUMER_GROUP:-workflow-studio-workers}
       RUN_JOB_WORKERS: ${RUN_JOB_WORKERS:-2}
     volumes:
       - ./server/data:/app/server/data

@@ -15,11 +15,11 @@
 - 用户级知识库
 - 本地账号和多用户隔离
 - 团队空间和 owner/editor/viewer 角色权限
-- 异步运行队列，支持本地线程、数据库轮询和 Redis + Worker 部署
+- 异步运行队列，支持本地线程、数据库轮询、Redis + Worker 和 Kafka + Worker 部署
 - 本地哈希向量知识库和 PaiSmart 外部 RAG 适配
 - SQLAlchemy ORM
 - Alembic 数据库迁移
-- Docker Compose，包含 PostgreSQL、Redis、API 和 Worker
+- Docker Compose，包含 PostgreSQL、Redis、Kafka、API 和 Worker
 - unittest + smoke test + Playwright E2E
 
 ## 下一步建议
