@@ -407,7 +407,7 @@ def run_tts_node(
 ) -> tuple[str, str, str, str | None]:
     text = render_template(data.get("ttsText") or data.get("prompt"), context).strip()
     model = str(data.get("ttsModel") or (runtime_config or {}).get("model") or os.getenv("ALIYUN_TTS_MODEL") or "cosyvoice-v2")
-    voice = str(data.get("ttsVoice") or "longxiaochun")
+    voice = str(data.get("ttsVoice") or os.getenv("ALIYUN_TTS_VOICE") or "longxiaochun_v2")
     audio_format = str(data.get("audioFormat") or "mp3")
     speech_rate = clamp_number(data.get("speechRate"), 1.0, 0.5, 2.0)
     step_input = f"文本：{text or '未配置文本'}\n音色：{voice}\n格式：{audio_format}\n语速：{speech_rate:g}"

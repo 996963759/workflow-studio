@@ -531,7 +531,7 @@ class ApiTestCase(unittest.TestCase):
 
         captured = {}
 
-        def fake_run_tts(text, model="cosyvoice-v2", voice="longxiaochun", audio_format="mp3", speech_rate=1.0, runtime_config=None):
+        def fake_run_tts(text, model="cosyvoice-v2", voice="longxiaochun_v2", audio_format="mp3", speech_rate=1.0, runtime_config=None):
             captured["runtime_config"] = runtime_config
             captured["model"] = model
             return "https://example.test/audio.mp3", model
@@ -609,9 +609,25 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(model, "cosyvoice-v2")
         self.assertEqual(captured["path"], "/api/v1/services/audio/tts/SpeechSynthesizer")
         self.assertEqual(captured["payload"]["input"]["text"], "欢迎使用工作流")
-        self.assertEqual(captured["payload"]["input"]["voice"], "longxiaochun")
+        self.assertEqual(captured["payload"]["input"]["voice"], "longxiaochun_v2")
         self.assertEqual(captured["payload"]["input"]["format"], "mp3")
         self.assertEqual(captured["payload"]["input"]["rate"], 120)
+
+    def test_aliyun_tts_keeps_v1_voice_for_v1_model(self) -> None:
+        captured = {}
+
+        def fake_request_json(path, payload=None, headers=None, runtime_config=None):
+            captured["payload"] = payload
+            return {"output": {"audio_url": "https://example.test/audio.mp3"}}
+
+        previous = aliyun._request_json
+        aliyun._request_json = fake_request_json
+        try:
+            aliyun.run_tts("欢迎使用工作流", "cosyvoice-v1", "longxiaochun", "mp3", 1.0, {"api_key": "sk-test"})
+        finally:
+            aliyun._request_json = previous
+
+        self.assertEqual(captured["payload"]["input"]["voice"], "longxiaochun")
 
 
 if __name__ == "__main__":

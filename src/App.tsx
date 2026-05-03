@@ -413,7 +413,7 @@ const nodeMeta: Record<
       label: '文字转语音',
       description: '调用阿里云百炼 CosyVoice，把文本合成为音频。',
       ttsModel: 'cosyvoice-v2',
-      ttsVoice: 'longxiaochun',
+      ttsVoice: 'longxiaochun_v2',
       audioFormat: 'mp3',
       speechRate: 1,
       ttsText: '{{draft}}',
@@ -604,7 +604,7 @@ const workflowTemplates: WorkflowTemplate[] = [
           description: '把大模型生成的口播文案转成音频地址。',
           ttsText: '{{speech_text}}',
           ttsModel: 'cosyvoice-v2',
-          ttsVoice: 'longxiaochun',
+          ttsVoice: 'longxiaochun_v2',
           audioFormat: 'mp3',
           speechRate: 1,
           outputKey: 'audio_url',
@@ -3789,7 +3789,7 @@ function App() {
               <label>
                 音色
                 <input
-                  value={selectedNode.data.ttsVoice ?? 'longxiaochun'}
+                  value={selectedNode.data.ttsVoice ?? 'longxiaochun_v2'}
                   onChange={(event) => updateSelectedNode({ ttsVoice: event.target.value })}
                 />
               </label>

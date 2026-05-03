@@ -12,6 +12,7 @@ DASHSCOPE_POLL_INTERVAL_SECONDS = float(os.getenv("DASHSCOPE_POLL_INTERVAL_SECON
 DASHSCOPE_MAX_POLL_SECONDS = float(os.getenv("DASHSCOPE_MAX_POLL_SECONDS", "90"))
 DEFAULT_TTS_MODEL = os.getenv("ALIYUN_TTS_MODEL", "cosyvoice-v2")
 DEFAULT_IMAGE_MODEL = os.getenv("ALIYUN_IMAGE_MODEL", "wanx2.1-t2i-turbo")
+DEFAULT_TTS_VOICE = os.getenv("ALIYUN_TTS_VOICE", "longxiaochun_v2")
 
 
 class AliyunProviderError(RuntimeError):
@@ -80,20 +81,29 @@ def _extract_audio_url(body: dict[str, Any]) -> str | None:
     return None
 
 
+def normalize_tts_voice(model: str, voice: str | None) -> str:
+    normalized_model = (model or DEFAULT_TTS_MODEL).strip()
+    normalized_voice = (voice or DEFAULT_TTS_VOICE).strip()
+    if normalized_model.endswith("-v2") and normalized_voice and not normalized_voice.endswith("_v2"):
+        return f"{normalized_voice}_v2"
+    return normalized_voice or DEFAULT_TTS_VOICE
+
+
 def run_tts(
     text: str,
     model: str = DEFAULT_TTS_MODEL,
-    voice: str = "longxiaochun",
+    voice: str = DEFAULT_TTS_VOICE,
     audio_format: str = "mp3",
     speech_rate: float = 1.0,
     runtime_config: dict[str, str | bool] | None = None,
 ) -> tuple[str, str]:
     rate = int(round(float(speech_rate or 1.0) * 100))
+    used_model = model or DEFAULT_TTS_MODEL
     payload = {
-        "model": model or DEFAULT_TTS_MODEL,
+        "model": used_model,
         "input": {
             "text": text,
-            "voice": voice or "longxiaochun",
+            "voice": normalize_tts_voice(used_model, voice),
             "format": audio_format or "mp3",
             "rate": max(50, min(rate, 200)),
         },
