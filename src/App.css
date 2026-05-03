@@ -907,6 +907,13 @@
   color: #92400e;
 }
 
+.inspector-note {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+  margin: -3px 0 11px;
+}
+
 .insert-row {
   display: flex;
   flex-wrap: wrap;

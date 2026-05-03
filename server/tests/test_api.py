@@ -487,6 +487,89 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(steps[2]["provider"], "模拟输出")
         self.assertIn("阿里云图片生成未配置 Key", steps[2]["output"])
 
+    def test_orchestration_nodes_transform_and_aggregate_context(self) -> None:
+        workflow = {
+            **valid_workflow(),
+            "nodes": [
+                {
+                    "id": "input-1",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"kind": "input", "label": "用户输入", "outputKey": "user_request"},
+                },
+                {
+                    "id": "assign-1",
+                    "position": {"x": 220, "y": 0},
+                    "data": {
+                        "kind": "assign",
+                        "label": "变量赋值",
+                        "assignmentValue": '{"items":["{{user_request}}","复盘"]}',
+                        "outputKey": "raw_json",
+                    },
+                },
+                {
+                    "id": "json-1",
+                    "position": {"x": 440, "y": 0},
+                    "data": {"kind": "json", "label": "JSON 解析", "jsonSource": "{{raw_json}}", "jsonPath": "items", "outputKey": "items"},
+                },
+                {
+                    "id": "loop-1",
+                    "position": {"x": 660, "y": 0},
+                    "data": {
+                        "kind": "loop",
+                        "label": "循环迭代",
+                        "loopItems": "{{items}}",
+                        "loopTemplate": "{{index}}. {{item}}",
+                        "loopSeparator": "\n",
+                        "outputKey": "loop_result",
+                    },
+                },
+                {
+                    "id": "code-1",
+                    "position": {"x": 880, "y": 0},
+                    "data": {"kind": "code", "label": "代码执行", "codeExpression": "upper(user_request)", "outputKey": "upper_text"},
+                },
+                {
+                    "id": "template-1",
+                    "position": {"x": 1100, "y": 0},
+                    "data": {"kind": "template", "label": "文本模板", "templateText": "{{loop_result}}\n{{upper_text}}", "outputKey": "templated"},
+                },
+                {
+                    "id": "aggregate-1",
+                    "position": {"x": 1320, "y": 0},
+                    "data": {
+                        "kind": "aggregate",
+                        "label": "结果聚合",
+                        "aggregateVariables": "templated, upper_text",
+                        "aggregateSeparator": "\n---\n",
+                        "outputKey": "answer",
+                    },
+                },
+                {
+                    "id": "output-1",
+                    "position": {"x": 1540, "y": 0},
+                    "data": {"kind": "output", "label": "最终回答", "prompt": "{{answer}}", "outputKey": "final"},
+                },
+            ],
+            "edges": [
+                {"id": "e1", "source": "input-1", "target": "assign-1"},
+                {"id": "e2", "source": "assign-1", "target": "json-1"},
+                {"id": "e3", "source": "json-1", "target": "loop-1"},
+                {"id": "e4", "source": "loop-1", "target": "code-1"},
+                {"id": "e5", "source": "code-1", "target": "template-1"},
+                {"id": "e6", "source": "template-1", "target": "aggregate-1"},
+                {"id": "e7", "source": "aggregate-1", "target": "output-1"},
+            ],
+        }
+
+        run = self.client.post(
+            "/api/runs",
+            json={"workflow": workflow, "input_text": "hello"},
+            headers=self.auth_headers,
+        )
+        self.assertEqual(run.status_code, 200)
+        steps = run.json()["steps"]
+        self.assertEqual(steps[-1]["output"], "1. hello\n2. 复盘\nHELLO\n---\nHELLO")
+
     def test_workspace_model_config_masks_key_and_is_used_by_runner(self) -> None:
         save_response = self.client.put(
             "/api/model-configs/deepseek",

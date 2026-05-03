@@ -190,6 +190,100 @@ def parse_json_object(value: str, fallback: dict[str, Any] | None = None) -> dic
     return parsed
 
 
+def format_workflow_value(value: Any) -> str:
+    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2)
+
+
+def parse_json_path_value(source: str, path: str) -> Any:
+    parsed = json.loads(source)
+    normalized_path = path.strip()
+    if not normalized_path:
+        return parsed
+    current: Any = parsed
+    for part in normalized_path.split("."):
+        if isinstance(current, list):
+            current = current[int(part)]
+        elif isinstance(current, dict):
+            current = current.get(part)
+        else:
+            return None
+    return current
+
+
+def run_code_expression(expression: str, context: dict[str, str]) -> str:
+    helpers = {
+        "upper": lambda value: value.upper(),
+        "lower": lambda value: value.lower(),
+        "trim": lambda value: value.strip(),
+        "length": lambda value: str(len(value)),
+    }
+    text = expression.strip()
+    if text.endswith(")") and "(" in text:
+        name, argument = text[:-1].split("(", 1)
+        if name in helpers:
+            return helpers[name](context.get(argument.strip(), ""))
+        raise ValueError(f"Unsupported expression function: {name}")
+    return render_template(expression, context)
+
+
+def parse_loop_items(value: str) -> list[str]:
+    text = value.strip()
+    if not text:
+        return []
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            return [format_workflow_value(item) for item in parsed]
+    except json.JSONDecodeError:
+        pass
+    return [item.strip() for item in text.replace(",", "\n").splitlines() if item.strip()]
+
+
+def run_assign_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, str]:
+    template = str(data.get("assignmentValue") or "")
+    return render_template(template, context), template or "未配置赋值内容"
+
+
+def run_template_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, str]:
+    template = str(data.get("templateText") or "")
+    return render_template(template, context), template or "未配置模板"
+
+
+def run_json_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, str]:
+    source = render_template(data.get("jsonSource"), context)
+    path = str(data.get("jsonPath") or "")
+    value = parse_json_path_value(source, path)
+    return format_workflow_value(value), f"路径：{path or '(整个 JSON)'}\n{source}"
+
+
+def run_code_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, str]:
+    expression = str(data.get("codeExpression") or "")
+    return run_code_expression(expression, context), expression or "未配置表达式"
+
+
+def run_loop_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, str]:
+    rendered_items = render_template(data.get("loopItems"), context)
+    items = parse_loop_items(rendered_items)
+    template = str(data.get("loopTemplate") or "{{item}}")
+    separator = str(data.get("loopSeparator") if data.get("loopSeparator") is not None else "\n")
+    output = separator.join(
+        render_template(template, {**context, "item": item, "index": str(index)})
+        for index, item in enumerate(items, start=1)
+    )
+    return output or "没有可迭代内容。", rendered_items or "未配置列表来源"
+
+
+def run_aggregate_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, str]:
+    names = [
+        item.strip()
+        for item in str(data.get("aggregateVariables") or "").replace(",", "\n").splitlines()
+        if item.strip()
+    ]
+    separator = str(data.get("aggregateSeparator") if data.get("aggregateSeparator") is not None else "\n\n")
+    output = separator.join(context.get(name, "") for name in names if context.get(name, ""))
+    return output or "没有聚合到变量内容。", ", ".join(names) or "未配置聚合变量"
+
+
 def is_allowed_tool_url(url: str) -> bool:
     parsed = urlparse(url)
     return parsed.scheme in {"http", "https"} and parsed.hostname in ALLOWED_TOOL_HOSTS
@@ -499,6 +593,30 @@ def simulate_run(
             step_input = "用户请求"
         elif kind == "knowledge":
             output, step_input, provider = run_knowledge_node(data, context, input_text, user_id, workspace_id)
+        elif kind == "assign":
+            output, step_input = run_assign_node(data, context)
+        elif kind == "template":
+            output, step_input = run_template_node(data, context)
+        elif kind == "json":
+            try:
+                output, step_input = run_json_node(data, context)
+            except (json.JSONDecodeError, ValueError, TypeError, IndexError) as error:
+                output = "JSON 解析失败。"
+                step_input = render_template(data.get("jsonSource"), context) or "未配置 JSON 来源"
+                error = summarize_error(error)
+                status = "error"
+        elif kind == "code":
+            try:
+                output, step_input = run_code_node(data, context)
+            except ValueError as run_error:
+                output = "代码表达式执行失败。"
+                step_input = str(data.get("codeExpression") or "未配置表达式")
+                error = summarize_error(run_error)
+                status = "error"
+        elif kind == "loop":
+            output, step_input = run_loop_node(data, context)
+        elif kind == "aggregate":
+            output, step_input = run_aggregate_node(data, context)
         elif kind == "llm":
             output, step_input, provider, error = run_llm_node(data, context, model_configs)
         elif kind == "tts":

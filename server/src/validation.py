@@ -151,6 +151,36 @@ def validate_workflow(payload: WorkflowPayload) -> WorkflowValidationResult:
                     )
                 )
 
+        if data.get("kind") == "json" and not str(data.get("jsonSource") or "").strip():
+            errors.append(
+                WorkflowIssue(
+                    id=f"json-source-{current_id}",
+                    level="error",
+                    node_id=current_id,
+                    message=f"JSON 解析节点「{node_label(node)}」需要填写 JSON 来源。",
+                )
+            )
+
+        if data.get("kind") == "code" and not str(data.get("codeExpression") or "").strip():
+            errors.append(
+                WorkflowIssue(
+                    id=f"code-expression-{current_id}",
+                    level="error",
+                    node_id=current_id,
+                    message=f"代码执行节点「{node_label(node)}」需要填写表达式。",
+                )
+            )
+
+        if data.get("kind") == "loop" and not str(data.get("loopItems") or "").strip():
+            errors.append(
+                WorkflowIssue(
+                    id=f"loop-items-{current_id}",
+                    level="error",
+                    node_id=current_id,
+                    message=f"循环节点「{node_label(node)}」需要填写列表来源。",
+                )
+            )
+
         if data.get("kind") == "tts":
             if not str(data.get("ttsText") or data.get("prompt") or "").strip():
                 warnings.append(

@@ -47,7 +47,21 @@ import '@xyflow/react/dist/style.css'
 import './App.css'
 import { AuthView } from './components/AuthView'
 
-type NodeKind = 'input' | 'llm' | 'knowledge' | 'tool' | 'tts' | 'image' | 'condition' | 'output'
+type NodeKind =
+  | 'input'
+  | 'assign'
+  | 'template'
+  | 'json'
+  | 'code'
+  | 'loop'
+  | 'aggregate'
+  | 'llm'
+  | 'knowledge'
+  | 'tool'
+  | 'tts'
+  | 'image'
+  | 'condition'
+  | 'output'
 type ConditionOperator = 'contains' | 'equals' | 'not_empty'
 type FailurePolicy = 'stop' | 'continue' | 'skip_downstream'
 type KnowledgeProvider = 'local' | 'paismart'
@@ -62,6 +76,16 @@ type WorkflowNodeData = {
   timeoutSeconds?: number
   systemPrompt?: string
   prompt?: string
+  assignmentValue?: string
+  templateText?: string
+  jsonSource?: string
+  jsonPath?: string
+  codeExpression?: string
+  loopItems?: string
+  loopTemplate?: string
+  loopSeparator?: string
+  aggregateVariables?: string
+  aggregateSeparator?: string
   query?: string
   topK?: number
   knowledgeProvider?: KnowledgeProvider
@@ -361,6 +385,86 @@ const nodeMeta: Record<
       description: '收集主题、受众和输出格式要求。',
       sampleInput: '总结用户反馈，并生成按优先级排序的产品行动项。',
       outputKey: 'user_request',
+    },
+  },
+  assign: {
+    title: '变量赋值',
+    icon: Braces,
+    description: '写入固定或模板变量',
+    color: '#0f766e',
+    defaults: {
+      label: '变量赋值',
+      description: '把固定文本或模板渲染结果写入变量，供下游节点使用。',
+      assignmentValue: '处理主题：{{user_request}}',
+      outputKey: 'assigned_value',
+    },
+  },
+  template: {
+    title: '文本模板',
+    icon: Braces,
+    description: '拼装提示词或文本',
+    color: '#64748b',
+    defaults: {
+      label: '文本模板',
+      description: '把多个变量拼装成一段结构化文本。',
+      templateText: '用户需求：{{user_request}}\n处理结果：{{draft}}',
+      outputKey: 'templated_text',
+    },
+  },
+  json: {
+    title: 'JSON 解析',
+    icon: Code2,
+    description: '从 JSON 中提取字段',
+    color: '#0891b2',
+    defaults: {
+      label: 'JSON 解析',
+      description: '解析上游 JSON，并用路径提取字段，例如 items.0.title。',
+      jsonSource: '{{draft}}',
+      jsonPath: '',
+      outputKey: 'json_value',
+      failurePolicy: 'continue',
+      retryCount: 0,
+    },
+  },
+  code: {
+    title: '代码执行',
+    icon: TerminalSquare,
+    description: '执行受限表达式',
+    color: '#7c2d12',
+    defaults: {
+      label: '代码执行',
+      description: '执行受限 Python 表达式，可读取变量并做简单计算或格式化。',
+      codeExpression: "upper(user_request)",
+      outputKey: 'code_result',
+      failurePolicy: 'continue',
+      retryCount: 0,
+    },
+  },
+  loop: {
+    title: '循环迭代',
+    icon: RotateCcw,
+    description: '逐项渲染列表',
+    color: '#9333ea',
+    defaults: {
+      label: '循环迭代',
+      description: '按行或 JSON 数组遍历输入，每一项用模板渲染后合并。',
+      loopItems: '{{json_value}}',
+      loopTemplate: '- 第 {{index}} 项：{{item}}',
+      loopSeparator: '\n',
+      outputKey: 'loop_result',
+    },
+  },
+  aggregate: {
+    title: '结果聚合',
+    icon: ListChecks,
+    description: '合并多个变量',
+    color: '#475569',
+    defaults: {
+      label: '结果聚合',
+      description: '按变量名收集上游结果，合并成最终上下文。',
+      aggregateVariables: 'draft\nloop_result',
+      aggregateSeparator: '\n\n',
+      outputKey: 'aggregated_result',
     },
   },
   llm: {
@@ -1104,7 +1208,7 @@ const evaluateCondition = (rule: string | undefined, context: Record<string, str
   return { passed: !['false', '否', '不通过', '0'].includes(rendered), detail: `规则结果：${rendered}` }
 }
 
-const evaluateStructuredCondition = (data: WorkflowNodeData, context: Record<string, string>) => {
+  const evaluateStructuredCondition = (data: WorkflowNodeData, context: Record<string, string>) => {
   if (!data.conditionVariable && !data.conditionOperator) {
     return evaluateCondition(data.condition, context)
   }
@@ -1131,6 +1235,49 @@ const evaluateStructuredCondition = (data: WorkflowNodeData, context: Record<str
     passed: target.length === 0 ? true : value.includes(target),
     detail: `判断 {{${data.conditionVariable || '未选择变量'}}} 是否包含 "${target}"。`,
   }
+}
+
+const parseJsonPathValue = (source: string, path: string) => {
+  const parsed = JSON.parse(source)
+  const normalizedPath = path.trim()
+  if (!normalizedPath) return parsed
+  return normalizedPath.split('.').reduce((current: unknown, part) => {
+    if (current === undefined || current === null) return undefined
+    if (Array.isArray(current)) return current[Number(part)]
+    if (typeof current === 'object') return (current as Record<string, unknown>)[part]
+    return undefined
+  }, parsed as unknown)
+}
+
+const formatWorkflowValue = (value: unknown) =>
+  typeof value === 'string' ? value : JSON.stringify(value, null, 2)
+
+const evaluateCodeExpression = (expression: string, context: Record<string, string>) => {
+  const helpers: Record<string, (value: string) => string> = {
+    upper: (value) => value.toUpperCase(),
+    lower: (value) => value.toLowerCase(),
+    trim: (value) => value.trim(),
+    length: (value) => String(value.length),
+  }
+  const functionMatch = expression.trim().match(/^(\w+)\(([\w.-]+)\)$/)
+  if (functionMatch) {
+    const helper = helpers[functionMatch[1]]
+    if (!helper) throw new Error(`不支持的函数：${functionMatch[1]}`)
+    return helper(context[functionMatch[2]] ?? '')
+  }
+  return renderTemplate(expression, context)
+}
+
+const parseLoopItems = (value: string) => {
+  const trimmed = value.trim()
+  if (!trimmed) return [] as string[]
+  try {
+    const parsed = JSON.parse(trimmed)
+    if (Array.isArray(parsed)) return parsed.map((item) => formatWorkflowValue(item))
+  } catch {
+    // Fall through to line splitting.
+  }
+  return trimmed.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean)
 }
 
 const getConditionInputText = (data: WorkflowNodeData, context: Record<string, string>) => {
@@ -1182,6 +1329,24 @@ const validateNodeFields = (node: WorkflowNode): FieldIssue[] => {
 
   if (data.kind === 'llm' && !data.prompt?.trim()) {
     issues.push({ field: 'prompt', level: 'error', message: '大模型节点需要填写用户提示词。' })
+  }
+  if (data.kind === 'assign' && !data.assignmentValue?.trim()) {
+    issues.push({ field: 'assignmentValue', level: 'warning', message: '建议填写要赋值的文本或模板。' })
+  }
+  if (data.kind === 'template' && !data.templateText?.trim()) {
+    issues.push({ field: 'templateText', level: 'warning', message: '建议填写文本模板。' })
+  }
+  if (data.kind === 'json' && !data.jsonSource?.trim()) {
+    issues.push({ field: 'jsonSource', level: 'error', message: 'JSON 解析节点需要填写 JSON 来源。' })
+  }
+  if (data.kind === 'code' && !data.codeExpression?.trim()) {
+    issues.push({ field: 'codeExpression', level: 'error', message: '代码执行节点需要填写表达式。' })
+  }
+  if (data.kind === 'loop' && !data.loopItems?.trim()) {
+    issues.push({ field: 'loopItems', level: 'error', message: '循环节点需要填写列表来源。' })
+  }
+  if (data.kind === 'aggregate' && !data.aggregateVariables?.trim()) {
+    issues.push({ field: 'aggregateVariables', level: 'warning', message: '建议填写要聚合的变量名。' })
   }
   if (data.kind === 'llm') {
     if (data.temperature !== undefined && (Number.isNaN(data.temperature) || data.temperature < 0 || data.temperature > 2)) {
@@ -2115,6 +2280,13 @@ function App() {
     field:
       | 'prompt'
       | 'systemPrompt'
+      | 'assignmentValue'
+      | 'templateText'
+      | 'jsonSource'
+      | 'codeExpression'
+      | 'loopItems'
+      | 'loopTemplate'
+      | 'aggregateVariables'
       | 'query'
       | 'toolUrl'
       | 'toolHeaders'
@@ -3047,6 +3219,120 @@ function App() {
         return
       }
 
+      if (data.kind === 'assign') {
+        const output = renderTemplate(data.assignmentValue, context)
+        steps.push({
+          nodeId: node.id,
+          title: `${index + 1}. ${data.label}`,
+          status: 'done',
+          input: data.assignmentValue || '未配置赋值内容',
+          output,
+          variable: writeOutput(output),
+        })
+        return
+      }
+
+      if (data.kind === 'template') {
+        const output = renderTemplate(data.templateText, context)
+        steps.push({
+          nodeId: node.id,
+          title: `${index + 1}. ${data.label}`,
+          status: 'done',
+          input: data.templateText || '未配置模板',
+          output,
+          variable: writeOutput(output),
+        })
+        return
+      }
+
+      if (data.kind === 'json') {
+        const source = renderTemplate(data.jsonSource, context)
+        try {
+          const parsed = parseJsonPathValue(source, data.jsonPath ?? '')
+          const output = formatWorkflowValue(parsed)
+          steps.push({
+            nodeId: node.id,
+            title: `${index + 1}. ${data.label}`,
+            status: 'done',
+            input: `路径：${data.jsonPath || '(整个 JSON)'}\n${source}`,
+            output,
+            variable: writeOutput(output),
+          })
+        } catch (error) {
+          steps.push({
+            nodeId: node.id,
+            title: `${index + 1}. ${data.label}`,
+            status: 'error',
+            input: source || '未配置 JSON 来源',
+            output: 'JSON 解析失败。',
+            error: getErrorMessage(error, 'JSON 解析失败'),
+          })
+        }
+        return
+      }
+
+      if (data.kind === 'code') {
+        try {
+          const output = evaluateCodeExpression(data.codeExpression ?? '', context)
+          steps.push({
+            nodeId: node.id,
+            title: `${index + 1}. ${data.label}`,
+            status: 'done',
+            input: data.codeExpression || '未配置表达式',
+            output,
+            variable: writeOutput(output),
+          })
+        } catch (error) {
+          steps.push({
+            nodeId: node.id,
+            title: `${index + 1}. ${data.label}`,
+            status: 'error',
+            input: data.codeExpression || '未配置表达式',
+            output: '代码表达式执行失败。',
+            error: getErrorMessage(error, '代码表达式执行失败'),
+          })
+        }
+        return
+      }
+
+      if (data.kind === 'loop') {
+        const renderedItems = renderTemplate(data.loopItems, context)
+        const items = parseLoopItems(renderedItems)
+        const separator = data.loopSeparator ?? '\n'
+        const output = items
+          .map((item, itemIndex) =>
+            renderTemplate(data.loopTemplate || '{{item}}', {
+              ...context,
+              item,
+              index: String(itemIndex + 1),
+            }),
+          )
+          .join(separator)
+        steps.push({
+          nodeId: node.id,
+          title: `${index + 1}. ${data.label}`,
+          status: 'done',
+          input: renderedItems || '未配置列表来源',
+          output: output || '没有可迭代内容。',
+          variable: writeOutput(output),
+        })
+        return
+      }
+
+      if (data.kind === 'aggregate') {
+        const names = (data.aggregateVariables ?? '').split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean)
+        const output = names.map((name) => context[name] ?? '').filter(Boolean).join(data.aggregateSeparator ?? '\n\n')
+        steps.push({
+          nodeId: node.id,
+          title: `${index + 1}. ${data.label}`,
+          status: 'done',
+          input: names.join(', ') || '未配置聚合变量',
+          output: output || '没有聚合到变量内容。',
+          variable: writeOutput(output),
+        })
+        return
+      }
+
       if (data.kind === 'llm') {
         const systemPrompt = renderTemplate(data.systemPrompt, context)
         const prompt = renderTemplate(data.prompt, context)
@@ -3590,6 +3876,158 @@ function App() {
               onChange={(event) => updateSelectedNode({ description: event.target.value })}
             />
           </label>
+
+          {selectedNode.data.kind === 'assign' && (
+            <>
+              <label>
+                赋值内容
+                <textarea
+                  rows={4}
+                  value={selectedNode.data.assignmentValue ?? ''}
+                  onChange={(event) => updateSelectedNode({ assignmentValue: event.target.value })}
+                />
+                {renderFieldIssues('assignmentValue')}
+              </label>
+              <div className="insert-row">
+                {variableKeys.map((variable) => (
+                  <button key={variable} type="button" onClick={() => appendToSelectedField('assignmentValue', variable)}>
+                    {`{{${variable}}}`}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          {selectedNode.data.kind === 'template' && (
+            <>
+              <label>
+                文本模板
+                <textarea
+                  rows={6}
+                  value={selectedNode.data.templateText ?? ''}
+                  onChange={(event) => updateSelectedNode({ templateText: event.target.value })}
+                />
+                {renderFieldIssues('templateText')}
+              </label>
+              <div className="insert-row">
+                {variableKeys.map((variable) => (
+                  <button key={variable} type="button" onClick={() => appendToSelectedField('templateText', variable)}>
+                    {`{{${variable}}}`}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          {selectedNode.data.kind === 'json' && (
+            <>
+              <label>
+                JSON 来源
+                <textarea
+                  rows={5}
+                  value={selectedNode.data.jsonSource ?? ''}
+                  onChange={(event) => updateSelectedNode({ jsonSource: event.target.value })}
+                />
+                {renderFieldIssues('jsonSource')}
+              </label>
+              <div className="insert-row">
+                {variableKeys.map((variable) => (
+                  <button key={variable} type="button" onClick={() => appendToSelectedField('jsonSource', variable)}>
+                    {`{{${variable}}}`}
+                  </button>
+                ))}
+              </div>
+              <label>
+                提取路径
+                <input
+                  value={selectedNode.data.jsonPath ?? ''}
+                  onChange={(event) => updateSelectedNode({ jsonPath: event.target.value })}
+                  placeholder="例如：items.0.title，留空返回整个 JSON"
+                />
+              </label>
+            </>
+          )}
+
+          {selectedNode.data.kind === 'code' && (
+            <>
+              <label>
+                受限表达式
+                <textarea
+                  rows={4}
+                  value={selectedNode.data.codeExpression ?? ''}
+                  onChange={(event) => updateSelectedNode({ codeExpression: event.target.value })}
+                  placeholder="例如：upper(user_request)"
+                />
+                {renderFieldIssues('codeExpression')}
+              </label>
+              <p className="inspector-note">支持：upper(var)、lower(var)、trim(var)、length(var)，也支持直接写模板文本。</p>
+              <div className="insert-row">
+                {variableKeys.map((variable) => (
+                  <button key={variable} type="button" onClick={() => appendToSelectedField('codeExpression', variable)}>
+                    {variable}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          {selectedNode.data.kind === 'loop' && (
+            <>
+              <label>
+                列表来源
+                <textarea
+                  rows={4}
+                  value={selectedNode.data.loopItems ?? ''}
+                  onChange={(event) => updateSelectedNode({ loopItems: event.target.value })}
+                />
+                {renderFieldIssues('loopItems')}
+              </label>
+              <div className="insert-row">
+                {variableKeys.map((variable) => (
+                  <button key={variable} type="button" onClick={() => appendToSelectedField('loopItems', variable)}>
+                    {`{{${variable}}}`}
+                  </button>
+                ))}
+              </div>
+              <label>
+                单项模板
+                <textarea
+                  rows={3}
+                  value={selectedNode.data.loopTemplate ?? ''}
+                  onChange={(event) => updateSelectedNode({ loopTemplate: event.target.value })}
+                />
+              </label>
+              <label>
+                合并分隔符
+                <input
+                  value={selectedNode.data.loopSeparator ?? '\n'}
+                  onChange={(event) => updateSelectedNode({ loopSeparator: event.target.value })}
+                />
+              </label>
+            </>
+          )}
+
+          {selectedNode.data.kind === 'aggregate' && (
+            <>
+              <label>
+                要聚合的变量名
+                <textarea
+                  rows={4}
+                  value={selectedNode.data.aggregateVariables ?? ''}
+                  onChange={(event) => updateSelectedNode({ aggregateVariables: event.target.value })}
+                  placeholder={'draft\nloop_result'}
+                />
+                {renderFieldIssues('aggregateVariables')}
+              </label>
+              <label>
+                合并分隔符
+                <input
+                  value={selectedNode.data.aggregateSeparator ?? '\n\n'}
+                  onChange={(event) => updateSelectedNode({ aggregateSeparator: event.target.value })}
+                />
+              </label>
+            </>
+          )}
 
           {selectedNode.data.kind === 'llm' && (
             <>
