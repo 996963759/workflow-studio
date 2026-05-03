@@ -941,6 +941,40 @@
   gap: 9px;
 }
 
+.tts-voice-panel,
+.tts-params-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 9px;
+}
+
+.speech-rate-control {
+  display: grid;
+  gap: 6px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 11px;
+}
+
+.speech-rate-control > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  gap: 8px;
+  align-items: center;
+}
+
+.speech-rate-control input[type='range'] {
+  padding: 0;
+}
+
+.speech-rate-control small {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
 .failure-policy-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 110px;

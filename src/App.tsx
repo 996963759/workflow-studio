@@ -302,6 +302,14 @@ const PROVIDER_CONFIG_LABELS: Record<ProviderConfigKey, string> = {
   aliyun: '阿里云百炼',
 }
 
+const ttsVoiceOptions = [
+  { value: 'longxiaochun_v2', label: '龙小淳 V2 - 温暖女声' },
+  { value: 'longxiaoxia_v2', label: '龙小夏 V2 - 清亮女声' },
+  { value: 'longxiaocheng_v2', label: '龙小诚 V2 - 稳重男声' },
+  { value: 'longxiaobai_v2', label: '龙小白 V2 - 自然女声' },
+  { value: 'longlaotie_v2', label: '龙老铁 V2 - 亲切男声' },
+]
+
 const createDefaultProviderConfigForm = (provider: ProviderConfigKey) => ({ ...PROVIDER_CONFIG_DEFAULTS[provider] })
 
 type KnowledgeStatus = {
@@ -3786,14 +3794,39 @@ function App() {
                   onChange={(event) => updateSelectedNode({ ttsModel: event.target.value })}
                 />
               </label>
-              <label>
-                音色
-                <input
-                  value={selectedNode.data.ttsVoice ?? 'longxiaochun_v2'}
-                  onChange={(event) => updateSelectedNode({ ttsVoice: event.target.value })}
-                />
-              </label>
-              <div className="llm-params-grid">
+              <div className="tts-voice-panel">
+                <label>
+                  常用音色
+                  <select
+                    value={
+                      ttsVoiceOptions.some((option) => option.value === (selectedNode.data.ttsVoice ?? 'longxiaochun_v2'))
+                        ? selectedNode.data.ttsVoice ?? 'longxiaochun_v2'
+                        : 'custom'
+                    }
+                    onChange={(event) => {
+                      if (event.target.value !== 'custom') {
+                        updateSelectedNode({ ttsVoice: event.target.value })
+                      }
+                    }}
+                  >
+                    {ttsVoiceOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                    <option value="custom">自定义音色</option>
+                  </select>
+                </label>
+                <label>
+                  音色代码
+                  <input
+                    value={selectedNode.data.ttsVoice ?? 'longxiaochun_v2'}
+                    onChange={(event) => updateSelectedNode({ ttsVoice: event.target.value })}
+                    placeholder="例如：longxiaochun_v2"
+                  />
+                </label>
+              </div>
+              <div className="tts-params-grid">
                 <label>
                   音频格式
                   <select
@@ -3804,18 +3837,31 @@ function App() {
                     <option value="wav">wav</option>
                   </select>
                 </label>
-                <label>
-                  语速
-                  <input
-                    min={0.5}
-                    max={2}
-                    step={0.1}
-                    type="number"
-                    value={selectedNode.data.speechRate ?? 1}
-                    onChange={(event) => updateSelectedNode({ speechRate: Number(event.target.value) })}
-                  />
+                <div className="speech-rate-control">
+                  <span>语速</span>
+                  <div>
+                    <input
+                      aria-label="TTS 语速滑块"
+                      min={0.5}
+                      max={2}
+                      step={0.1}
+                      type="range"
+                      value={selectedNode.data.speechRate ?? 1}
+                      onChange={(event) => updateSelectedNode({ speechRate: Number(event.target.value) })}
+                    />
+                    <input
+                      aria-label="TTS 语速数值"
+                      min={0.5}
+                      max={2}
+                      step={0.1}
+                      type="number"
+                      value={selectedNode.data.speechRate ?? 1}
+                      onChange={(event) => updateSelectedNode({ speechRate: Number(event.target.value) })}
+                    />
+                  </div>
+                  <small>0.5 慢速，1.0 正常，2.0 快速</small>
                   {renderFieldIssues('speechRate')}
-                </label>
+                </div>
               </div>
               <label>
                 合成文本
