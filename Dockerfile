@@ -13,6 +13,7 @@ ENV PYTHONUNBUFFERED=1
 COPY server/requirements.txt ./server/requirements.txt
 RUN pip install --no-cache-dir -r server/requirements.txt
 COPY server ./server
+COPY alembic.ini ./alembic.ini
 COPY --from=frontend /app/dist ./dist
 EXPOSE 8000
 CMD ["sh", "-c", "python -m alembic upgrade head && python -m uvicorn server.src.main:app --host 0.0.0.0 --port 8000"]

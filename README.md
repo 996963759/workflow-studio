@@ -11,6 +11,7 @@
 - [简历描述](docs/resume.md)
 - [发布说明](docs/release-notes.md)
 - [需求与计划](docs/requirements-and-plan.md)
+- [成熟化部署说明](docs/production-readiness.md)
 
 ## 当前功能
 
