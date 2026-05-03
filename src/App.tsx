@@ -832,6 +832,9 @@ const extractFirstUrl = (value: string) => value.match(/https?:\/\/[^\s)）"'，
 
 const isAudioStep = (step: RunStep) => step.provider?.includes('TTS') || step.output.includes('音频地址')
 
+const isSimulatedAudioStep = (step: RunStep) =>
+  step.output.includes('模拟音频') || step.output.includes('模拟生成音频') || step.error?.includes('AliyunProviderError')
+
 const loadStoredWorkflow = (): WorkflowDefinition | null => {
   try {
     const raw = window.localStorage.getItem(LEGACY_STORAGE_KEY)
@@ -4505,6 +4508,7 @@ function App() {
                 {runSteps.map((step) => {
                   const outputUrl = extractFirstUrl(step.output)
                   const audioUrl = outputUrl && isAudioStep(step) ? outputUrl : ''
+                  const simulatedAudio = !audioUrl && isSimulatedAudioStep(step)
                   return (
                     <article key={step.nodeId}>
                       <span className={clsx('status-dot', step.status)} />
@@ -4547,6 +4551,14 @@ function App() {
                                     复制链接
                                   </button>
                                 </div>
+                              </dd>
+                            </div>
+                          )}
+                          {simulatedAudio && (
+                            <div className="audio-output unavailable">
+                              <dt>音频播放</dt>
+                              <dd>
+                                这次没有生成真实音频文件。当前节点使用了模拟音频或调用失败回退，重新运行成功后这里会显示播放器和打开按钮。
                               </dd>
                             </div>
                           )}

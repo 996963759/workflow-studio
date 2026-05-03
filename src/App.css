@@ -1658,6 +1658,16 @@ textarea:focus {
   background: #e0f2fe;
 }
 
+.audio-output.unavailable {
+  border-color: #fed7aa;
+  background: #fff7ed;
+}
+
+.audio-output.unavailable dt,
+.audio-output.unavailable dd {
+  color: #9a3412;
+}
+
 .run-error-detail {
   border: 1px solid #fecaca;
   border-radius: 7px;
