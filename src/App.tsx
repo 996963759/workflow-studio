@@ -553,6 +553,86 @@ const workflowTemplates: WorkflowTemplate[] = [
     ],
   },
   {
+    id: 'llm-tts-broadcast',
+    name: '文案生成并转语音',
+    description: '先让大模型生成适合朗读的短文案，再交给阿里云 TTS 合成音频。',
+    input: '给咖啡店新品燕麦拿铁写一段 20 秒中文口播，语气温暖、有购买引导。',
+    nodes: [
+      {
+        id: 'input-1',
+        type: 'workflow',
+        position: { x: 40, y: 170 },
+        data: {
+          kind: 'input',
+          ...nodeMeta.input.defaults,
+          label: '口播需求',
+          description: '输入要生成的口播主题、时长、语气和受众。',
+          sampleInput: '给咖啡店新品燕麦拿铁写一段 20 秒中文口播，语气温暖、有购买引导。',
+          outputKey: 'voice_request',
+        },
+      },
+      {
+        id: 'llm-1',
+        type: 'workflow',
+        position: { x: 380, y: 170 },
+        data: {
+          kind: 'llm',
+          ...nodeMeta.llm.defaults,
+          label: '生成口播文案',
+          description: '把用户需求改写成适合 TTS 朗读的短文案。',
+          model: 'deepseek-v4-flash',
+          temperature: 0.6,
+          maxOutputTokens: 500,
+          timeoutSeconds: 45,
+          systemPrompt:
+            '你是中文短视频口播文案助手。只输出可直接朗读的正文，不要标题、编号、Markdown、解释或括号说明。句子要自然，适合 TTS 合成。',
+          prompt:
+            '根据下面需求生成一段中文口播文案，控制在 80 到 140 个汉字，结尾要有自然的行动引导。\n\n需求：{{voice_request}}',
+          outputKey: 'speech_text',
+          failurePolicy: 'continue',
+          retryCount: 0,
+        },
+      },
+      {
+        id: 'tts-1',
+        type: 'workflow',
+        position: { x: 720, y: 170 },
+        data: {
+          kind: 'tts',
+          ...nodeMeta.tts.defaults,
+          label: '合成语音',
+          description: '把大模型生成的口播文案转成音频地址。',
+          ttsText: '{{speech_text}}',
+          ttsModel: 'cosyvoice-v2',
+          ttsVoice: 'longxiaochun',
+          audioFormat: 'mp3',
+          speechRate: 1,
+          outputKey: 'audio_url',
+          failurePolicy: 'continue',
+          retryCount: 0,
+        },
+      },
+      {
+        id: 'output-1',
+        type: 'workflow',
+        position: { x: 1060, y: 170 },
+        data: {
+          kind: 'output',
+          ...nodeMeta.output.defaults,
+          label: '口播和音频',
+          description: '同时返回口播正文和 TTS 音频地址。',
+          prompt: '口播文案：\n{{speech_text}}\n\n音频结果：\n{{audio_url}}',
+          outputKey: 'answer',
+        },
+      },
+    ],
+    edges: [
+      { id: 'e-input-llm', source: 'input-1', target: 'llm-1', animated: true },
+      { id: 'e-llm-tts', source: 'llm-1', target: 'tts-1', animated: true },
+      { id: 'e-tts-output', source: 'tts-1', target: 'output-1' },
+    ],
+  },
+  {
     id: 'branch-review',
     name: '条件分支审核',
     description: '根据用户输入是否包含退款，路由到不同回复路径。',
@@ -659,6 +739,7 @@ const workflowTemplates: WorkflowTemplate[] = [
 
 const examples = [
   '总结用户反馈，并生成按优先级排序的产品行动项。',
+  '给咖啡店新品燕麦拿铁写一段 20 秒中文口播，语气温暖、有购买引导。',
   '根据 CRM 数据和品牌语气，撰写一封新用户欢迎邮件。',
   '检查客服工单，判断紧急程度，并起草回复。',
 ]
