@@ -5,7 +5,16 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .config import CORS_ORIGINS, DIST_DIR
+from .config import (
+    APP_ENV,
+    CORS_ORIGINS,
+    DIST_DIR,
+    EXTERNAL_RAG_ENABLED,
+    KAFKA_RUN_JOB_TOPIC,
+    RUN_JOB_WORKERS,
+    SESSION_TTL_HOURS,
+    WORKSPACE_INVITATION_TTL_HOURS,
+)
 from .auth import AuthService, current_token, login, register, require_auth, set_auth_service
 from .models import (
     AdminOverviewRecord,
@@ -161,6 +170,16 @@ def admin_overview(context: WorkspaceContext = Depends(require_workspace_role("v
         queue_backend=job_queue.backend,
         workspace=workspace,
         counts=counts,
+        settings={
+            "app_env": APP_ENV,
+            "session_ttl_hours": SESSION_TTL_HOURS,
+            "workspace_invitation_ttl_hours": WORKSPACE_INVITATION_TTL_HOURS,
+            "run_job_workers": RUN_JOB_WORKERS,
+            "kafka_run_job_topic": KAFKA_RUN_JOB_TOPIC,
+            "external_rag_enabled": EXTERNAL_RAG_ENABLED,
+            "cors_origins": CORS_ORIGINS,
+            "model_config_secret_configured": True,
+        },
         provider_status=provider,
         knowledge_status=knowledge,
         recent_audit_logs=audit_logs,

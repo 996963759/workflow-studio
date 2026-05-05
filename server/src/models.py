@@ -199,6 +199,7 @@ class AdminOverviewRecord(BaseModel):
     queue_backend: str
     workspace: WorkspaceRecord
     counts: dict[str, int]
+    settings: dict[str, Any]
     provider_status: dict[str, str | bool]
     knowledge_status: dict[str, int | str]
     recent_audit_logs: list[AuditLogRecord] = Field(default_factory=list)

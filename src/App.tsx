@@ -294,6 +294,16 @@ type AdminOverviewRecord = {
   queue_backend: string
   workspace: WorkspaceRecord
   counts: Record<string, number>
+  settings: {
+    app_env?: string
+    session_ttl_hours?: number
+    workspace_invitation_ttl_hours?: number
+    run_job_workers?: number
+    kafka_run_job_topic?: string
+    external_rag_enabled?: boolean
+    cors_origins?: string[]
+    model_config_secret_configured?: boolean
+  }
   provider_status: ProviderStatus
   knowledge_status: KnowledgeStatus
   recent_audit_logs: AuditLogRecord[]
@@ -4540,6 +4550,26 @@ function App() {
                 <article>
                   <strong>当前空间</strong>
                   <span>{adminOverview.workspace.name} · {adminOverview.workspace.role}</span>
+                </article>
+                <article>
+                  <strong>安全配置</strong>
+                  <span>
+                    登录 {adminOverview.settings.session_ttl_hours ?? '-'} 小时 ·
+                    邀请 {adminOverview.settings.workspace_invitation_ttl_hours ?? '-'} 小时 ·
+                    密钥保护 {adminOverview.settings.model_config_secret_configured ? '已启用' : '未启用'}
+                  </span>
+                </article>
+                <article>
+                  <strong>运行配置</strong>
+                  <span>
+                    {adminOverview.settings.app_env ?? 'development'} ·
+                    Worker {adminOverview.settings.run_job_workers ?? 0} ·
+                    RAG {adminOverview.settings.external_rag_enabled ? '已启用' : '未启用'}
+                  </span>
+                </article>
+                <article>
+                  <strong>访问来源</strong>
+                  <span>{adminOverview.settings.cors_origins?.join(', ') || '未配置'}</span>
                 </article>
                 {adminOverview.recent_audit_logs.slice(0, 3).map((log) => (
                   <article key={log.id}>

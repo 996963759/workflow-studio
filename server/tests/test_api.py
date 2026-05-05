@@ -106,6 +106,8 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(body["queue_backend"], "thread")
         self.assertEqual(body["workspace"]["role"], "owner")
         self.assertGreaterEqual(body["counts"]["members"], 1)
+        self.assertEqual(body["settings"]["session_ttl_hours"], 168)
+        self.assertEqual(body["settings"]["workspace_invitation_ttl_hours"], 168)
         self.assertIn("provider_status", body)
         self.assertIn("knowledge_status", body)
         self.assertIn("recent_audit_logs", body)
