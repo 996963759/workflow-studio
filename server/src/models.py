@@ -195,6 +195,17 @@ class AuditLogRecord(BaseModel):
     created_at: str
 
 
+class RunMetricsRecord(BaseModel):
+    total_runs: int = 0
+    sampled_runs: int = 0
+    ok_runs: int = 0
+    error_runs: int = 0
+    success_rate: float = 0
+    average_duration_ms: int = 0
+    average_step_count: float = 0
+    recent_failed_runs: list[RunRecord] = Field(default_factory=list)
+
+
 class AdminOverviewRecord(BaseModel):
     status: str
     database: str
@@ -204,5 +215,6 @@ class AdminOverviewRecord(BaseModel):
     settings: dict[str, Any]
     provider_status: dict[str, str | bool]
     knowledge_status: dict[str, int | str]
+    run_metrics: RunMetricsRecord = Field(default_factory=RunMetricsRecord)
     recent_audit_logs: list[AuditLogRecord] = Field(default_factory=list)
     recent_run_jobs: list[RunJobRecord] = Field(default_factory=list)

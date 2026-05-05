@@ -15,6 +15,7 @@ from server.src.providers import aliyun
 from server.src.db import create_session_factory
 from server.src.jobs import RunJobQueue, RunJobWorker
 from server.src.knowledge import set_knowledge_session_factory
+from server.src.models import RunResponse, RunStep
 from server.src.storage import WorkflowStore
 
 
@@ -110,7 +111,57 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(body["settings"]["workspace_invitation_ttl_hours"], 168)
         self.assertIn("provider_status", body)
         self.assertIn("knowledge_status", body)
+        self.assertIn("run_metrics", body)
+        self.assertEqual(body["run_metrics"]["total_runs"], 0)
         self.assertIn("recent_audit_logs", body)
+
+    def test_admin_overview_reports_run_metrics(self) -> None:
+        ok_response = RunResponse(
+            status="ok",
+            steps=[
+                RunStep(
+                    node_id="ok-1",
+                    title="成功节点",
+                    status="done",
+                    input="input",
+                    output="output",
+                    duration_ms=40,
+                )
+            ],
+        )
+        error_response = RunResponse(
+            status="error",
+            steps=[
+                RunStep(
+                    node_id="error-1",
+                    title="失败节点",
+                    status="error",
+                    input="input",
+                    output="output",
+                    error="boom",
+                    duration_ms=80,
+                    attempt_count=2,
+                )
+            ],
+        )
+        user = self.client.get("/api/auth/me", headers=self.auth_headers).json()
+        workspace = self.client.get("/api/workspaces", headers=self.auth_headers).json()[0]
+        api.store.create_run(None, user["id"], "成功工作流", "ok", ok_response, workspace["id"])
+        api.store.create_run(None, user["id"], "失败工作流", "error", error_response, workspace["id"])
+
+        response = self.client.get("/api/admin/overview", headers=self.auth_headers)
+
+        self.assertEqual(response.status_code, 200)
+        metrics = response.json()["run_metrics"]
+        self.assertEqual(metrics["total_runs"], 2)
+        self.assertEqual(metrics["sampled_runs"], 2)
+        self.assertEqual(metrics["ok_runs"], 1)
+        self.assertEqual(metrics["error_runs"], 1)
+        self.assertEqual(metrics["success_rate"], 50)
+        self.assertEqual(metrics["average_duration_ms"], 60)
+        self.assertEqual(metrics["average_step_count"], 1)
+        self.assertEqual(metrics["recent_failed_runs"][0]["workflow_name"], "失败工作流")
+        self.assertEqual(metrics["recent_failed_runs"][0]["steps"][0]["error"], "boom")
 
     def test_auth_token_expires_and_is_pruned(self) -> None:
         register_response = self.client.post(

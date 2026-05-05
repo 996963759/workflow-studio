@@ -1188,6 +1188,26 @@ textarea:focus {
   gap: 7px;
 }
 
+.admin-overview-list .admin-health-row {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.admin-overview-list .admin-health-row strong,
+.admin-overview-list .admin-health-row span {
+  color: #166534;
+}
+
+.admin-overview-list .admin-failed-run {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.admin-overview-list .admin-failed-run strong,
+.admin-overview-list .admin-failed-run span {
+  color: #b91c1c;
+}
+
 .model-config-form {
   display: grid;
   gap: 10px;

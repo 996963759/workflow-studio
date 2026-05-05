@@ -161,6 +161,7 @@ def admin_overview(context: WorkspaceContext = Depends(require_workspace_role("v
         raise HTTPException(status_code=403, detail="Workspace access denied")
     provider = provider_status()
     knowledge = knowledge_status(user.id, workspace_id)
+    run_metrics = store.get_workspace_run_metrics(workspace_id, user.id)
     audit_logs = store.list_audit_logs(workspace_id, user.id, limit=5) or []
     run_jobs = store.list_run_jobs(user.id, workspace_id=workspace_id)[:5]
     database = store.engine.url.get_backend_name() if store.engine else "unknown"
@@ -182,6 +183,7 @@ def admin_overview(context: WorkspaceContext = Depends(require_workspace_role("v
         },
         provider_status=provider,
         knowledge_status=knowledge,
+        run_metrics=run_metrics,
         recent_audit_logs=audit_logs,
         recent_run_jobs=run_jobs,
     )

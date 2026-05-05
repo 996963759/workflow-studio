@@ -14,6 +14,7 @@ from .models import (
     ModelConfigPayload,
     ModelConfigRecord,
     RunJobRecord,
+    RunMetricsRecord,
     RunRecord,
     RunResponse,
     WorkflowPayload,
@@ -331,6 +332,43 @@ class WorkflowStore:
                 )
                 or 0,
             }
+
+    def get_workspace_run_metrics(self, workspace_id: str, user_id: str) -> RunMetricsRecord | None:
+        if not self.can_access_workspace(workspace_id, user_id):
+            return None
+        with self._connect() as session:
+            total_runs = session.scalar(select(func.count()).select_from(DbRun).where(DbRun.workspace_id == workspace_id)) or 0
+            rows = session.scalars(
+                select(DbRun).where(DbRun.workspace_id == workspace_id).order_by(DbRun.created_at.desc()).limit(200)
+            ).all()
+
+        if total_runs == 0:
+            return RunMetricsRecord()
+
+        sampled_runs = len(rows)
+        ok_runs = sum(1 for run in rows if run.status == "ok")
+        error_runs = sum(1 for run in rows if run.status == "error")
+        total_duration_ms = 0
+        total_step_count = 0
+        failed_runs: list[RunRecord] = []
+
+        for run in rows:
+            steps = json.loads(run.steps_json)
+            total_step_count += len(steps)
+            total_duration_ms += sum(int(step.get("duration_ms") or 0) for step in steps if isinstance(step, dict))
+            if run.status == "error" and len(failed_runs) < 3:
+                failed_runs.append(self._run_to_record(run))
+
+        return RunMetricsRecord(
+            total_runs=total_runs,
+            sampled_runs=sampled_runs,
+            ok_runs=ok_runs,
+            error_runs=error_runs,
+            success_rate=round(ok_runs / sampled_runs * 100, 1),
+            average_duration_ms=round(total_duration_ms / sampled_runs),
+            average_step_count=round(total_step_count / sampled_runs, 1),
+            recent_failed_runs=failed_runs,
+        )
 
     def upsert_workspace_member(
         self,

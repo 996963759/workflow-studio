@@ -309,8 +309,20 @@ type AdminOverviewRecord = {
   }
   provider_status: ProviderStatus
   knowledge_status: KnowledgeStatus
+  run_metrics: RunMetricsRecord
   recent_audit_logs: AuditLogRecord[]
   recent_run_jobs: RunJobRecord[]
+}
+
+type RunMetricsRecord = {
+  total_runs: number
+  sampled_runs: number
+  ok_runs: number
+  error_runs: number
+  success_rate: number
+  average_duration_ms: number
+  average_step_count: number
+  recent_failed_runs: ServerRunRecord[]
 }
 
 type ProviderStatus = {
@@ -385,6 +397,16 @@ const ttsVoiceOptions = [
 ]
 
 const createDefaultProviderConfigForm = (provider: ProviderConfigKey) => ({ ...PROVIDER_CONFIG_DEFAULTS[provider] })
+const createEmptyRunMetrics = (): RunMetricsRecord => ({
+  total_runs: 0,
+  sampled_runs: 0,
+  ok_runs: 0,
+  error_runs: 0,
+  success_rate: 0,
+  average_duration_ms: 0,
+  average_step_count: 0,
+  recent_failed_runs: [],
+})
 
 type KnowledgeStatus = {
   directory: string
@@ -2305,7 +2327,7 @@ function App() {
       const response = await apiFetch('/api/admin/overview')
       if (!response.ok) throw new Error('load admin overview failed')
       const overview = (await response.json()) as AdminOverviewRecord
-      setAdminOverview(overview)
+      setAdminOverview({ ...overview, run_metrics: overview.run_metrics ?? createEmptyRunMetrics() })
       if (showNotice) setNotice('已刷新系统概览。')
     } catch {
       setAdminOverview(null)
@@ -4584,8 +4606,32 @@ function App() {
                   <span>失败任务</span>
                   <strong>{adminOverview.counts.failed_run_jobs ?? 0}</strong>
                 </div>
+                <div>
+                  <span>成功率</span>
+                  <strong>{adminOverview.run_metrics.success_rate}%</strong>
+                </div>
+                <div>
+                  <span>平均耗时</span>
+                  <strong>{adminOverview.run_metrics.average_duration_ms}ms</strong>
+                </div>
+                <div>
+                  <span>平均节点</span>
+                  <strong>{adminOverview.run_metrics.average_step_count}</strong>
+                </div>
+                <div>
+                  <span>失败运行</span>
+                  <strong>{adminOverview.run_metrics.error_runs}</strong>
+                </div>
               </div>
               <div className="admin-overview-list">
+                <article className="admin-health-row">
+                  <strong>运行健康</strong>
+                  <span>
+                    最近 {adminOverview.run_metrics.sampled_runs} 次采样 ·
+                    成功 {adminOverview.run_metrics.ok_runs} ·
+                    失败 {adminOverview.run_metrics.error_runs}
+                  </span>
+                </article>
                 <article>
                   <strong>模型与知识库</strong>
                   <span>
@@ -4628,6 +4674,15 @@ function App() {
                   <article key={job.id}>
                     <strong>任务 {job.status}</strong>
                     <span>{new Date(job.updated_at).toLocaleString('zh-CN')}</span>
+                  </article>
+                ))}
+                {adminOverview.run_metrics.recent_failed_runs.map((run) => (
+                  <article key={run.id} className="admin-failed-run">
+                    <strong>{run.workflow_name}</strong>
+                    <span>
+                      最近失败 · {run.steps.find((step) => step.status === 'error')?.error ?? '未记录错误原因'} ·{' '}
+                      {new Date(run.created_at).toLocaleString('zh-CN')}
+                    </span>
                   </article>
                 ))}
               </div>
