@@ -1290,6 +1290,51 @@ textarea:focus {
   color: #334155;
 }
 
+.rag-preview {
+  border-top: 1px solid #e1e7dc;
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.rag-preview-actions {
+  align-items: end;
+  display: grid;
+  gap: 7px;
+  grid-template-columns: 92px auto;
+}
+
+.rag-preview-results {
+  display: grid;
+  gap: 7px;
+}
+
+.rag-preview-results p {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.rag-preview-results article {
+  border: 1px solid #e1e7dc;
+  border-radius: 7px;
+  background: #ffffff;
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+}
+
+.rag-preview-results strong {
+  color: #111827;
+  font-size: 12px;
+}
+
+.rag-preview-results span {
+  color: #64748b;
+  font-size: 11px;
+}
+
 .knowledge-actions {
   display: inline-flex;
   gap: 6px;

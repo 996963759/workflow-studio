@@ -430,6 +430,12 @@ type KnowledgeDocument = {
   chunk_count: number
 }
 
+type RagPreviewItem = {
+  source: string
+  text: string
+  score: number
+}
+
 type WorkflowTemplate = {
   id: string
   name: string
@@ -2049,6 +2055,9 @@ function App() {
     record: null,
     form: { ...PAISMART_CONFIG_DEFAULTS },
   })
+  const [paismartPreviewQuery, setPaismartPreviewQuery] = useState('报销需要准备哪些材料？')
+  const [paismartPreviewTopK, setPaismartPreviewTopK] = useState(3)
+  const [paismartPreviewResults, setPaismartPreviewResults] = useState<RagPreviewItem[]>([])
   const [modelConfigForm, setModelConfigForm] = useState(createDefaultProviderConfigForm('deepseek'))
   const [modelConfigFeedback, setModelConfigFeedback] = useState<ModelConfigFeedback | null>(null)
   const [modelConfigBusy, setModelConfigBusy] = useState<ModelConfigAction | null>(null)
@@ -2920,6 +2929,38 @@ function App() {
       const message = getErrorMessage(error, 'PaiSmart RAG 配置测试失败：请确认后端在线，且你有当前团队空间的编辑权限。')
       setModelConfigFeedback({ provider: 'paismart', type: 'error', text: message })
       setNotice(message)
+    } finally {
+      setModelConfigBusy(null)
+    }
+  }
+
+  const previewPaismartRag = async () => {
+    if (modelConfigBusy) return
+    if (!paismartPreviewQuery.trim()) {
+      setNotice('请输入要预览检索的问题。')
+      return
+    }
+    setModelConfigBusy('test')
+    setModelConfigFeedback({ provider: 'paismart', type: 'info', text: '正在请求 PaiSmart RAG 预览...' })
+    try {
+      const response = await apiFetch('/api/rag/paismart/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: paismartPreviewQuery.trim(), top_k: paismartPreviewTopK }),
+      })
+      if (!response.ok) {
+        throw new Error(await readResponseErrorMessage(response, 'PaiSmart RAG 预览失败：请确认配置可用。'))
+      }
+      const results = (await response.json()) as RagPreviewItem[]
+      setPaismartPreviewResults(results)
+      const message = results.length > 0 ? `PaiSmart 返回 ${results.length} 个片段。` : 'PaiSmart 未返回相关片段。'
+      setModelConfigFeedback({ provider: 'paismart', type: results.length > 0 ? 'ok' : 'info', text: message })
+      setNotice(message)
+    } catch (error) {
+      const message = getErrorMessage(error, 'PaiSmart RAG 预览失败：请确认配置可用。')
+      setModelConfigFeedback({ provider: 'paismart', type: 'error', text: message })
+      setNotice(message)
+      setPaismartPreviewResults([])
     } finally {
       setModelConfigBusy(null)
     }
@@ -5926,6 +5967,44 @@ function App() {
                   : '当前团队空间还没有保存 PaiSmart Token。'}
               </p>
               <p className="model-status-note">知识检索节点选择 PaiSmart RAG 时，会优先使用当前团队空间配置。</p>
+              <div className="rag-preview">
+                <label>
+                  检索预览
+                  <textarea
+                    rows={3}
+                    value={paismartPreviewQuery}
+                    onChange={(event) => setPaismartPreviewQuery(event.target.value)}
+                  />
+                </label>
+                <div className="rag-preview-actions">
+                  <label>
+                    Top K
+                    <input
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={paismartPreviewTopK}
+                      onChange={(event) => setPaismartPreviewTopK(Math.max(1, Math.min(10, Number(event.target.value) || 1)))}
+                    />
+                  </label>
+                  <button type="button" className="mini-action" disabled={Boolean(modelConfigBusy)} onClick={() => void previewPaismartRag()}>
+                    {modelConfigBusy === 'test' && modelConfigFeedback?.provider === 'paismart' ? '检索中...' : '预览检索'}
+                  </button>
+                </div>
+                <div className="rag-preview-results">
+                  {paismartPreviewResults.length === 0 ? (
+                    <p>暂无预览结果。</p>
+                  ) : (
+                    paismartPreviewResults.map((item, index) => (
+                      <article key={`${item.source}-${index}`}>
+                        <strong>{item.source}</strong>
+                        <span>score={item.score}</span>
+                        <p>{item.text}</p>
+                      </article>
+                    ))
+                  )}
+                </div>
+              </div>
             </div>
           </div>
           {providerStatusCheckedAt && (

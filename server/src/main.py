@@ -25,6 +25,7 @@ from .models import (
     ModelConfigPayload,
     ModelConfigRecord,
     ModelConfigTestResponse,
+    RagPreviewPayload,
     RunRecord,
     RunJobRecord,
     RunRequest,
@@ -45,7 +46,7 @@ from .models import (
     UserRecord,
 )
 from .jobs import RunJobQueue
-from .external_rag import external_rag_status
+from .external_rag import external_rag_status, search_paismart
 from .knowledge import (
     delete_knowledge_document,
     knowledge_status,
@@ -398,6 +399,22 @@ def test_model_config(
         provider=provider,
         model=str(runtime_config.get("model") or ""),
     )
+
+
+@app.post("/api/rag/paismart/preview")
+def preview_paismart_rag(
+    payload: RagPreviewPayload,
+    context: WorkspaceContext = Depends(require_workspace_role("viewer")),
+) -> list[dict[str, str | float]]:
+    _, workspace_id = context
+    runtime_config = store.get_runtime_model_config(workspace_id, "paismart")
+    if not runtime_config:
+        raise HTTPException(status_code=400, detail="当前团队空间还没有可用的 PaiSmart RAG 配置")
+    try:
+        chunks = search_paismart(payload.query, payload.top_k, runtime_config)
+    except Exception as error:  # noqa: BLE001 - surfaced as preview diagnostic.
+        raise HTTPException(status_code=502, detail=f"PaiSmart RAG 检索失败：{error}") from error
+    return [{"source": chunk.source, "text": chunk.text, "score": chunk.score} for chunk in chunks]
 
 
 @app.get("/api/knowledge/status")

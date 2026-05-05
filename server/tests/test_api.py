@@ -799,6 +799,46 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(captured["runtime_config"]["api_key"], "paismart-workspace-token")
         self.assertEqual(captured["runtime_config"]["base_url"], "http://paismart.test")
 
+    def test_paismart_preview_uses_workspace_config(self) -> None:
+        self.client.put(
+            "/api/model-configs/paismart",
+            json={
+                "enabled": True,
+                "model": "hybrid",
+                "base_url": "http://paismart.test",
+                "api_key": "paismart-preview-token",
+            },
+            headers=self.auth_headers,
+        )
+
+        from server.src import main as api_module
+        from server.src.knowledge import KnowledgeChunk
+
+        captured = {}
+
+        def fake_search_paismart(query: str, top_k: int, runtime_config=None):
+            captured["query"] = query
+            captured["top_k"] = top_k
+            captured["runtime_config"] = runtime_config
+            return [KnowledgeChunk(source="doc.md#1", text="预览返回片段", score=0.88)]
+
+        previous = api_module.search_paismart
+        api_module.search_paismart = fake_search_paismart
+        try:
+            response = self.client.post(
+                "/api/rag/paismart/preview",
+                json={"query": "报销需要什么", "top_k": 2},
+                headers=self.auth_headers,
+            )
+        finally:
+            api_module.search_paismart = previous
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()[0]["text"], "预览返回片段")
+        self.assertEqual(captured["query"], "报销需要什么")
+        self.assertEqual(captured["top_k"], 2)
+        self.assertEqual(captured["runtime_config"]["api_key"], "paismart-preview-token")
+
     def test_aliyun_multimodal_nodes_fall_back_without_key(self) -> None:
         workflow = {
             **valid_workflow(),

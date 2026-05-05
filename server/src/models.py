@@ -47,6 +47,11 @@ class KnowledgeDocumentPayload(BaseModel):
     content: str = Field(default="")
 
 
+class RagPreviewPayload(BaseModel):
+    query: str = Field(min_length=1, max_length=500)
+    top_k: int = Field(default=3, ge=1, le=10)
+
+
 class AuthPayload(BaseModel):
     username: str = Field(min_length=3, max_length=64)
     password: str = Field(min_length=6, max_length=128)
