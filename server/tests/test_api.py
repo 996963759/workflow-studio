@@ -543,6 +543,27 @@ class ApiTestCase(unittest.TestCase):
         self.assertIsNone(retried.json()["error"])
         self.assertEqual(producer.messages, [(api.job_queue.kafka_topic, job.id)])
 
+    def test_terminal_run_jobs_can_be_cleaned_without_touching_active_jobs(self) -> None:
+        created = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers).json()
+        user = self.client.get("/api/auth/me", headers=self.auth_headers).json()
+        workspace = self.client.get("/api/workspaces", headers=self.auth_headers).json()[0]
+        queued = api.store.create_run_job(user["id"], workspace["id"], created["id"], "排队任务")
+        succeeded = api.store.create_run_job(user["id"], workspace["id"], created["id"], "成功任务")
+        failed = api.store.create_run_job(user["id"], workspace["id"], created["id"], "失败任务")
+        canceled = api.store.create_run_job(user["id"], workspace["id"], created["id"], "取消任务")
+        api.store.update_run_job(succeeded.id, "succeeded", run_id="run-1")
+        api.store.update_run_job(failed.id, "failed", error="boom")
+        api.store.cancel_run_job(canceled.id, user["id"], workspace["id"])
+
+        cleanup = self.client.delete(f"/api/run-jobs?workflow_id={created['id']}", headers=self.auth_headers)
+
+        self.assertEqual(cleanup.status_code, 204)
+        jobs = self.client.get(f"/api/run-jobs?workflow_id={created['id']}", headers=self.auth_headers).json()
+        self.assertEqual([job["id"] for job in jobs], [queued.id])
+        self.assertEqual(jobs[0]["status"], "queued")
+        logs = self.client.get("/api/audit-logs?resource_type=run_job", headers=self.auth_headers).json()
+        self.assertIn("run_job.cleanup", [log["action"] for log in logs])
+
     def test_kafka_queue_publishes_and_worker_claims_job(self) -> None:
         created = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers).json()
         user = self.client.get("/api/auth/me", headers=self.auth_headers).json()

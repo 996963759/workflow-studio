@@ -714,6 +714,26 @@ def list_run_jobs(
     return store.list_run_jobs(user.id, workflow_id, workspace_id)
 
 
+@app.delete("/api/run-jobs", status_code=204)
+def delete_terminal_run_jobs(
+    workflow_id: str | None = None,
+    context: WorkspaceContext = Depends(require_workspace_role("editor")),
+) -> None:
+    user, workspace_id = context
+    deleted_count = store.delete_terminal_run_jobs(user.id, workspace_id, workflow_id)
+    if deleted_count is None:
+        raise HTTPException(status_code=403, detail="Workspace access denied")
+    store.append_audit_log(
+        workspace_id,
+        user.id,
+        "run_job.cleanup",
+        "run_job",
+        f"清理异步运行终态任务：{deleted_count} 条",
+        workflow_id,
+        {"workflow_id": workflow_id, "deleted_count": deleted_count},
+    )
+
+
 @app.get("/api/run-jobs/{job_id}", response_model=RunJobRecord)
 def get_run_job(job_id: str, context: WorkspaceContext = Depends(require_workspace_role("viewer"))) -> RunJobRecord:
     user, workspace_id = context

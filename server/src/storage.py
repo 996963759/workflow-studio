@@ -1131,6 +1131,25 @@ class WorkflowStore:
             session.commit()
             return self._job_to_record(job)
 
+    def delete_terminal_run_jobs(
+        self,
+        user_id: str,
+        workspace_id: str,
+        workflow_id: str | None = None,
+    ) -> int | None:
+        if not self.can_access_workspace(workspace_id, user_id, "editor"):
+            return None
+        with self._connect() as session:
+            statement = delete(DbRunJob).where(
+                DbRunJob.workspace_id == workspace_id,
+                DbRunJob.status.in_(["succeeded", "failed", "canceled"]),
+            )
+            if workflow_id:
+                statement = statement.where(DbRunJob.workflow_id == workflow_id)
+            result = session.execute(statement)
+            session.commit()
+        return result.rowcount
+
     def get_run_job(self, job_id: str, user_id: str, workspace_id: str | None = None) -> RunJobRecord | None:
         workspace_id = workspace_id or self.ensure_default_workspace(user_id)
         with self._connect() as session:

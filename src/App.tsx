@@ -3569,6 +3569,26 @@ function App() {
     }
   }
 
+  const clearTerminalRunJobs = async () => {
+    if (!activeWorkflow.serverId) {
+      setNotice('当前工作流还没有同步到后端，暂无可清理的队列任务。')
+      return
+    }
+    try {
+      const response = await apiFetch(`/api/run-jobs?workflow_id=${activeWorkflow.serverId}`, { method: 'DELETE' })
+      if (!response.ok) throw new Error('clear terminal jobs failed')
+      setRunJobs((current) => current.filter((job) => !['succeeded', 'failed', 'canceled'].includes(job.status)))
+      if (activeRunJob && ['succeeded', 'failed', 'canceled'].includes(activeRunJob.status)) {
+        setActiveRunJobId('')
+      }
+      setBackendStatus('online')
+      setNotice('已清理当前工作流已完成、失败和已取消的异步任务。')
+    } catch {
+      setBackendStatus('offline')
+      setNotice('清理异步队列失败：请确认后端在线，且当前账号有编辑权限。')
+    }
+  }
+
   const loadRunHistory = async () => {
     if (!activeWorkflow.serverId) {
       setRunHistory([])
@@ -5875,6 +5895,9 @@ function App() {
             </button>
             <button type="button" onClick={loadRunJobs}>
               刷新队列
+            </button>
+            <button type="button" onClick={clearTerminalRunJobs}>
+              清理队列
             </button>
             <button type="button" onClick={clearCurrentRunHistory}>
               清空历史
