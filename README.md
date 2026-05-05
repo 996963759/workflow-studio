@@ -265,6 +265,7 @@ http://127.0.0.1:8000/api/health
 - `PAISMART_TIMEOUT_SECONDS`：PaiSmart 请求超时时间
 - `MODEL_CONFIG_SECRET`：保护团队空间模型 API Key 的本地密钥；共享数据库前请改成自己的长随机字符串
 - `SESSION_TTL_HOURS`：登录 token 有效期，默认 `168` 小时
+- `WORKSPACE_INVITATION_TTL_HOURS`：团队邀请码有效期，默认 `168` 小时
 
 启用 PaiSmart 外部 RAG：
 

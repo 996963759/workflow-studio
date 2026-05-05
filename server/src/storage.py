@@ -1,14 +1,14 @@
 import json
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from .config import DATABASE_PATH, DATABASE_URL
+from .config import DATABASE_PATH, DATABASE_URL, WORKSPACE_INVITATION_TTL_HOURS
 from .db import SessionLocal, create_session_factory, engine as default_engine
 from .models import (
     ModelConfigPayload,
@@ -45,6 +45,18 @@ ROLE_ORDER = {"viewer": 1, "editor": 2, "owner": 3}
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def parse_timestamp(value: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def workspace_invitation_expires_at() -> str:
+    ttl_hours = max(1, WORKSPACE_INVITATION_TTL_HOURS)
+    return (datetime.now(timezone.utc) + timedelta(hours=ttl_hours)).isoformat()
 
 
 def _sqlite_path_from_url(database_url: str) -> Path | None:
@@ -111,6 +123,14 @@ class WorkflowStore:
             if "expires_at" not in session_columns:
                 connection.execute(
                     "ALTER TABLE sessions ADD COLUMN expires_at TEXT NOT NULL DEFAULT '9999-12-31T23:59:59+00:00'"
+                )
+            invitation_columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(workspace_invitations)").fetchall()
+            }
+            if invitation_columns and "expires_at" not in invitation_columns:
+                connection.execute(
+                    "ALTER TABLE workspace_invitations ADD COLUMN expires_at TEXT NOT NULL DEFAULT '9999-12-31T23:59:59+00:00'"
                 )
 
     def assign_unowned_records(self, user_id: str) -> None:
@@ -334,9 +354,19 @@ class WorkflowStore:
             accepted_by=invitation.accepted_by,
             accepted_by_username=accepted_by_username,
             created_at=invitation.created_at,
+            expires_at=invitation.expires_at,
             accepted_at=invitation.accepted_at,
             revoked_at=invitation.revoked_at,
         )
+
+    def _expire_pending_invitation_if_needed(self, invitation: DbWorkspaceInvitation, now: datetime | None = None) -> bool:
+        if invitation.status != "pending":
+            return False
+        expires_at = parse_timestamp(invitation.expires_at)
+        if not expires_at or expires_at > (now or datetime.now(timezone.utc)):
+            return False
+        invitation.status = "expired"
+        return True
 
     def list_workspace_invitations(self, workspace_id: str, actor_user_id: str) -> list[WorkspaceInvitationRecord] | None:
         if not self.can_access_workspace(workspace_id, actor_user_id, "owner"):
@@ -360,6 +390,12 @@ class WorkflowStore:
                 if accepted_ids
                 else {}
             )
+            changed = False
+            now = datetime.now(timezone.utc)
+            for invitation, _, _ in rows:
+                changed = self._expire_pending_invitation_if_needed(invitation, now) or changed
+            if changed:
+                session.commit()
         return [
             self._invitation_record(
                 invitation,
@@ -392,6 +428,7 @@ class WorkflowStore:
                 status="pending",
                 created_by=actor_user_id,
                 created_at=now,
+                expires_at=workspace_invitation_expires_at(),
             )
             session.add(invitation)
             record = self._invitation_record(invitation, workspace.name, creator.username)
@@ -438,6 +475,9 @@ class WorkflowStore:
                 )
             )
             if not invitation:
+                return None
+            if self._expire_pending_invitation_if_needed(invitation):
+                session.commit()
                 return None
             existing = session.scalar(
                 select(DbWorkspaceMember).where(

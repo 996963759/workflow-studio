@@ -102,6 +102,7 @@ class WorkspaceInvitationRecord(BaseModel):
     accepted_by: str | None = None
     accepted_by_username: str | None = None
     created_at: str
+    expires_at: str
     accepted_at: str | None = None
     revoked_at: str | None = None
 

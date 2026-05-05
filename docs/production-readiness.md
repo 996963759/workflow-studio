@@ -36,6 +36,7 @@ POSTGRES_USER=workflow_studio
 POSTGRES_PASSWORD=请改成高强度密码
 MODEL_CONFIG_SECRET=请改成随机长字符串
 SESSION_TTL_HOURS=168
+WORKSPACE_INVITATION_TTL_HOURS=168
 RUN_JOB_QUEUE_BACKEND=kafka
 KAFKA_BOOTSTRAP_SERVERS=kafka:9092
 KAFKA_RUN_JOB_TOPIC=workflow-studio-run-jobs
@@ -111,7 +112,7 @@ http://127.0.0.1:8000/api/health
 ## 成熟项目还应继续补齐
 
 - Token 过期、刷新和撤销
-- 管理员后台和邀请过期策略
+- 管理员后台
 - pgvector 或外部向量数据库
 - 队列失败重试、死信队列和任务取消
 - 生产日志归档、监控和告警

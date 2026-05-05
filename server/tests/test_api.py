@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from server.src.auth import AuthService, set_auth_service
 from server.src import main as api
 from server.src import runner
-from server.src.orm import DbSession
+from server.src.orm import DbSession, DbWorkspaceInvitation
 from server.src.providers import aliyun
 from server.src.db import create_session_factory
 from server.src.jobs import RunJobQueue, RunJobWorker
@@ -314,6 +314,39 @@ class ApiTestCase(unittest.TestCase):
             headers=blocked_headers,
         )
         self.assertEqual(rejected.status_code, 404)
+
+    def test_expired_workspace_invitation_cannot_be_accepted(self) -> None:
+        invited_headers = self.create_auth_headers("expired-invite-user")
+        workspace = self.client.post(
+            "/api/workspaces",
+            json={"name": "过期邀请空间"},
+            headers=self.auth_headers,
+        ).json()
+        invitation = self.client.post(
+            f"/api/workspaces/{workspace['id']}/invitations",
+            json={"role": "viewer"},
+            headers=self.auth_headers,
+        ).json()
+
+        with api.store._connect() as session:
+            db_invitation = session.get(DbWorkspaceInvitation, invitation["id"])
+            self.assertIsNotNone(db_invitation)
+            db_invitation.expires_at = "2000-01-01T00:00:00+00:00"
+            session.commit()
+
+        rejected = self.client.post(
+            "/api/workspaces/invitations/accept",
+            json={"code": invitation["code"]},
+            headers=invited_headers,
+        )
+        self.assertEqual(rejected.status_code, 404)
+
+        invitations = self.client.get(
+            f"/api/workspaces/{workspace['id']}/invitations",
+            headers=self.auth_headers,
+        ).json()
+        expired = next(item for item in invitations if item["id"] == invitation["id"])
+        self.assertEqual(expired["status"], "expired")
 
     def test_async_run_job_completes_and_creates_run(self) -> None:
         created = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers).json()

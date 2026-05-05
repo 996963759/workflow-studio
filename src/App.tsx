@@ -231,12 +231,13 @@ type WorkspaceInvitationRecord = {
   workspace_name?: string | null
   code: string
   role: 'owner' | 'editor' | 'viewer'
-  status: 'pending' | 'accepted' | 'revoked'
+  status: 'pending' | 'accepted' | 'revoked' | 'expired'
   created_by: string
   created_by_username?: string | null
   accepted_by?: string | null
   accepted_by_username?: string | null
   created_at: string
+  expires_at: string
   accepted_at?: string | null
   revoked_at?: string | null
 }
@@ -1309,6 +1310,20 @@ const isAudioStep = (step: RunStep) => step.provider?.includes('TTS') || step.ou
 
 const isSimulatedAudioStep = (step: RunStep) =>
   step.output.includes('模拟音频') || step.output.includes('模拟生成音频') || step.error?.includes('AliyunProviderError')
+
+const invitationStatusLabel = (invitation: WorkspaceInvitationRecord) => {
+  if (invitation.status === 'pending' && new Date(invitation.expires_at).getTime() <= Date.now()) return '已过期'
+  const labels: Record<WorkspaceInvitationRecord['status'], string> = {
+    pending: '待使用',
+    accepted: '已接受',
+    revoked: '已撤销',
+    expired: '已过期',
+  }
+  return labels[invitation.status]
+}
+
+const canRevokeInvitation = (invitation: WorkspaceInvitationRecord) =>
+  invitation.status === 'pending' && new Date(invitation.expires_at).getTime() > Date.now()
 
 const loadStoredWorkflow = (): WorkflowDefinition | null => {
   try {
@@ -5154,12 +5169,12 @@ function App() {
                   workspaceInvitations.slice(0, 5).map((invitation) => (
                     <article key={invitation.id}>
                       <div>
-                        <strong>{invitation.role} · {invitation.status}</strong>
+                        <strong>{invitation.role} · {invitationStatusLabel(invitation)}</strong>
                         <code>{invitation.code}</code>
                         <small>
                           {invitation.accepted_by_username
                             ? `已由 ${invitation.accepted_by_username} 接受`
-                            : new Date(invitation.created_at).toLocaleString('zh-CN')}
+                            : `有效至 ${new Date(invitation.expires_at).toLocaleString('zh-CN')}`}
                         </small>
                       </div>
                       <div className="workspace-invitation-actions">
@@ -5168,7 +5183,7 @@ function App() {
                         </button>
                         <button
                           type="button"
-                          disabled={invitation.status !== 'pending' || workspaceInviteBusy === 'revoke'}
+                          disabled={!canRevokeInvitation(invitation) || workspaceInviteBusy === 'revoke'}
                           onClick={() => void revokeWorkspaceInvitation(invitation.id)}
                         >
                           撤销

@@ -54,6 +54,7 @@ class DbWorkspaceInvitation(Base):
     created_by: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
     accepted_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), index=True)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
+    expires_at: Mapped[str] = mapped_column(String, nullable=False)
     accepted_at: Mapped[str | None] = mapped_column(String)
     revoked_at: Mapped[str | None] = mapped_column(String)
 
