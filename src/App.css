@@ -1200,6 +1200,96 @@ textarea:focus {
   gap: 6px;
 }
 
+.workspace-admin-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.workspace-join-form,
+.workspace-invite-create {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+}
+
+.workspace-invitation-list {
+  display: grid;
+  gap: 7px;
+}
+
+.workspace-invitation-list p {
+  color: #64748b;
+  font-size: 12px;
+  margin: 0;
+}
+
+.workspace-invitation-list article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  border: 1px solid #e1e7dc;
+  border-radius: 7px;
+  background: #ffffff;
+  padding: 8px;
+}
+
+.workspace-invitation-list article > div:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.workspace-invitation-list strong,
+.workspace-invitation-list small,
+.workspace-invitation-list code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-invitation-list strong {
+  color: #111827;
+  font-size: 12px;
+}
+
+.workspace-invitation-list code {
+  color: #31513f;
+  font-size: 11px;
+}
+
+.workspace-invitation-list small {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.workspace-invitation-actions {
+  display: inline-flex;
+  gap: 5px;
+}
+
+.workspace-invitation-actions button {
+  border: 1px solid #d8ded4;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #334155;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 5px 7px;
+}
+
+.workspace-invitation-actions button:hover {
+  border-color: #9aa68f;
+  background: #f7f8f3;
+}
+
+.workspace-invitation-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .workflow-meta-panel {
   display: grid;
   gap: 10px;

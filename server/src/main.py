@@ -20,6 +20,9 @@ from .models import (
     RunRequest,
     RunResponse,
     WorkspaceCreatePayload,
+    WorkspaceInvitationAcceptPayload,
+    WorkspaceInvitationCreatePayload,
+    WorkspaceInvitationRecord,
     WorkspaceMemberPayload,
     WorkspaceMemberRecord,
     WorkspaceRecord,
@@ -186,6 +189,79 @@ def upsert_workspace_member(
         {"role": member.role},
     )
     return member
+
+
+@app.get("/api/workspaces/{workspace_id}/invitations", response_model=list[WorkspaceInvitationRecord])
+def list_workspace_invitations(
+    workspace_id: str,
+    user: UserRecord = Depends(require_auth),
+) -> list[WorkspaceInvitationRecord]:
+    invitations = store.list_workspace_invitations(workspace_id, user.id)
+    if invitations is None:
+        raise HTTPException(status_code=403, detail="Workspace owner access required")
+    return invitations
+
+
+@app.post("/api/workspaces/{workspace_id}/invitations", response_model=WorkspaceInvitationRecord, status_code=201)
+def create_workspace_invitation(
+    workspace_id: str,
+    payload: WorkspaceInvitationCreatePayload,
+    user: UserRecord = Depends(require_auth),
+) -> WorkspaceInvitationRecord:
+    invitation = store.create_workspace_invitation(workspace_id, user.id, payload.role)
+    if invitation is None:
+        raise HTTPException(status_code=403, detail="Workspace owner access required")
+    store.append_audit_log(
+        workspace_id,
+        user.id,
+        "workspace.invitation_create",
+        "workspace_invitation",
+        f"创建 {invitation.role} 邀请码",
+        invitation.id,
+        {"role": invitation.role},
+    )
+    return invitation
+
+
+@app.post("/api/workspaces/invitations/accept", response_model=WorkspaceInvitationRecord)
+def accept_workspace_invitation(
+    payload: WorkspaceInvitationAcceptPayload,
+    user: UserRecord = Depends(require_auth),
+) -> WorkspaceInvitationRecord:
+    invitation = store.accept_workspace_invitation(payload.code, user.id)
+    if invitation is None:
+        raise HTTPException(status_code=404, detail="Invitation not found or no longer valid")
+    store.append_audit_log(
+        invitation.workspace_id,
+        user.id,
+        "workspace.invitation_accept",
+        "workspace_invitation",
+        f"接受团队空间邀请：{invitation.workspace_name or invitation.workspace_id}",
+        invitation.id,
+        {"role": invitation.role},
+    )
+    return invitation
+
+
+@app.delete("/api/workspaces/{workspace_id}/invitations/{invitation_id}", response_model=WorkspaceInvitationRecord)
+def revoke_workspace_invitation(
+    workspace_id: str,
+    invitation_id: str,
+    user: UserRecord = Depends(require_auth),
+) -> WorkspaceInvitationRecord:
+    invitation = store.revoke_workspace_invitation(workspace_id, invitation_id, user.id)
+    if invitation is None:
+        raise HTTPException(status_code=404, detail="Invitation not found or workspace owner access required")
+    store.append_audit_log(
+        workspace_id,
+        user.id,
+        "workspace.invitation_revoke",
+        "workspace_invitation",
+        f"撤销 {invitation.role} 邀请码",
+        invitation.id,
+        {"role": invitation.role, "status": invitation.status},
+    )
+    return invitation
 
 
 @app.get("/api/model-configs/{provider}", response_model=ModelConfigRecord)

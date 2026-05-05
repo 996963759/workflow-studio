@@ -218,6 +218,22 @@ type WorkspaceRecord = {
   created_at: string
 }
 
+type WorkspaceInvitationRecord = {
+  id: string
+  workspace_id: string
+  workspace_name?: string | null
+  code: string
+  role: 'owner' | 'editor' | 'viewer'
+  status: 'pending' | 'accepted' | 'revoked'
+  created_by: string
+  created_by_username?: string | null
+  accepted_by?: string | null
+  accepted_by_username?: string | null
+  created_at: string
+  accepted_at?: string | null
+  revoked_at?: string | null
+}
+
 type RunJobRecord = {
   id: string
   workflow_id: string
@@ -1954,6 +1970,10 @@ function App() {
   const [knowledgeDocuments, setKnowledgeDocuments] = useState<KnowledgeDocument[]>([])
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([])
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(() => loadActiveWorkspaceId())
+  const [workspaceInvitations, setWorkspaceInvitations] = useState<WorkspaceInvitationRecord[]>([])
+  const [invitationRole, setInvitationRole] = useState<WorkspaceRecord['role']>('viewer')
+  const [invitationCodeInput, setInvitationCodeInput] = useState('')
+  const [workspaceInviteBusy, setWorkspaceInviteBusy] = useState<'load' | 'create' | 'accept' | 'revoke' | null>(null)
   const [workflowVersions, setWorkflowVersions] = useState<WorkflowVersionRecord[]>([])
   const [auditLogs, setAuditLogs] = useState<AuditLogRecord[]>([])
   const [versionNote, setVersionNote] = useState('')
@@ -2133,6 +2153,8 @@ function App() {
     setWorkspaces([])
     setActiveWorkspaceId('')
     persistActiveWorkspaceId('')
+    setWorkspaceInvitations([])
+    setInvitationCodeInput('')
     setRunJobs([])
     setActiveRunJobId('')
     setRunHistory([])
@@ -2209,6 +2231,88 @@ function App() {
     }
     clearSessionState()
     setNotice('已退出登录。')
+  }
+
+  const loadWorkspaceInvitations = useCallback(async () => {
+    if (!activeWorkspaceId || activeWorkspace?.role !== 'owner') {
+      setWorkspaceInvitations([])
+      return
+    }
+    setWorkspaceInviteBusy('load')
+    try {
+      const response = await apiFetch(`/api/workspaces/${activeWorkspaceId}/invitations`)
+      if (!response.ok) throw new Error('load invitations failed')
+      setWorkspaceInvitations((await response.json()) as WorkspaceInvitationRecord[])
+    } catch {
+      setNotice('读取团队邀请失败：请确认你是当前团队空间 owner。')
+    } finally {
+      setWorkspaceInviteBusy(null)
+    }
+  }, [activeWorkspace?.role, activeWorkspaceId, apiFetch])
+
+  const createWorkspaceInvitation = async () => {
+    if (!activeWorkspaceId) return
+    setWorkspaceInviteBusy('create')
+    try {
+      const response = await apiFetch(`/api/workspaces/${activeWorkspaceId}/invitations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: invitationRole }),
+      })
+      if (!response.ok) throw new Error('create invitation failed')
+      const invitation = (await response.json()) as WorkspaceInvitationRecord
+      setWorkspaceInvitations((current) => [invitation, ...current])
+      setNotice(`已创建 ${invitation.role} 邀请码，可复制给对方使用。`)
+    } catch {
+      setNotice('创建邀请码失败：只有 owner 可以创建邀请。')
+    } finally {
+      setWorkspaceInviteBusy(null)
+    }
+  }
+
+  const acceptWorkspaceInvitation = async () => {
+    const code = invitationCodeInput.trim()
+    if (!code) {
+      setNotice('请先输入邀请码。')
+      return
+    }
+    setWorkspaceInviteBusy('accept')
+    try {
+      const response = await apiFetch('/api/workspaces/invitations/accept', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
+      })
+      if (!response.ok) throw new Error('accept invitation failed')
+      const invitation = (await response.json()) as WorkspaceInvitationRecord
+      setInvitationCodeInput('')
+      await loadWorkspaces()
+      setNotice(`已加入团队空间：${invitation.workspace_name ?? invitation.workspace_id}`)
+    } catch {
+      setNotice('加入团队失败：邀请码不存在、已使用或已撤销。')
+    } finally {
+      setWorkspaceInviteBusy(null)
+    }
+  }
+
+  const revokeWorkspaceInvitation = async (invitationId: string) => {
+    if (!activeWorkspaceId) return
+    setWorkspaceInviteBusy('revoke')
+    try {
+      const response = await apiFetch(`/api/workspaces/${activeWorkspaceId}/invitations/${invitationId}`, {
+        method: 'DELETE',
+      })
+      if (!response.ok) throw new Error('revoke invitation failed')
+      const invitation = (await response.json()) as WorkspaceInvitationRecord
+      setWorkspaceInvitations((current) =>
+        current.map((item) => (item.id === invitation.id ? invitation : item)),
+      )
+      setNotice('已撤销邀请码。')
+    } catch {
+      setNotice('撤销邀请码失败：请确认你是当前团队空间 owner。')
+    } finally {
+      setWorkspaceInviteBusy(null)
+    }
   }
 
   useEffect(() => {
@@ -3052,6 +3156,19 @@ function App() {
     }, 0)
     return () => window.clearTimeout(timer)
   }, [activeWorkspaceId, authSession, loadAliyunConfig, loadModelConfig])
+
+  useEffect(() => {
+    if (!authSession || !activeWorkspaceId || activeWorkspace?.role !== 'owner') {
+      const timer = window.setTimeout(() => {
+        setWorkspaceInvitations([])
+      }, 0)
+      return () => window.clearTimeout(timer)
+    }
+    const timer = window.setTimeout(() => {
+      void loadWorkspaceInvitations()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [activeWorkspace?.role, activeWorkspaceId, authSession, loadWorkspaceInvitations])
 
   useEffect(() => {
     if (!authSession || !activeWorkspaceId) return
@@ -4845,6 +4962,96 @@ function App() {
                 {renderFieldIssues('retryCount')}
               </label>
             </div>
+          )}
+        </section>
+
+        <section className="panel workspace-admin-panel">
+          <div className="panel-title between">
+            <span>
+              <Shield size={16} />
+              团队邀请
+            </span>
+            {activeWorkspace?.role === 'owner' && (
+              <button
+                type="button"
+                className="mini-action"
+                disabled={Boolean(workspaceInviteBusy)}
+                onClick={() => void loadWorkspaceInvitations()}
+              >
+                {workspaceInviteBusy === 'load' ? '读取中...' : '刷新'}
+              </button>
+            )}
+          </div>
+          <div className="workspace-join-form">
+            <input
+              value={invitationCodeInput}
+              onChange={(event) => setInvitationCodeInput(event.target.value)}
+              placeholder="输入别人发给你的邀请码"
+            />
+            <button
+              type="button"
+              className="mini-action"
+              disabled={workspaceInviteBusy === 'accept'}
+              onClick={() => void acceptWorkspaceInvitation()}
+            >
+              {workspaceInviteBusy === 'accept' ? '加入中...' : '加入团队'}
+            </button>
+          </div>
+          {activeWorkspace?.role === 'owner' ? (
+            <>
+              <div className="workspace-invite-create">
+                <select
+                  aria-label="邀请角色"
+                  value={invitationRole}
+                  onChange={(event) => setInvitationRole(event.target.value as WorkspaceRecord['role'])}
+                >
+                  <option value="viewer">viewer 可查看和运行</option>
+                  <option value="editor">editor 可编辑</option>
+                  <option value="owner">owner 可管理成员</option>
+                </select>
+                <button
+                  type="button"
+                  className="mini-action"
+                  disabled={workspaceInviteBusy === 'create'}
+                  onClick={() => void createWorkspaceInvitation()}
+                >
+                  {workspaceInviteBusy === 'create' ? '创建中...' : '创建邀请码'}
+                </button>
+              </div>
+              <div className="workspace-invitation-list">
+                {workspaceInvitations.length === 0 ? (
+                  <p>暂无邀请记录。</p>
+                ) : (
+                  workspaceInvitations.slice(0, 5).map((invitation) => (
+                    <article key={invitation.id}>
+                      <div>
+                        <strong>{invitation.role} · {invitation.status}</strong>
+                        <code>{invitation.code}</code>
+                        <small>
+                          {invitation.accepted_by_username
+                            ? `已由 ${invitation.accepted_by_username} 接受`
+                            : new Date(invitation.created_at).toLocaleString('zh-CN')}
+                        </small>
+                      </div>
+                      <div className="workspace-invitation-actions">
+                        <button type="button" onClick={() => copyText('邀请码', invitation.code)}>
+                          复制
+                        </button>
+                        <button
+                          type="button"
+                          disabled={invitation.status !== 'pending' || workspaceInviteBusy === 'revoke'}
+                          onClick={() => void revokeWorkspaceInvitation(invitation.id)}
+                        >
+                          撤销
+                        </button>
+                      </div>
+                    </article>
+                  ))
+                )}
+              </div>
+            </>
+          ) : (
+            <p className="model-status-note">当前角色不是 owner，只能使用邀请码加入其他团队空间。</p>
           )}
         </section>
 

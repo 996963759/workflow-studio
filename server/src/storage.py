@@ -22,6 +22,7 @@ from .models import (
     AuditLogRecord,
     WorkspaceMemberRecord,
     WorkspaceRecord,
+    WorkspaceInvitationRecord,
 )
 from .orm import (
     Base,
@@ -32,6 +33,7 @@ from .orm import (
     DbWorkflow,
     DbWorkflowVersion,
     DbWorkspace,
+    DbWorkspaceInvitation,
     DbWorkspaceMember,
     DbWorkspaceModelConfig,
 )
@@ -273,6 +275,160 @@ class WorkflowStore:
                 )
             session.commit()
         return WorkspaceMemberRecord(id=user.id, username=user.username, role=role, created_at=member_created_at)
+
+    def _invitation_record(
+        self,
+        invitation: DbWorkspaceInvitation,
+        workspace_name: str | None = None,
+        created_by_username: str | None = None,
+        accepted_by_username: str | None = None,
+    ) -> WorkspaceInvitationRecord:
+        return WorkspaceInvitationRecord(
+            id=invitation.id,
+            workspace_id=invitation.workspace_id,
+            workspace_name=workspace_name,
+            code=invitation.code,
+            role=invitation.role,
+            status=invitation.status,
+            created_by=invitation.created_by,
+            created_by_username=created_by_username,
+            accepted_by=invitation.accepted_by,
+            accepted_by_username=accepted_by_username,
+            created_at=invitation.created_at,
+            accepted_at=invitation.accepted_at,
+            revoked_at=invitation.revoked_at,
+        )
+
+    def list_workspace_invitations(self, workspace_id: str, actor_user_id: str) -> list[WorkspaceInvitationRecord] | None:
+        if not self.can_access_workspace(workspace_id, actor_user_id, "owner"):
+            return None
+        with self._connect() as session:
+            rows = session.execute(
+                select(DbWorkspaceInvitation, DbWorkspace.name, DbUser.username)
+                .join(DbWorkspace, DbWorkspace.id == DbWorkspaceInvitation.workspace_id)
+                .join(DbUser, DbUser.id == DbWorkspaceInvitation.created_by)
+                .where(DbWorkspaceInvitation.workspace_id == workspace_id)
+                .order_by(DbWorkspaceInvitation.created_at.desc())
+            ).all()
+            accepted_ids = [invitation.accepted_by for invitation, _, _ in rows if invitation.accepted_by]
+            accepted_usernames = (
+                {
+                    user_id: username
+                    for user_id, username in session.execute(
+                        select(DbUser.id, DbUser.username).where(DbUser.id.in_(accepted_ids))
+                    ).all()
+                }
+                if accepted_ids
+                else {}
+            )
+        return [
+            self._invitation_record(
+                invitation,
+                workspace_name,
+                created_by_username,
+                accepted_usernames.get(invitation.accepted_by or ""),
+            )
+            for invitation, workspace_name, created_by_username in rows
+        ]
+
+    def create_workspace_invitation(
+        self,
+        workspace_id: str,
+        actor_user_id: str,
+        role: str,
+    ) -> WorkspaceInvitationRecord | None:
+        if not self.can_access_workspace(workspace_id, actor_user_id, "owner"):
+            return None
+        with self._connect() as session:
+            workspace = session.scalar(select(DbWorkspace).where(DbWorkspace.id == workspace_id))
+            creator = session.scalar(select(DbUser).where(DbUser.id == actor_user_id))
+            if not workspace or not creator:
+                return None
+            now = utc_now()
+            invitation = DbWorkspaceInvitation(
+                id=str(uuid.uuid4()),
+                workspace_id=workspace_id,
+                code=uuid.uuid4().hex,
+                role=role,
+                status="pending",
+                created_by=actor_user_id,
+                created_at=now,
+            )
+            session.add(invitation)
+            record = self._invitation_record(invitation, workspace.name, creator.username)
+            session.commit()
+        return record
+
+    def revoke_workspace_invitation(
+        self,
+        workspace_id: str,
+        invitation_id: str,
+        actor_user_id: str,
+    ) -> WorkspaceInvitationRecord | None:
+        if not self.can_access_workspace(workspace_id, actor_user_id, "owner"):
+            return None
+        with self._connect() as session:
+            invitation = session.scalar(
+                select(DbWorkspaceInvitation).where(
+                    DbWorkspaceInvitation.id == invitation_id,
+                    DbWorkspaceInvitation.workspace_id == workspace_id,
+                )
+            )
+            if not invitation:
+                return None
+            if invitation.status == "pending":
+                invitation.status = "revoked"
+                invitation.revoked_at = utc_now()
+            workspace_name = session.scalar(select(DbWorkspace.name).where(DbWorkspace.id == workspace_id))
+            created_by_username = session.scalar(select(DbUser.username).where(DbUser.id == invitation.created_by))
+            accepted_by_username = (
+                session.scalar(select(DbUser.username).where(DbUser.id == invitation.accepted_by))
+                if invitation.accepted_by
+                else None
+            )
+            record = self._invitation_record(invitation, workspace_name, created_by_username, accepted_by_username)
+            session.commit()
+        return record
+
+    def accept_workspace_invitation(self, code: str, user_id: str) -> WorkspaceInvitationRecord | None:
+        with self._connect() as session:
+            invitation = session.scalar(
+                select(DbWorkspaceInvitation).where(
+                    DbWorkspaceInvitation.code == code.strip(),
+                    DbWorkspaceInvitation.status == "pending",
+                )
+            )
+            if not invitation:
+                return None
+            existing = session.scalar(
+                select(DbWorkspaceMember).where(
+                    DbWorkspaceMember.workspace_id == invitation.workspace_id,
+                    DbWorkspaceMember.user_id == user_id,
+                )
+            )
+            now = utc_now()
+            if existing:
+                if ROLE_ORDER[invitation.role] > ROLE_ORDER[existing.role]:
+                    existing.role = invitation.role
+            else:
+                session.add(
+                    DbWorkspaceMember(
+                        id=str(uuid.uuid4()),
+                        workspace_id=invitation.workspace_id,
+                        user_id=user_id,
+                        role=invitation.role,
+                        created_at=now,
+                    )
+                )
+            invitation.status = "accepted"
+            invitation.accepted_by = user_id
+            invitation.accepted_at = now
+            workspace_name = session.scalar(select(DbWorkspace.name).where(DbWorkspace.id == invitation.workspace_id))
+            created_by_username = session.scalar(select(DbUser.username).where(DbUser.id == invitation.created_by))
+            accepted_by_username = session.scalar(select(DbUser.username).where(DbUser.id == user_id))
+            record = self._invitation_record(invitation, workspace_name, created_by_username, accepted_by_username)
+            session.commit()
+        return record
 
     def get_model_config(self, workspace_id: str, user_id: str, provider: str) -> ModelConfigRecord | None:
         if not self.can_access_workspace(workspace_id, user_id, "viewer"):

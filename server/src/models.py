@@ -82,6 +82,30 @@ class WorkspaceMemberPayload(BaseModel):
     role: str = Field(pattern="^(owner|editor|viewer)$")
 
 
+class WorkspaceInvitationCreatePayload(BaseModel):
+    role: str = Field(pattern="^(owner|editor|viewer)$")
+
+
+class WorkspaceInvitationAcceptPayload(BaseModel):
+    code: str = Field(min_length=8, max_length=80)
+
+
+class WorkspaceInvitationRecord(BaseModel):
+    id: str
+    workspace_id: str
+    workspace_name: str | None = None
+    code: str
+    role: str
+    status: str
+    created_by: str
+    created_by_username: str | None = None
+    accepted_by: str | None = None
+    accepted_by_username: str | None = None
+    created_at: str
+    accepted_at: str | None = None
+    revoked_at: str | None = None
+
+
 class ModelConfigPayload(BaseModel):
     enabled: bool = True
     model: str = Field(default="deepseek-v4-flash", min_length=1, max_length=120)

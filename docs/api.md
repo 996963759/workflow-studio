@@ -39,12 +39,18 @@ X-Workspace-Id: <workspace_id>
 | POST | `/api/workspaces` | 创建团队空间，当前用户成为 owner |
 | GET | `/api/workspaces/{workspace_id}/members` | 查看成员 |
 | POST | `/api/workspaces/{workspace_id}/members` | owner 添加或更新成员角色 |
+| GET | `/api/workspaces/{workspace_id}/invitations` | owner 查看邀请记录 |
+| POST | `/api/workspaces/{workspace_id}/invitations` | owner 创建邀请码 |
+| DELETE | `/api/workspaces/{workspace_id}/invitations/{invitation_id}` | owner 撤销邀请码 |
+| POST | `/api/workspaces/invitations/accept` | 当前登录用户使用邀请码加入团队 |
 
 角色：
 
 - `owner`：管理成员，拥有编辑权限。
 - `editor`：创建、更新、删除工作流和知识文档。
 - `viewer`：查看工作流、运行历史和触发运行。
+
+邀请码只能使用一次。接受后会把当前登录用户加入对应团队空间；撤销或已使用的邀请码不能再次接受。
 
 ## 模型配置
 

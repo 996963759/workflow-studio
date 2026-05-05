@@ -43,6 +43,21 @@ class DbWorkspaceMember(Base):
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 
 
+class DbWorkspaceInvitation(Base):
+    __tablename__ = "workspace_invitations"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String, ForeignKey("workspaces.id"), nullable=False, index=True)
+    code: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    created_by: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
+    accepted_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), index=True)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    accepted_at: Mapped[str | None] = mapped_column(String)
+    revoked_at: Mapped[str | None] = mapped_column(String)
+
+
 class DbWorkspaceModelConfig(Base):
     __tablename__ = "workspace_model_configs"
 

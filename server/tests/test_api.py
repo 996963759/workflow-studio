@@ -248,6 +248,55 @@ class ApiTestCase(unittest.TestCase):
         )
         self.assertEqual(update.status_code, 403)
 
+    def test_workspace_invitation_accept_and_revoke(self) -> None:
+        invited_headers = self.create_auth_headers("invited-user")
+        blocked_headers = self.create_auth_headers("blocked-user")
+        workspace = self.client.post(
+            "/api/workspaces",
+            json={"name": "邀请测试空间"},
+            headers=self.auth_headers,
+        ).json()
+        create_invitation = self.client.post(
+            f"/api/workspaces/{workspace['id']}/invitations",
+            json={"role": "editor"},
+            headers=self.auth_headers,
+        )
+        self.assertEqual(create_invitation.status_code, 201)
+        invitation = create_invitation.json()
+        self.assertEqual(invitation["status"], "pending")
+        self.assertEqual(invitation["role"], "editor")
+
+        accepted = self.client.post(
+            "/api/workspaces/invitations/accept",
+            json={"code": invitation["code"]},
+            headers=invited_headers,
+        )
+        self.assertEqual(accepted.status_code, 200)
+        self.assertEqual(accepted.json()["status"], "accepted")
+
+        members = self.client.get(f"/api/workspaces/{workspace['id']}/members", headers=self.auth_headers).json()
+        invited_member = next(member for member in members if member["username"] == "invited-user")
+        self.assertEqual(invited_member["role"], "editor")
+
+        revoked_invitation = self.client.post(
+            f"/api/workspaces/{workspace['id']}/invitations",
+            json={"role": "viewer"},
+            headers=self.auth_headers,
+        ).json()
+        revoke = self.client.delete(
+            f"/api/workspaces/{workspace['id']}/invitations/{revoked_invitation['id']}",
+            headers=self.auth_headers,
+        )
+        self.assertEqual(revoke.status_code, 200)
+        self.assertEqual(revoke.json()["status"], "revoked")
+
+        rejected = self.client.post(
+            "/api/workspaces/invitations/accept",
+            json={"code": revoked_invitation["code"]},
+            headers=blocked_headers,
+        )
+        self.assertEqual(rejected.status_code, 404)
+
     def test_async_run_job_completes_and_creates_run(self) -> None:
         created = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers).json()
         enqueue = self.client.post(
