@@ -97,6 +97,19 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(body["database"], "sqlite")
         self.assertEqual(body["queue_backend"], "thread")
 
+    def test_admin_overview_reports_workspace_status(self) -> None:
+        response = self.client.get("/api/admin/overview", headers=self.auth_headers)
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["database"], "sqlite")
+        self.assertEqual(body["queue_backend"], "thread")
+        self.assertEqual(body["workspace"]["role"], "owner")
+        self.assertGreaterEqual(body["counts"]["members"], 1)
+        self.assertIn("provider_status", body)
+        self.assertIn("knowledge_status", body)
+        self.assertIn("recent_audit_logs", body)
+
     def test_auth_token_expires_and_is_pruned(self) -> None:
         register_response = self.client.post(
             "/api/auth/register",

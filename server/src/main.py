@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import CORS_ORIGINS, DIST_DIR
 from .auth import AuthService, current_token, login, register, require_auth, set_auth_service
 from .models import (
+    AdminOverviewRecord,
     AuthPayload,
     AuthResponse,
     AuditLogRecord,
@@ -140,6 +141,31 @@ def workspace_model_configs(workspace_id: str) -> dict[str, dict[str, str | bool
 def ensure_supported_model_provider(provider: str) -> None:
     if provider not in {"deepseek", "aliyun"}:
         raise HTTPException(status_code=400, detail="Unsupported model provider")
+
+
+@app.get("/api/admin/overview", response_model=AdminOverviewRecord)
+def admin_overview(context: WorkspaceContext = Depends(require_workspace_role("viewer"))) -> AdminOverviewRecord:
+    user, workspace_id = context
+    workspace = store.get_workspace_record(workspace_id, user.id)
+    counts = store.get_workspace_overview_counts(workspace_id, user.id)
+    if workspace is None or counts is None:
+        raise HTTPException(status_code=403, detail="Workspace access denied")
+    provider = provider_status()
+    knowledge = knowledge_status(user.id, workspace_id)
+    audit_logs = store.list_audit_logs(workspace_id, user.id, limit=5) or []
+    run_jobs = store.list_run_jobs(user.id, workspace_id=workspace_id)[:5]
+    database = store.engine.url.get_backend_name() if store.engine else "unknown"
+    return AdminOverviewRecord(
+        status="ok",
+        database=database,
+        queue_backend=job_queue.backend,
+        workspace=workspace,
+        counts=counts,
+        provider_status=provider,
+        knowledge_status=knowledge,
+        recent_audit_logs=audit_logs,
+        recent_run_jobs=run_jobs,
+    )
 
 
 @app.get("/api/workspaces", response_model=list[WorkspaceRecord])

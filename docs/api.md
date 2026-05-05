@@ -31,6 +31,12 @@ X-Workspace-Id: <workspace_id>
 | GET | `/api/auth/me` | 获取当前用户 |
 | POST | `/api/auth/logout` | 退出当前 token |
 
+## 管理概览
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/admin/overview` | 当前团队空间的系统概览，包括数据库、队列、模型、知识库、成员、任务和最近审计 |
+
 ## 团队空间
 
 | 方法 | 路径 | 说明 |

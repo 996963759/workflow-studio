@@ -191,3 +191,15 @@ class AuditLogRecord(BaseModel):
     summary: str
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: str
+
+
+class AdminOverviewRecord(BaseModel):
+    status: str
+    database: str
+    queue_backend: str
+    workspace: WorkspaceRecord
+    counts: dict[str, int]
+    provider_status: dict[str, str | bool]
+    knowledge_status: dict[str, int | str]
+    recent_audit_logs: list[AuditLogRecord] = Field(default_factory=list)
+    recent_run_jobs: list[RunJobRecord] = Field(default_factory=list)

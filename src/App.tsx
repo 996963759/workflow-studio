@@ -146,7 +146,7 @@ type WorkflowRecord = Required<Pick<WorkflowDefinition, 'id' | 'name' | 'version
 type WorkflowSortMode = 'updated' | 'name' | 'sync'
 type WorkflowSyncState = 'local' | 'synced' | 'dirty'
 type RunHistoryStatusFilter = 'all' | 'ok' | 'error'
-type AdminView = 'node' | 'team' | 'model' | 'knowledge' | 'ops' | 'json'
+type AdminView = 'node' | 'system' | 'team' | 'model' | 'knowledge' | 'ops' | 'json'
 
 type ServerWorkflowRecord = {
   id: string
@@ -286,6 +286,18 @@ type RemoteValidationState = {
   issues: WorkflowIssue[]
   key: string
   status: 'checking' | 'backend' | 'local'
+}
+
+type AdminOverviewRecord = {
+  status: string
+  database: string
+  queue_backend: string
+  workspace: WorkspaceRecord
+  counts: Record<string, number>
+  provider_status: ProviderStatus
+  knowledge_status: KnowledgeStatus
+  recent_audit_logs: AuditLogRecord[]
+  recent_run_jobs: RunJobRecord[]
 }
 
 type ProviderStatus = {
@@ -1979,6 +1991,8 @@ function App() {
   const [runHistorySearch, setRunHistorySearch] = useState('')
   const [runHistoryStatusFilter, setRunHistoryStatusFilter] = useState<RunHistoryStatusFilter>('all')
   const [adminView, setAdminView] = useState<AdminView>('node')
+  const [adminOverview, setAdminOverview] = useState<AdminOverviewRecord | null>(null)
+  const [adminOverviewBusy, setAdminOverviewBusy] = useState(false)
   const [remoteValidation, setRemoteValidation] = useState<RemoteValidationState | null>(null)
   const [providerStatus, setProviderStatus] = useState<ProviderStatus | null>(null)
   const [providerStatusCheckedAt, setProviderStatusCheckedAt] = useState('')
@@ -2179,6 +2193,7 @@ function App() {
     setWorkspaces([])
     setActiveWorkspaceId('')
     persistActiveWorkspaceId('')
+    setAdminOverview(null)
     setWorkspaceMembers([])
     setWorkspaceInvitations([])
     setInvitationCodeInput('')
@@ -2259,6 +2274,26 @@ function App() {
     clearSessionState()
     setNotice('已退出登录。')
   }
+
+  const loadAdminOverview = useCallback(async (showNotice = true) => {
+    if (!activeWorkspaceId) {
+      setAdminOverview(null)
+      return
+    }
+    setAdminOverviewBusy(true)
+    try {
+      const response = await apiFetch('/api/admin/overview')
+      if (!response.ok) throw new Error('load admin overview failed')
+      const overview = (await response.json()) as AdminOverviewRecord
+      setAdminOverview(overview)
+      if (showNotice) setNotice('已刷新系统概览。')
+    } catch {
+      setAdminOverview(null)
+      if (showNotice) setNotice('系统概览读取失败：请确认后端在线。')
+    } finally {
+      setAdminOverviewBusy(false)
+    }
+  }, [activeWorkspaceId, apiFetch])
 
   const loadWorkspaceMembers = useCallback(async () => {
     if (!activeWorkspaceId) {
@@ -3239,6 +3274,14 @@ function App() {
     }, 0)
     return () => window.clearTimeout(timer)
   }, [activeWorkspaceId, authSession, loadAliyunConfig, loadModelConfig])
+
+  useEffect(() => {
+    if (!authSession || !activeWorkspaceId || adminView !== 'system') return
+    const timer = window.setTimeout(() => {
+      void loadAdminOverview(false)
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [activeWorkspaceId, adminView, authSession, loadAdminOverview])
 
   useEffect(() => {
     if (!authSession || !activeWorkspaceId) {
@@ -4415,6 +4458,7 @@ function App() {
           <div className="admin-tabs" role="tablist" aria-label="管理中心视图">
             {[
               ['node', '节点'],
+              ['system', '系统'],
               ['team', '团队'],
               ['model', '模型'],
               ['knowledge', '知识库'],
@@ -4432,6 +4476,89 @@ function App() {
             ))}
           </div>
         </section>
+
+        {adminView === 'system' && <section className="panel admin-overview-panel">
+          <div className="panel-title between">
+            <span>
+              <TerminalSquare size={16} />
+              系统概览
+            </span>
+            <button
+              type="button"
+              className="mini-action"
+              disabled={adminOverviewBusy}
+              onClick={() => void loadAdminOverview()}
+            >
+              {adminOverviewBusy ? '刷新中...' : '刷新'}
+            </button>
+          </div>
+          {adminOverview ? (
+            <>
+              <div className="admin-overview-grid">
+                <div>
+                  <span>数据库</span>
+                  <strong>{adminOverview.database}</strong>
+                </div>
+                <div>
+                  <span>队列</span>
+                  <strong>{adminOverview.queue_backend}</strong>
+                </div>
+                <div>
+                  <span>成员</span>
+                  <strong>{adminOverview.counts.members ?? 0}</strong>
+                </div>
+                <div>
+                  <span>待用邀请</span>
+                  <strong>{adminOverview.counts.pending_invitations ?? 0}</strong>
+                </div>
+                <div>
+                  <span>工作流</span>
+                  <strong>{adminOverview.counts.workflows ?? 0}</strong>
+                </div>
+                <div>
+                  <span>运行记录</span>
+                  <strong>{adminOverview.counts.runs ?? 0}</strong>
+                </div>
+                <div>
+                  <span>排队任务</span>
+                  <strong>{adminOverview.counts.queued_run_jobs ?? 0}</strong>
+                </div>
+                <div>
+                  <span>失败任务</span>
+                  <strong>{adminOverview.counts.failed_run_jobs ?? 0}</strong>
+                </div>
+              </div>
+              <div className="admin-overview-list">
+                <article>
+                  <strong>模型与知识库</strong>
+                  <span>
+                    DeepSeek {adminOverview.provider_status.deepseek_configured ? '已配置' : '未配置'} ·
+                    阿里云 {adminOverview.provider_status.aliyun_configured ? '已配置' : '未配置'} ·
+                    知识文档 {adminOverview.knowledge_status.document_count}
+                  </span>
+                </article>
+                <article>
+                  <strong>当前空间</strong>
+                  <span>{adminOverview.workspace.name} · {adminOverview.workspace.role}</span>
+                </article>
+                {adminOverview.recent_audit_logs.slice(0, 3).map((log) => (
+                  <article key={log.id}>
+                    <strong>{log.summary}</strong>
+                    <span>{log.actor_username} · {new Date(log.created_at).toLocaleString('zh-CN')}</span>
+                  </article>
+                ))}
+                {adminOverview.recent_run_jobs.slice(0, 3).map((job) => (
+                  <article key={job.id}>
+                    <strong>任务 {job.status}</strong>
+                    <span>{new Date(job.updated_at).toLocaleString('zh-CN')}</span>
+                  </article>
+                ))}
+              </div>
+            </>
+          ) : (
+            <p className="model-status-note">点击刷新读取当前团队空间的系统概览。</p>
+          )}
+        </section>}
 
         {adminView === 'node' && <section className="panel inspector">
           <div className="panel-title between">

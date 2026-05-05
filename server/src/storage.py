@@ -259,6 +259,79 @@ class WorkflowStore:
             for user, member in rows
         ]
 
+    def get_workspace_record(self, workspace_id: str, user_id: str) -> WorkspaceRecord | None:
+        with self._connect() as session:
+            row = session.execute(
+                select(DbWorkspace, DbWorkspaceMember.role)
+                .join(DbWorkspaceMember, DbWorkspaceMember.workspace_id == DbWorkspace.id)
+                .where(DbWorkspace.id == workspace_id, DbWorkspaceMember.user_id == user_id)
+            ).one_or_none()
+        if not row:
+            return None
+        workspace, role = row
+        return WorkspaceRecord(
+            id=workspace.id,
+            name=workspace.name,
+            owner_id=workspace.owner_id,
+            role=role,
+            created_at=workspace.created_at,
+        )
+
+    def get_workspace_overview_counts(self, workspace_id: str, user_id: str) -> dict[str, int] | None:
+        if not self.can_access_workspace(workspace_id, user_id):
+            return None
+        with self._connect() as session:
+            return {
+                "members": session.scalar(
+                    select(func.count()).select_from(DbWorkspaceMember).where(DbWorkspaceMember.workspace_id == workspace_id)
+                )
+                or 0,
+                "pending_invitations": session.scalar(
+                    select(func.count()).select_from(DbWorkspaceInvitation).where(
+                        DbWorkspaceInvitation.workspace_id == workspace_id,
+                        DbWorkspaceInvitation.status == "pending",
+                    )
+                )
+                or 0,
+                "workflows": session.scalar(
+                    select(func.count()).select_from(DbWorkflow).where(DbWorkflow.workspace_id == workspace_id)
+                )
+                or 0,
+                "archived_workflows": session.scalar(
+                    select(func.count()).select_from(DbWorkflow).where(
+                        DbWorkflow.workspace_id == workspace_id,
+                        DbWorkflow.archived.is_(True),
+                    )
+                )
+                or 0,
+                "runs": session.scalar(
+                    select(func.count()).select_from(DbRun).where(DbRun.workspace_id == workspace_id)
+                )
+                or 0,
+                "run_jobs": session.scalar(
+                    select(func.count()).select_from(DbRunJob).where(DbRunJob.workspace_id == workspace_id)
+                )
+                or 0,
+                "queued_run_jobs": session.scalar(
+                    select(func.count()).select_from(DbRunJob).where(
+                        DbRunJob.workspace_id == workspace_id,
+                        DbRunJob.status == "queued",
+                    )
+                )
+                or 0,
+                "failed_run_jobs": session.scalar(
+                    select(func.count()).select_from(DbRunJob).where(
+                        DbRunJob.workspace_id == workspace_id,
+                        DbRunJob.status == "failed",
+                    )
+                )
+                or 0,
+                "audit_logs": session.scalar(
+                    select(func.count()).select_from(DbAuditLog).where(DbAuditLog.workspace_id == workspace_id)
+                )
+                or 0,
+            }
+
     def upsert_workspace_member(
         self,
         workspace_id: str,

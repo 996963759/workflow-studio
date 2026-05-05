@@ -1138,6 +1138,51 @@ textarea:focus {
   color: #ffffff;
 }
 
+.admin-overview-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.admin-overview-grid div,
+.admin-overview-list article {
+  border: 1px solid #e1e7dc;
+  border-radius: 7px;
+  background: #ffffff;
+  padding: 8px;
+}
+
+.admin-overview-grid span,
+.admin-overview-list span {
+  display: block;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-overview-grid strong,
+.admin-overview-list strong {
+  display: block;
+  overflow: hidden;
+  color: #111827;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-overview-list {
+  display: grid;
+  gap: 7px;
+}
+
 .model-config-form {
   display: grid;
   gap: 10px;
