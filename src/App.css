@@ -1205,6 +1205,11 @@ textarea:focus {
   gap: 10px;
 }
 
+.workspace-subtitle {
+  border-top: 1px solid #e1e7dc;
+  padding-top: 10px;
+}
+
 .workspace-join-form,
 .workspace-invite-create {
   display: grid;
@@ -1212,17 +1217,20 @@ textarea:focus {
   gap: 7px;
 }
 
+.workspace-member-list,
 .workspace-invitation-list {
   display: grid;
   gap: 7px;
 }
 
+.workspace-member-list p,
 .workspace-invitation-list p {
   color: #64748b;
   font-size: 12px;
   margin: 0;
 }
 
+.workspace-member-list article,
 .workspace-invitation-list article {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1234,12 +1242,15 @@ textarea:focus {
   padding: 8px;
 }
 
+.workspace-member-list article > div:first-child,
 .workspace-invitation-list article > div:first-child {
   display: grid;
   gap: 4px;
   min-width: 0;
 }
 
+.workspace-member-list strong,
+.workspace-member-list small,
 .workspace-invitation-list strong,
 .workspace-invitation-list small,
 .workspace-invitation-list code {
@@ -1248,6 +1259,7 @@ textarea:focus {
   white-space: nowrap;
 }
 
+.workspace-member-list strong,
 .workspace-invitation-list strong {
   color: #111827;
   font-size: 12px;
@@ -1258,16 +1270,25 @@ textarea:focus {
   font-size: 11px;
 }
 
+.workspace-member-list small,
 .workspace-invitation-list small {
   color: #64748b;
   font-size: 11px;
 }
 
+.workspace-member-actions,
 .workspace-invitation-actions {
   display: inline-flex;
   gap: 5px;
 }
 
+.workspace-member-actions select {
+  width: 88px;
+  padding: 5px 6px;
+  font-size: 11px;
+}
+
+.workspace-member-actions button,
 .workspace-invitation-actions button {
   border: 1px solid #d8ded4;
   border-radius: 6px;
@@ -1280,14 +1301,26 @@ textarea:focus {
   padding: 5px 7px;
 }
 
+.workspace-member-actions button:hover,
 .workspace-invitation-actions button:hover {
   border-color: #9aa68f;
   background: #f7f8f3;
 }
 
+.workspace-member-actions button:disabled,
+.workspace-member-actions select:disabled,
 .workspace-invitation-actions button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+.workspace-role-pill {
+  border-radius: 6px;
+  background: #eef4ec;
+  color: #31513f;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 5px 7px;
 }
 
 .workflow-meta-panel {

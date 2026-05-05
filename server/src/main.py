@@ -191,6 +191,27 @@ def upsert_workspace_member(
     return member
 
 
+@app.delete("/api/workspaces/{workspace_id}/members/{member_user_id}", response_model=WorkspaceMemberRecord)
+def remove_workspace_member(
+    workspace_id: str,
+    member_user_id: str,
+    user: UserRecord = Depends(require_auth),
+) -> WorkspaceMemberRecord:
+    member = store.remove_workspace_member(workspace_id, user.id, member_user_id)
+    if member is None:
+        raise HTTPException(status_code=404, detail="Member not found, protected, or workspace owner access required")
+    store.append_audit_log(
+        workspace_id,
+        user.id,
+        "workspace.member_remove",
+        "workspace_member",
+        f"移除成员 {member.username}",
+        member.id,
+        {"role": member.role},
+    )
+    return member
+
+
 @app.get("/api/workspaces/{workspace_id}/invitations", response_model=list[WorkspaceInvitationRecord])
 def list_workspace_invitations(
     workspace_id: str,

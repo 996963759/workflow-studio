@@ -248,6 +248,24 @@ class ApiTestCase(unittest.TestCase):
         )
         self.assertEqual(update.status_code, 403)
 
+        remove = self.client.delete(
+            f"/api/workspaces/{workspace['id']}/members/{viewer_me['id']}",
+            headers=self.auth_headers,
+        )
+        self.assertEqual(remove.status_code, 200)
+        denied_after_remove = self.client.get(
+            f"/api/workflows/{created['id']}",
+            headers={**viewer_headers, "X-Workspace-Id": workspace["id"]},
+        )
+        self.assertEqual(denied_after_remove.status_code, 403)
+
+        owner_me = self.client.get("/api/auth/me", headers=self.auth_headers).json()
+        remove_self = self.client.delete(
+            f"/api/workspaces/{workspace['id']}/members/{owner_me['id']}",
+            headers=self.auth_headers,
+        )
+        self.assertEqual(remove_self.status_code, 404)
+
     def test_workspace_invitation_accept_and_revoke(self) -> None:
         invited_headers = self.create_auth_headers("invited-user")
         blocked_headers = self.create_auth_headers("blocked-user")

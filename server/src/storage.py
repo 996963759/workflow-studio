@@ -276,6 +276,45 @@ class WorkflowStore:
             session.commit()
         return WorkspaceMemberRecord(id=user.id, username=user.username, role=role, created_at=member_created_at)
 
+    def remove_workspace_member(
+        self,
+        workspace_id: str,
+        actor_user_id: str,
+        member_user_id: str,
+    ) -> WorkspaceMemberRecord | None:
+        if not self.can_access_workspace(workspace_id, actor_user_id, "owner"):
+            return None
+        if actor_user_id == member_user_id:
+            return None
+        with self._connect() as session:
+            member = session.scalar(
+                select(DbWorkspaceMember).where(
+                    DbWorkspaceMember.workspace_id == workspace_id,
+                    DbWorkspaceMember.user_id == member_user_id,
+                )
+            )
+            user = session.scalar(select(DbUser).where(DbUser.id == member_user_id))
+            if not member or not user:
+                return None
+            if member.role == "owner":
+                owner_count = session.scalar(
+                    select(func.count()).select_from(DbWorkspaceMember).where(
+                        DbWorkspaceMember.workspace_id == workspace_id,
+                        DbWorkspaceMember.role == "owner",
+                    )
+                )
+                if (owner_count or 0) <= 1:
+                    return None
+            record = WorkspaceMemberRecord(
+                id=user.id,
+                username=user.username,
+                role=member.role,
+                created_at=member.created_at,
+            )
+            session.delete(member)
+            session.commit()
+        return record
+
     def _invitation_record(
         self,
         invitation: DbWorkspaceInvitation,

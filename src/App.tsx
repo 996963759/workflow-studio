@@ -218,6 +218,13 @@ type WorkspaceRecord = {
   created_at: string
 }
 
+type WorkspaceMemberRecord = {
+  id: string
+  username: string
+  role: WorkspaceRecord['role']
+  created_at: string
+}
+
 type WorkspaceInvitationRecord = {
   id: string
   workspace_id: string
@@ -1970,10 +1977,12 @@ function App() {
   const [knowledgeDocuments, setKnowledgeDocuments] = useState<KnowledgeDocument[]>([])
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([])
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(() => loadActiveWorkspaceId())
+  const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMemberRecord[]>([])
   const [workspaceInvitations, setWorkspaceInvitations] = useState<WorkspaceInvitationRecord[]>([])
   const [invitationRole, setInvitationRole] = useState<WorkspaceRecord['role']>('viewer')
   const [invitationCodeInput, setInvitationCodeInput] = useState('')
   const [workspaceInviteBusy, setWorkspaceInviteBusy] = useState<'load' | 'create' | 'accept' | 'revoke' | null>(null)
+  const [workspaceMemberBusy, setWorkspaceMemberBusy] = useState<'load' | 'role' | 'remove' | null>(null)
   const [workflowVersions, setWorkflowVersions] = useState<WorkflowVersionRecord[]>([])
   const [auditLogs, setAuditLogs] = useState<AuditLogRecord[]>([])
   const [versionNote, setVersionNote] = useState('')
@@ -2153,6 +2162,7 @@ function App() {
     setWorkspaces([])
     setActiveWorkspaceId('')
     persistActiveWorkspaceId('')
+    setWorkspaceMembers([])
     setWorkspaceInvitations([])
     setInvitationCodeInput('')
     setRunJobs([])
@@ -2231,6 +2241,62 @@ function App() {
     }
     clearSessionState()
     setNotice('已退出登录。')
+  }
+
+  const loadWorkspaceMembers = useCallback(async () => {
+    if (!activeWorkspaceId) {
+      setWorkspaceMembers([])
+      return
+    }
+    setWorkspaceMemberBusy('load')
+    try {
+      const response = await apiFetch(`/api/workspaces/${activeWorkspaceId}/members`)
+      if (!response.ok) throw new Error('load members failed')
+      setWorkspaceMembers((await response.json()) as WorkspaceMemberRecord[])
+    } catch {
+      setWorkspaceMembers([])
+      setNotice('读取团队成员失败：请确认你有当前团队空间访问权限。')
+    } finally {
+      setWorkspaceMemberBusy(null)
+    }
+  }, [activeWorkspaceId, apiFetch])
+
+  const updateWorkspaceMemberRole = async (member: WorkspaceMemberRecord, role: WorkspaceRecord['role']) => {
+    if (!activeWorkspaceId || member.role === role) return
+    setWorkspaceMemberBusy('role')
+    try {
+      const response = await apiFetch(`/api/workspaces/${activeWorkspaceId}/members`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: member.username, role }),
+      })
+      if (!response.ok) throw new Error('update member role failed')
+      const updated = (await response.json()) as WorkspaceMemberRecord
+      setWorkspaceMembers((current) => current.map((item) => (item.id === updated.id ? updated : item)))
+      setNotice(`已将 ${updated.username} 设置为 ${updated.role}。`)
+    } catch {
+      setNotice('修改成员角色失败：只有 owner 可以管理成员。')
+    } finally {
+      setWorkspaceMemberBusy(null)
+    }
+  }
+
+  const removeWorkspaceMember = async (member: WorkspaceMemberRecord) => {
+    if (!activeWorkspaceId) return
+    setWorkspaceMemberBusy('remove')
+    try {
+      const response = await apiFetch(`/api/workspaces/${activeWorkspaceId}/members/${member.id}`, {
+        method: 'DELETE',
+      })
+      if (!response.ok) throw new Error('remove member failed')
+      const removed = (await response.json()) as WorkspaceMemberRecord
+      setWorkspaceMembers((current) => current.filter((item) => item.id !== removed.id))
+      setNotice(`已移除成员 ${removed.username}。`)
+    } catch {
+      setNotice('移除成员失败：不能移除自己或最后一个 owner。')
+    } finally {
+      setWorkspaceMemberBusy(null)
+    }
   }
 
   const loadWorkspaceInvitations = useCallback(async () => {
@@ -3156,6 +3222,19 @@ function App() {
     }, 0)
     return () => window.clearTimeout(timer)
   }, [activeWorkspaceId, authSession, loadAliyunConfig, loadModelConfig])
+
+  useEffect(() => {
+    if (!authSession || !activeWorkspaceId) {
+      const timer = window.setTimeout(() => {
+        setWorkspaceMembers([])
+      }, 0)
+      return () => window.clearTimeout(timer)
+    }
+    const timer = window.setTimeout(() => {
+      void loadWorkspaceMembers()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [activeWorkspaceId, authSession, loadWorkspaceMembers])
 
   useEffect(() => {
     if (!authSession || !activeWorkspaceId || activeWorkspace?.role !== 'owner') {
@@ -4969,8 +5048,58 @@ function App() {
           <div className="panel-title between">
             <span>
               <Shield size={16} />
-              团队邀请
+              团队成员
             </span>
+            <button
+              type="button"
+              className="mini-action"
+              disabled={Boolean(workspaceMemberBusy)}
+              onClick={() => void loadWorkspaceMembers()}
+            >
+              {workspaceMemberBusy === 'load' ? '读取中...' : '刷新'}
+            </button>
+          </div>
+          <div className="workspace-member-list">
+            {workspaceMembers.length === 0 ? (
+              <p>暂无成员信息。</p>
+            ) : (
+              workspaceMembers.map((member) => (
+                <article key={member.id}>
+                  <div>
+                    <strong>{member.username}</strong>
+                    <small>{member.id === authSession.user.id ? '当前账号' : new Date(member.created_at).toLocaleString('zh-CN')}</small>
+                  </div>
+                  {activeWorkspace?.role === 'owner' ? (
+                    <div className="workspace-member-actions">
+                      <select
+                        aria-label={`设置 ${member.username} 的角色`}
+                        value={member.role}
+                        disabled={workspaceMemberBusy === 'role'}
+                        onChange={(event) =>
+                          void updateWorkspaceMemberRole(member, event.target.value as WorkspaceRecord['role'])
+                        }
+                      >
+                        <option value="viewer">viewer</option>
+                        <option value="editor">editor</option>
+                        <option value="owner">owner</option>
+                      </select>
+                      <button
+                        type="button"
+                        disabled={member.id === authSession.user.id || workspaceMemberBusy === 'remove'}
+                        onClick={() => void removeWorkspaceMember(member)}
+                      >
+                        移除
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="workspace-role-pill">{member.role}</span>
+                  )}
+                </article>
+              ))
+            )}
+          </div>
+          <div className="panel-title between workspace-subtitle">
+            <span>团队邀请</span>
             {activeWorkspace?.role === 'owner' && (
               <button
                 type="button"
@@ -4978,7 +5107,7 @@ function App() {
                 disabled={Boolean(workspaceInviteBusy)}
                 onClick={() => void loadWorkspaceInvitations()}
               >
-                {workspaceInviteBusy === 'load' ? '读取中...' : '刷新'}
+                {workspaceInviteBusy === 'load' ? '读取中...' : '刷新邀请'}
               </button>
             )}
           </div>
