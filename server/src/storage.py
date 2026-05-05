@@ -18,6 +18,7 @@ from .models import (
     RunRecord,
     RunResponse,
     WorkflowPayload,
+    WorkflowPublishPayload,
     WorkflowRecord,
     WorkflowVersionRecord,
     AuditLogRecord,
@@ -109,6 +110,18 @@ class WorkflowStore:
                 connection.execute("ALTER TABLE workflows ADD COLUMN user_id TEXT")
             if "workspace_id" not in workflow_columns:
                 connection.execute("ALTER TABLE workflows ADD COLUMN workspace_id TEXT")
+            if "publish_status" not in workflow_columns:
+                connection.execute("ALTER TABLE workflows ADD COLUMN publish_status TEXT NOT NULL DEFAULT 'draft'")
+            if "published_version_id" not in workflow_columns:
+                connection.execute("ALTER TABLE workflows ADD COLUMN published_version_id TEXT")
+            if "published_at" not in workflow_columns:
+                connection.execute("ALTER TABLE workflows ADD COLUMN published_at TEXT")
+            workflow_version_columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(workflow_versions)").fetchall()
+            }
+            if workflow_version_columns and "is_published" not in workflow_version_columns:
+                connection.execute("ALTER TABLE workflow_versions ADD COLUMN is_published INTEGER NOT NULL DEFAULT 0")
             run_columns = {
                 row[1]
                 for row in connection.execute("PRAGMA table_info(runs)").fetchall()
@@ -763,6 +776,9 @@ class WorkflowStore:
             nodes_json=json.dumps(payload.nodes, ensure_ascii=False),
             edges_json=json.dumps(payload.edges, ensure_ascii=False),
             archived=payload.archived,
+            publish_status="draft",
+            published_version_id=None,
+            published_at=None,
             updated_at=updated_at,
         )
         with self._connect() as session:
@@ -770,7 +786,7 @@ class WorkflowStore:
             session.flush()
             self._create_workflow_version(session, workflow, user_id, "创建工作流")
             session.commit()
-        return WorkflowRecord(id=workflow_id, updated_at=updated_at, **payload.model_dump())
+        return self._workflow_to_record(workflow)
 
     def update_workflow(
         self,
@@ -792,10 +808,11 @@ class WorkflowStore:
             workflow.nodes_json = json.dumps(payload.nodes, ensure_ascii=False)
             workflow.edges_json = json.dumps(payload.edges, ensure_ascii=False)
             workflow.archived = payload.archived
+            workflow.publish_status = "changed" if workflow.published_version_id else "draft"
             workflow.updated_at = updated_at
             self._create_workflow_version(session, workflow, user_id, "更新工作流")
             session.commit()
-        return WorkflowRecord(id=workflow_id, updated_at=updated_at, **payload.model_dump())
+        return self._workflow_to_record(workflow)
 
     def delete_workflow(self, workflow_id: str, user_id: str, workspace_id: str | None = None) -> bool:
         workspace_id = workspace_id or self.ensure_default_workspace(user_id)
@@ -878,17 +895,36 @@ class WorkflowStore:
             workflow.nodes_json = version.nodes_json
             workflow.edges_json = version.edges_json
             workflow.archived = bool(version.archived)
+            workflow.publish_status = "changed" if workflow.published_version_id else "draft"
             workflow.updated_at = updated_at
             self._create_workflow_version(session, workflow, user_id, f"恢复到版本 #{version.sequence}")
             session.commit()
-            payload = WorkflowPayload(
-                name=workflow.name,
-                version=workflow.version,
-                nodes=json.loads(workflow.nodes_json),
-                edges=json.loads(workflow.edges_json),
-                archived=bool(workflow.archived),
+        return self._workflow_to_record(workflow)
+
+    def publish_workflow(
+        self,
+        workflow_id: str,
+        user_id: str,
+        workspace_id: str | None = None,
+        payload: WorkflowPublishPayload | None = None,
+    ) -> tuple[WorkflowRecord, WorkflowVersionRecord] | None:
+        workspace_id = workspace_id or self.ensure_default_workspace(user_id)
+        published_at = utc_now()
+        with self._connect() as session:
+            workflow = session.scalar(
+                select(DbWorkflow).where(DbWorkflow.id == workflow_id, DbWorkflow.workspace_id == workspace_id)
             )
-        return WorkflowRecord(id=workflow_id, updated_at=updated_at, **payload.model_dump())
+            if not workflow:
+                return None
+            note = payload.note if payload else None
+            version = self._create_workflow_version(session, workflow, user_id, note or "发布工作流", True)
+            session.flush()
+            workflow.publish_status = "published"
+            workflow.published_version_id = version.id
+            workflow.published_at = published_at
+            workflow.updated_at = published_at
+            session.commit()
+        return self._workflow_to_record(workflow), self._workflow_version_to_record(version)
 
     def append_audit_log(
         self,
@@ -944,6 +980,7 @@ class WorkflowStore:
         workflow: DbWorkflow,
         user_id: str,
         note: str | None = None,
+        is_published: bool = False,
     ) -> DbWorkflowVersion:
         latest_sequence = session.scalar(
             select(func.max(DbWorkflowVersion.sequence)).where(DbWorkflowVersion.workflow_id == workflow.id)
@@ -958,6 +995,7 @@ class WorkflowStore:
             nodes_json=workflow.nodes_json,
             edges_json=workflow.edges_json,
             archived=bool(workflow.archived),
+            is_published=is_published,
             created_by=user_id,
             note=note,
             created_at=utc_now(),
@@ -1233,6 +1271,9 @@ class WorkflowStore:
             nodes=json.loads(workflow.nodes_json),
             edges=json.loads(workflow.edges_json),
             archived=bool(workflow.archived),
+            publish_status=getattr(workflow, "publish_status", "draft") or "draft",
+            published_version_id=getattr(workflow, "published_version_id", None),
+            published_at=getattr(workflow, "published_at", None),
             updated_at=workflow.updated_at,
         )
 
@@ -1269,6 +1310,7 @@ class WorkflowStore:
             nodes=json.loads(version.nodes_json),
             edges=json.loads(version.edges_json),
             archived=bool(version.archived),
+            is_published=bool(getattr(version, "is_published", False)),
             created_by=version.created_by,
             note=version.note,
             created_at=version.created_at,

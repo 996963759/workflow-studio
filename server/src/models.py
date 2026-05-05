@@ -14,18 +14,26 @@ class WorkflowPayload(BaseModel):
 class WorkflowRecord(WorkflowPayload):
     id: str
     updated_at: str
+    publish_status: str = "draft"
+    published_version_id: str | None = None
+    published_at: str | None = None
 
 
 class WorkflowVersionRecord(WorkflowPayload):
     id: str
     workflow_id: str
     sequence: int
+    is_published: bool = False
     created_by: str
     created_at: str
     note: str | None = None
 
 
 class WorkflowVersionCreatePayload(BaseModel):
+    note: str | None = Field(default=None, max_length=200)
+
+
+class WorkflowPublishPayload(BaseModel):
     note: str | None = Field(default=None, max_length=200)
 
 

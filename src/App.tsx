@@ -141,6 +141,9 @@ type WorkflowDefinition = {
 
 type WorkflowRecord = Required<Pick<WorkflowDefinition, 'id' | 'name' | 'version' | 'nodes' | 'edges'>> & {
   archived?: boolean
+  publishStatus?: WorkflowPublishStatus
+  publishedVersionId?: string | null
+  publishedAt?: string | null
   updatedAt: string
   serverId?: string
   syncedAt?: string
@@ -148,6 +151,7 @@ type WorkflowRecord = Required<Pick<WorkflowDefinition, 'id' | 'name' | 'version
 
 type WorkflowSortMode = 'updated' | 'name' | 'sync'
 type WorkflowSyncState = 'local' | 'synced' | 'dirty'
+type WorkflowPublishStatus = 'draft' | 'published' | 'changed'
 type RunHistoryStatusFilter = 'all' | 'ok' | 'error'
 type AdminView = 'node' | 'system' | 'team' | 'model' | 'knowledge' | 'ops' | 'json'
 
@@ -158,6 +162,9 @@ type ServerWorkflowRecord = {
   nodes: WorkflowNode[]
   edges: Edge[]
   archived?: boolean
+  publish_status?: WorkflowPublishStatus
+  published_version_id?: string | null
+  published_at?: string | null
   updated_at: string
 }
 
@@ -170,6 +177,7 @@ type WorkflowVersionRecord = {
   nodes: WorkflowNode[]
   edges: Edge[]
   archived: boolean
+  is_published?: boolean
   created_by: string
   note?: string | null
   created_at: string
@@ -1311,6 +1319,7 @@ const createWorkflowRecord = (name = '工作流编辑器演示'): WorkflowRecord
   version: '0.2.0',
   nodes: structuredClone(initialNodes) as WorkflowNode[],
   edges: structuredClone(initialEdges) as Edge[],
+  publishStatus: 'draft',
   updatedAt: new Date().toISOString(),
 })
 
@@ -1328,6 +1337,9 @@ const serverToWorkflowRecord = (workflow: ServerWorkflowRecord): WorkflowRecord 
   version: workflow.version || '0.2.0',
   nodes: workflow.nodes,
   edges: workflow.edges,
+  publishStatus: workflow.publish_status ?? 'draft',
+  publishedVersionId: workflow.published_version_id ?? null,
+  publishedAt: workflow.published_at ?? null,
   updatedAt: workflow.updated_at,
   syncedAt: new Date().toISOString(),
 })
@@ -1456,6 +1468,9 @@ const loadWorkflowStore = (): WorkflowStore => {
           version: workflow.version || '0.2.0',
           nodes: workflow.nodes,
           edges: workflow.edges,
+          publishStatus: workflow.publishStatus ?? 'draft',
+          publishedVersionId: workflow.publishedVersionId ?? null,
+          publishedAt: workflow.publishedAt ?? null,
           updatedAt: workflow.updatedAt ?? new Date().toISOString(),
           syncedAt: workflow.syncedAt,
         }),
@@ -1483,6 +1498,7 @@ const loadWorkflowStore = (): WorkflowStore => {
       version: legacy.version || '0.2.0',
       nodes: legacy.nodes,
       edges: legacy.edges,
+      publishStatus: 'draft',
       updatedAt: legacy.updatedAt ?? new Date().toISOString(),
     }
     return { activeWorkflowId: migrated.id, workflows: [migrated] }
@@ -1509,6 +1525,12 @@ const workflowSyncLabels: Record<WorkflowSyncState, string> = {
   dirty: '未同步改动',
 }
 
+const workflowPublishLabels: Record<WorkflowPublishStatus, string> = {
+  draft: '草稿',
+  published: '已发布',
+  changed: '发布后有改动',
+}
+
 const isServerWorkflowNewer = (workflow: WorkflowRecord, serverWorkflow: ServerWorkflowRecord) => {
   if (!workflow.syncedAt) return false
   return new Date(serverWorkflow.updated_at).getTime() > new Date(workflow.syncedAt).getTime()
@@ -1526,6 +1548,9 @@ const applyServerWorkflowToLocalRecord = (
   nodes: serverWorkflow.nodes,
   edges: serverWorkflow.edges,
   archived: serverWorkflow.archived ?? false,
+  publishStatus: serverWorkflow.publish_status ?? 'draft',
+  publishedVersionId: serverWorkflow.published_version_id ?? null,
+  publishedAt: serverWorkflow.published_at ?? null,
   updatedAt: serverWorkflow.updated_at,
   syncedAt,
 })
@@ -1562,6 +1587,9 @@ const mergeBackendWorkflows = (
         nodes: importedWorkflow.nodes,
         edges: importedWorkflow.edges,
         archived: importedWorkflow.archived,
+        publish_status: importedWorkflow.publishStatus,
+        published_version_id: importedWorkflow.publishedVersionId,
+        published_at: importedWorkflow.publishedAt,
         updated_at: importedWorkflow.updatedAt,
       },
       syncedAt,
@@ -2084,7 +2112,7 @@ function App() {
   const [workflowVersions, setWorkflowVersions] = useState<WorkflowVersionRecord[]>([])
   const [auditLogs, setAuditLogs] = useState<AuditLogRecord[]>([])
   const [versionNote, setVersionNote] = useState('')
-  const [workflowMetaBusy, setWorkflowMetaBusy] = useState<'versions' | 'audit' | 'save-version' | 'restore' | null>(null)
+  const [workflowMetaBusy, setWorkflowMetaBusy] = useState<'versions' | 'audit' | 'save-version' | 'restore' | 'publish' | null>(null)
   const [runJobs, setRunJobs] = useState<RunJobRecord[]>([])
   const [activeRunJobId, setActiveRunJobId] = useState('')
   const [lastBackendSyncAt, setLastBackendSyncAt] = useState('')
@@ -2133,6 +2161,7 @@ function App() {
   const edges = activeWorkflow.edges
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? nodes[0]
   const activeWorkflowSyncState = getWorkflowSyncState(activeWorkflow)
+  const activeWorkflowPublishStatus = activeWorkflow.publishStatus ?? 'draft'
   const selectedFieldIssues = selectedNode ? validateNodeFields(selectedNode) : []
   const fieldIssuesByName = selectedFieldIssues.reduce(
     (result, issue) => {
@@ -3316,6 +3345,50 @@ function App() {
     } catch (error) {
       setBackendStatus('offline')
       setNotice(getErrorMessage(error, '保存版本失败：请确认后端在线。'))
+    } finally {
+      setWorkflowMetaBusy(null)
+    }
+  }
+
+  const publishWorkflow = async () => {
+    if (!activeWorkflow.serverId) {
+      setNotice('请先点击“同步到后端”，再发布工作流。')
+      return
+    }
+    if (activeWorkflowSyncState === 'dirty') {
+      setNotice('当前工作流有未同步改动。请先同步到后端，再发布。')
+      return
+    }
+    setWorkflowMetaBusy('publish')
+    try {
+      const response = await apiFetch(`/api/workflows/${activeWorkflow.serverId}/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: versionNote.trim() || '发布工作流' }),
+      })
+      if (!response.ok) {
+        throw new Error(await readResponseErrorMessage(response, '发布工作流失败。'))
+      }
+      const published = (await response.json()) as ServerWorkflowRecord
+      const syncedAt = new Date().toISOString()
+      const publishedLocal = applyServerWorkflowToLocalRecord(activeWorkflow, published, syncedAt)
+      const next = {
+        ...workflowStore,
+        workflows: workflowStore.workflows.map((workflow) =>
+          workflow.id === activeWorkflow.id ? publishedLocal : workflow,
+        ),
+      }
+      setWorkflowStore(next)
+      persistWorkflowStore(next)
+      setVersionNote('')
+      setBackendStatus('online')
+      setLastBackendSyncAt(syncedAt)
+      setNotice('当前工作流已发布。')
+      void loadWorkflowVersions(published.id, false)
+      void loadAuditLogs(published.id, false)
+    } catch (error) {
+      setBackendStatus('offline')
+      setNotice(getErrorMessage(error, '发布工作流失败：请确认后端在线。'))
     } finally {
       setWorkflowMetaBusy(null)
     }
@@ -6179,17 +6252,36 @@ function App() {
                 <input
                   value={versionNote}
                   onChange={(event) => setVersionNote(event.target.value)}
-                  placeholder="例如：面试演示稳定版"
+                  placeholder="例如：面试演示稳定版，也会用于发布备注"
                 />
               </label>
-              <button
-                type="button"
-                className="workflow-version-save"
-                disabled={Boolean(workflowMetaBusy) || activeWorkflowSyncState === 'dirty'}
-                onClick={() => void saveWorkflowVersion()}
-              >
-                {workflowMetaBusy === 'save-version' ? '保存中...' : '保存当前版本'}
-              </button>
+              <div className={clsx('publish-status-card', activeWorkflowPublishStatus)}>
+                <span>发布状态</span>
+                <strong>{workflowPublishLabels[activeWorkflowPublishStatus]}</strong>
+                <small>
+                  {activeWorkflow.publishedAt
+                    ? `上次发布：${new Date(activeWorkflow.publishedAt).toLocaleString('zh-CN')}`
+                    : '还没有发布过，发布后会生成一个可标记的稳定版本。'}
+                </small>
+              </div>
+              <div className="workflow-version-buttons">
+                <button
+                  type="button"
+                  className="workflow-version-save"
+                  disabled={Boolean(workflowMetaBusy) || activeWorkflowSyncState === 'dirty'}
+                  onClick={() => void saveWorkflowVersion()}
+                >
+                  {workflowMetaBusy === 'save-version' ? '保存中...' : '保存当前版本'}
+                </button>
+                <button
+                  type="button"
+                  className="workflow-publish-button"
+                  disabled={Boolean(workflowMetaBusy) || activeWorkflowSyncState === 'dirty'}
+                  onClick={() => void publishWorkflow()}
+                >
+                  {workflowMetaBusy === 'publish' ? '发布中...' : '发布当前版本'}
+                </button>
+              </div>
               <div className="workflow-version-list">
                 {workflowVersions.length === 0 ? (
                   <p>暂无版本记录。</p>
@@ -6197,7 +6289,10 @@ function App() {
                   workflowVersions.slice(0, 5).map((version) => (
                     <article key={version.id}>
                       <div>
-                        <strong>版本 #{version.sequence}</strong>
+                        <strong>
+                          版本 #{version.sequence}
+                          {version.is_published ? ' · 已发布' : ''}
+                        </strong>
                         <span>{new Date(version.created_at).toLocaleString('zh-CN')}</span>
                         <small>{version.note || version.name}</small>
                       </div>

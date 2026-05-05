@@ -299,6 +299,44 @@ class ApiTestCase(unittest.TestCase):
         self.assertIn("workflow.update", actions)
         self.assertIn("workflow.version_restore", actions)
 
+    def test_workflow_publish_creates_published_version_and_audit_log(self) -> None:
+        create_response = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers)
+        self.assertEqual(create_response.status_code, 201)
+        created = create_response.json()
+        self.assertEqual(created["publish_status"], "draft")
+        self.assertIsNone(created["published_version_id"])
+
+        publish_response = self.client.post(
+            f"/api/workflows/{created['id']}/publish",
+            json={"note": "面试演示发布版"},
+            headers=self.auth_headers,
+        )
+        self.assertEqual(publish_response.status_code, 200)
+        published = publish_response.json()
+        self.assertEqual(published["publish_status"], "published")
+        self.assertIsNotNone(published["published_version_id"])
+        self.assertIsNotNone(published["published_at"])
+
+        versions = self.client.get(f"/api/workflows/{created['id']}/versions", headers=self.auth_headers).json()
+        published_versions = [version for version in versions if version["is_published"]]
+        self.assertEqual(len(published_versions), 1)
+        self.assertEqual(published_versions[0]["id"], published["published_version_id"])
+        self.assertEqual(published_versions[0]["note"], "面试演示发布版")
+
+        update_response = self.client.put(
+            f"/api/workflows/{created['id']}",
+            json={**valid_workflow(), "name": "Changed After Publish"},
+            headers=self.auth_headers,
+        )
+        self.assertEqual(update_response.status_code, 200)
+        self.assertEqual(update_response.json()["publish_status"], "changed")
+
+        logs = self.client.get(
+            f"/api/audit-logs?resource_type=workflow&resource_id={created['id']}",
+            headers=self.auth_headers,
+        ).json()
+        self.assertIn("workflow.publish", [item["action"] for item in logs])
+
     def test_deleting_workflow_deletes_runs(self) -> None:
         created = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers).json()
         run_response = self.client.post(

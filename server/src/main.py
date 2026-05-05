@@ -39,6 +39,7 @@ from .models import (
     WorkspaceMemberRecord,
     WorkspaceRecord,
     WorkflowPayload,
+    WorkflowPublishPayload,
     WorkflowRecord,
     WorkflowRunRequest,
     WorkflowVersionCreatePayload,
@@ -616,6 +617,33 @@ def restore_workflow_version(
         {"version_id": version_id},
     )
     return workflow
+
+
+@app.post("/api/workflows/{workflow_id}/publish", response_model=WorkflowRecord)
+def publish_workflow(
+    workflow_id: str,
+    payload: WorkflowPublishPayload,
+    context: WorkspaceContext = Depends(require_workspace_role("editor")),
+) -> WorkflowRecord:
+    user, workspace_id = context
+    workflow = store.get_workflow(workflow_id, user.id, workspace_id)
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    raise_on_validation_errors(workflow)
+    published = store.publish_workflow(workflow_id, user.id, workspace_id, payload)
+    if not published:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    published_workflow, version = published
+    store.append_audit_log(
+        workspace_id,
+        user.id,
+        "workflow.publish",
+        "workflow",
+        f"发布工作流版本 #{version.sequence}：{published_workflow.name}",
+        workflow_id,
+        {"version_id": version.id, "sequence": version.sequence},
+    )
+    return published_workflow
 
 
 @app.put("/api/workflows/{workflow_id}", response_model=WorkflowRecord)

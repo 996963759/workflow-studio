@@ -121,6 +121,7 @@ Supported file types are `.md` and `.txt`. Knowledge nodes use simple local keyw
 - `GET /api/workflows/{workflow_id}/versions`
 - `POST /api/workflows/{workflow_id}/versions`
 - `POST /api/workflows/{workflow_id}/versions/{version_id}/restore`
+- `POST /api/workflows/{workflow_id}/publish`
 - `GET /api/audit-logs`
 - `POST /api/runs`
 - `GET /api/runs`
@@ -164,7 +165,7 @@ server/data/workflow_studio.db
 
 The database file is ignored by Git.
 
-Saved workflow records include `name`, `version`, `nodes`, `edges`, `archived`, and `updated_at`.
+Saved workflow records include `name`, `version`, `nodes`, `edges`, `archived`, `publish_status`, `published_version_id`, `published_at`, and `updated_at`.
 
 ## Migrations
 

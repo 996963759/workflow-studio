@@ -84,6 +84,9 @@ class DbWorkflow(Base):
     nodes_json: Mapped[str] = mapped_column(Text, nullable=False)
     edges_json: Mapped[str] = mapped_column(Text, nullable=False)
     archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    publish_status: Mapped[str] = mapped_column(String, nullable=False, default="draft")
+    published_version_id: Mapped[str | None] = mapped_column(String, index=True)
+    published_at: Mapped[str | None] = mapped_column(String)
     updated_at: Mapped[str] = mapped_column(String, nullable=False)
 
 
@@ -99,6 +102,7 @@ class DbWorkflowVersion(Base):
     nodes_json: Mapped[str] = mapped_column(Text, nullable=False)
     edges_json: Mapped[str] = mapped_column(Text, nullable=False)
     archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_published: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_by: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
     note: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
