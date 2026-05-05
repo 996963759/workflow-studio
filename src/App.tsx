@@ -183,6 +183,21 @@ type WorkflowVersionRecord = {
   created_at: string
 }
 
+type WorkflowVersionDiffItem = {
+  category: 'workflow' | 'node' | 'edge'
+  change: 'added' | 'removed' | 'changed'
+  label: string
+  before?: string | null
+  after?: string | null
+}
+
+type WorkflowVersionDiffResponse = {
+  base_version: WorkflowVersionRecord
+  target_version: WorkflowVersionRecord
+  summary: Record<string, number>
+  changes: WorkflowVersionDiffItem[]
+}
+
 type AuditLogRecord = {
   id: string
   workspace_id: string
@@ -1531,6 +1546,18 @@ const workflowPublishLabels: Record<WorkflowPublishStatus, string> = {
   changed: '发布后有改动',
 }
 
+const versionDiffChangeLabels: Record<WorkflowVersionDiffItem['change'], string> = {
+  added: '新增',
+  removed: '删除',
+  changed: '变更',
+}
+
+const versionDiffCategoryLabels: Record<WorkflowVersionDiffItem['category'], string> = {
+  workflow: '工作流',
+  node: '节点',
+  edge: '连线',
+}
+
 const isServerWorkflowNewer = (workflow: WorkflowRecord, serverWorkflow: ServerWorkflowRecord) => {
   if (!workflow.syncedAt) return false
   return new Date(serverWorkflow.updated_at).getTime() > new Date(workflow.syncedAt).getTime()
@@ -2112,7 +2139,10 @@ function App() {
   const [workflowVersions, setWorkflowVersions] = useState<WorkflowVersionRecord[]>([])
   const [auditLogs, setAuditLogs] = useState<AuditLogRecord[]>([])
   const [versionNote, setVersionNote] = useState('')
-  const [workflowMetaBusy, setWorkflowMetaBusy] = useState<'versions' | 'audit' | 'save-version' | 'restore' | 'publish' | null>(null)
+  const [versionDiffBaseId, setVersionDiffBaseId] = useState('')
+  const [versionDiffTargetId, setVersionDiffTargetId] = useState('')
+  const [versionDiff, setVersionDiff] = useState<WorkflowVersionDiffResponse | null>(null)
+  const [workflowMetaBusy, setWorkflowMetaBusy] = useState<'versions' | 'audit' | 'save-version' | 'restore' | 'publish' | 'diff' | null>(null)
   const [runJobs, setRunJobs] = useState<RunJobRecord[]>([])
   const [activeRunJobId, setActiveRunJobId] = useState('')
   const [lastBackendSyncAt, setLastBackendSyncAt] = useState('')
@@ -2162,6 +2192,7 @@ function App() {
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? nodes[0]
   const activeWorkflowSyncState = getWorkflowSyncState(activeWorkflow)
   const activeWorkflowPublishStatus = activeWorkflow.publishStatus ?? 'draft'
+  const orderedVersionOptions = workflowVersions.toSorted((a, b) => b.sequence - a.sequence)
   const selectedFieldIssues = selectedNode ? validateNodeFields(selectedNode) : []
   const fieldIssuesByName = selectedFieldIssues.reduce(
     (result, issue) => {
@@ -3277,6 +3308,12 @@ function App() {
       }
       const versions = (await response.json()) as WorkflowVersionRecord[]
       setWorkflowVersions(versions)
+      if (versions.length >= 2) {
+        setVersionDiffTargetId((current) => current || versions[0]?.id || '')
+        setVersionDiffBaseId((current) => current || versions[1]?.id || versions[0]?.id || '')
+      } else {
+        setVersionDiff(null)
+      }
       setBackendStatus('online')
       if (showNotice) setNotice(`已加载 ${versions.length} 个工作流版本。`)
       return versions
@@ -3345,6 +3382,43 @@ function App() {
     } catch (error) {
       setBackendStatus('offline')
       setNotice(getErrorMessage(error, '保存版本失败：请确认后端在线。'))
+    } finally {
+      setWorkflowMetaBusy(null)
+    }
+  }
+
+  const compareWorkflowVersions = async () => {
+    if (!activeWorkflow.serverId) {
+      setNotice('请先同步到后端，再对比版本。')
+      return
+    }
+    if (!versionDiffBaseId || !versionDiffTargetId) {
+      setNotice('请先选择两个要对比的版本。')
+      return
+    }
+    if (versionDiffBaseId === versionDiffTargetId) {
+      setNotice('请选择两个不同的版本进行对比。')
+      return
+    }
+    setWorkflowMetaBusy('diff')
+    try {
+      const response = await apiFetch(
+        `/api/workflows/${activeWorkflow.serverId}/versions/diff?base_version_id=${versionDiffBaseId}&target_version_id=${versionDiffTargetId}`,
+      )
+      if (!response.ok) {
+        throw new Error(await readResponseErrorMessage(response, '版本对比失败。'))
+      }
+      const result = (await response.json()) as WorkflowVersionDiffResponse
+      setVersionDiff(result)
+      setBackendStatus('online')
+      setNotice(
+        result.changes.length > 0
+          ? `版本对比完成：共 ${result.changes.length} 处变化。`
+          : '版本对比完成：两个版本内容一致。',
+      )
+    } catch (error) {
+      setBackendStatus('offline')
+      setNotice(getErrorMessage(error, '版本对比失败：请确认后端在线。'))
     } finally {
       setWorkflowMetaBusy(null)
     }
@@ -3983,6 +4057,9 @@ function App() {
     setWorkflowVersions([])
     setAuditLogs([])
     setVersionNote('')
+    setVersionDiffBaseId('')
+    setVersionDiffTargetId('')
+    setVersionDiff(null)
     setNotice('已切换工作流。')
   }
 
@@ -3996,6 +4073,9 @@ function App() {
     persistWorkflowStore(next)
     setSelectedNodeId(nextWorkflow.nodes[0]?.id ?? '')
     setRunSteps([])
+    setWorkflowVersions([])
+    setAuditLogs([])
+    setVersionDiff(null)
     setNotice('已新建工作流。')
   }
 
@@ -4014,6 +4094,9 @@ function App() {
     setRunInput(template.input)
     setRunSteps([])
     setSelectedRunId('')
+    setWorkflowVersions([])
+    setAuditLogs([])
+    setVersionDiff(null)
     setNotice(`已从模板创建「${template.name}」。`)
   }
 
@@ -6305,6 +6388,65 @@ function App() {
                       </button>
                     </article>
                   ))
+                )}
+              </div>
+              <div className="workflow-version-diff">
+                <div className="workflow-version-diff-title">
+                  <strong>版本对比</strong>
+                  <span>比较两个历史快照的节点、连线和基础信息。</span>
+                </div>
+                <div className="workflow-version-diff-controls">
+                  <label>
+                    基准版本
+                    <select value={versionDiffBaseId} onChange={(event) => setVersionDiffBaseId(event.target.value)}>
+                      <option value="">选择版本</option>
+                      {orderedVersionOptions.map((version) => (
+                        <option key={version.id} value={version.id}>
+                          #{version.sequence} {version.is_published ? '已发布' : version.note || version.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    目标版本
+                    <select value={versionDiffTargetId} onChange={(event) => setVersionDiffTargetId(event.target.value)}>
+                      <option value="">选择版本</option>
+                      {orderedVersionOptions.map((version) => (
+                        <option key={version.id} value={version.id}>
+                          #{version.sequence} {version.is_published ? '已发布' : version.note || version.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    disabled={workflowVersions.length < 2 || Boolean(workflowMetaBusy)}
+                    onClick={() => void compareWorkflowVersions()}
+                  >
+                    {workflowMetaBusy === 'diff' ? '对比中...' : '开始对比'}
+                  </button>
+                </div>
+                {versionDiff && (
+                  <div className="workflow-version-diff-results">
+                    <p>
+                      #{versionDiff.base_version.sequence} 到 #{versionDiff.target_version.sequence}：
+                      新增 {versionDiff.summary.added ?? 0}，删除 {versionDiff.summary.removed ?? 0}，变更 {versionDiff.summary.changed ?? 0}
+                    </p>
+                    {versionDiff.changes.length === 0 ? (
+                      <span>两个版本内容一致。</span>
+                    ) : (
+                      versionDiff.changes.slice(0, 8).map((change, index) => (
+                        <article key={`${change.category}-${change.change}-${change.label}-${index}`}>
+                          <strong>
+                            {versionDiffChangeLabels[change.change]} · {versionDiffCategoryLabels[change.category]}
+                          </strong>
+                          <span>{change.label}</span>
+                          {change.before && <small>之前：{change.before}</small>}
+                          {change.after && <small>之后：{change.after}</small>}
+                        </article>
+                      ))
+                    )}
+                  </div>
                 )}
               </div>
               <div className="audit-log-list">

@@ -20,6 +20,8 @@ from .models import (
     WorkflowPayload,
     WorkflowPublishPayload,
     WorkflowRecord,
+    WorkflowVersionDiffItem,
+    WorkflowVersionDiffResponse,
     WorkflowVersionRecord,
     AuditLogRecord,
     WorkspaceMemberRecord,
@@ -59,6 +61,92 @@ def parse_timestamp(value: str) -> datetime | None:
 def workspace_invitation_expires_at() -> str:
     ttl_hours = max(1, WORKSPACE_INVITATION_TTL_HOURS)
     return (datetime.now(timezone.utc) + timedelta(hours=ttl_hours)).isoformat()
+
+
+def _node_title(node: dict) -> str:
+    data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    label = data.get("label") or node.get("id") or "未命名节点"
+    kind = data.get("kind") or "node"
+    return f"{label}（{kind}）"
+
+
+def _edge_title(edge: dict) -> str:
+    return f"{edge.get('source', '?')} -> {edge.get('target', '?')}"
+
+
+def _compact_json(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _append_field_change(
+    changes: list[WorkflowVersionDiffItem],
+    category: str,
+    label: str,
+    before: object,
+    after: object,
+) -> None:
+    if before == after:
+        return
+    changes.append(
+        WorkflowVersionDiffItem(
+            category=category,
+            change="changed",
+            label=label,
+            before=str(before),
+            after=str(after),
+        )
+    )
+
+
+def diff_workflow_versions(
+    base: WorkflowVersionRecord,
+    target: WorkflowVersionRecord,
+) -> list[WorkflowVersionDiffItem]:
+    changes: list[WorkflowVersionDiffItem] = []
+    _append_field_change(changes, "workflow", "工作流名称", base.name, target.name)
+    _append_field_change(changes, "workflow", "定义版本", base.version, target.version)
+    _append_field_change(changes, "workflow", "归档状态", base.archived, target.archived)
+
+    base_nodes = {str(node.get("id")): node for node in base.nodes}
+    target_nodes = {str(node.get("id")): node for node in target.nodes}
+    for node_id in sorted(target_nodes.keys() - base_nodes.keys()):
+        changes.append(WorkflowVersionDiffItem(category="node", change="added", label=_node_title(target_nodes[node_id]), after=_compact_json(target_nodes[node_id].get("data", {}))))
+    for node_id in sorted(base_nodes.keys() - target_nodes.keys()):
+        changes.append(WorkflowVersionDiffItem(category="node", change="removed", label=_node_title(base_nodes[node_id]), before=_compact_json(base_nodes[node_id].get("data", {}))))
+    for node_id in sorted(base_nodes.keys() & target_nodes.keys()):
+        before = base_nodes[node_id]
+        after = target_nodes[node_id]
+        if _compact_json(before) != _compact_json(after):
+            changes.append(
+                WorkflowVersionDiffItem(
+                    category="node",
+                    change="changed",
+                    label=_node_title(after),
+                    before=_compact_json(before.get("data", {})),
+                    after=_compact_json(after.get("data", {})),
+                )
+            )
+
+    base_edges = {str(edge.get("id")): edge for edge in base.edges}
+    target_edges = {str(edge.get("id")): edge for edge in target.edges}
+    for edge_id in sorted(target_edges.keys() - base_edges.keys()):
+        changes.append(WorkflowVersionDiffItem(category="edge", change="added", label=_edge_title(target_edges[edge_id]), after=_compact_json(target_edges[edge_id])))
+    for edge_id in sorted(base_edges.keys() - target_edges.keys()):
+        changes.append(WorkflowVersionDiffItem(category="edge", change="removed", label=_edge_title(base_edges[edge_id]), before=_compact_json(base_edges[edge_id])))
+    for edge_id in sorted(base_edges.keys() & target_edges.keys()):
+        before = base_edges[edge_id]
+        after = target_edges[edge_id]
+        if _compact_json(before) != _compact_json(after):
+            changes.append(
+                WorkflowVersionDiffItem(
+                    category="edge",
+                    change="changed",
+                    label=_edge_title(after),
+                    before=_compact_json(before),
+                    after=_compact_json(after),
+                )
+            )
+    return changes
 
 
 def _sqlite_path_from_url(database_url: str) -> Path | None:
@@ -867,6 +955,50 @@ class WorkflowStore:
                 .order_by(DbWorkflowVersion.sequence.desc())
             ).all()
         return [self._workflow_version_to_record(version) for version in versions]
+
+    def compare_workflow_versions(
+        self,
+        workflow_id: str,
+        base_version_id: str,
+        target_version_id: str,
+        user_id: str,
+        workspace_id: str | None = None,
+    ) -> WorkflowVersionDiffResponse | None:
+        workspace_id = workspace_id or self.ensure_default_workspace(user_id)
+        if not self.can_access_workspace(workspace_id, user_id):
+            return None
+        with self._connect() as session:
+            exists = session.scalar(
+                select(DbWorkflow.id).where(DbWorkflow.id == workflow_id, DbWorkflow.workspace_id == workspace_id)
+            )
+            if not exists:
+                return None
+            versions = session.scalars(
+                select(DbWorkflowVersion).where(
+                    DbWorkflowVersion.workflow_id == workflow_id,
+                    DbWorkflowVersion.workspace_id == workspace_id,
+                    DbWorkflowVersion.id.in_([base_version_id, target_version_id]),
+                )
+            ).all()
+        version_by_id = {version.id: version for version in versions}
+        base = version_by_id.get(base_version_id)
+        target = version_by_id.get(target_version_id)
+        if not base or not target:
+            return None
+        base_record = self._workflow_version_to_record(base)
+        target_record = self._workflow_version_to_record(target)
+        changes = diff_workflow_versions(base_record, target_record)
+        summary = {
+            "added": sum(1 for item in changes if item.change == "added"),
+            "removed": sum(1 for item in changes if item.change == "removed"),
+            "changed": sum(1 for item in changes if item.change == "changed"),
+        }
+        return WorkflowVersionDiffResponse(
+            base_version=base_record,
+            target_version=target_record,
+            summary=summary,
+            changes=changes,
+        )
 
     def restore_workflow_version(
         self,

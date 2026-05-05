@@ -1712,6 +1712,103 @@ textarea:focus {
   opacity: 0.55;
 }
 
+.workflow-version-diff {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #e1e7dc;
+  border-radius: 7px;
+  background: #fbfcf8;
+  padding: 9px;
+}
+
+.workflow-version-diff-title {
+  display: grid;
+  gap: 3px;
+}
+
+.workflow-version-diff-title strong {
+  color: #111827;
+  font-size: 12px;
+}
+
+.workflow-version-diff-title span {
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.workflow-version-diff-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 7px;
+}
+
+.workflow-version-diff-controls label {
+  display: grid;
+  gap: 4px;
+  color: #334155;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.workflow-version-diff-controls button {
+  border: 1px solid #4f5f46;
+  border-radius: 7px;
+  background: #4f5f46;
+  color: #ffffff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 9px;
+}
+
+.workflow-version-diff-controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.workflow-version-diff-results {
+  display: grid;
+  gap: 6px;
+}
+
+.workflow-version-diff-results p,
+.workflow-version-diff-results span {
+  color: #475569;
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.workflow-version-diff-results article {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #e4eadf;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 7px;
+}
+
+.workflow-version-diff-results article strong,
+.workflow-version-diff-results article span,
+.workflow-version-diff-results article small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-version-diff-results article strong {
+  color: #111827;
+  font-size: 11px;
+}
+
+.workflow-version-diff-results article span,
+.workflow-version-diff-results article small {
+  color: #64748b;
+  font-size: 10px;
+}
+
 .knowledge-document-list {
   display: grid;
   gap: 7px;

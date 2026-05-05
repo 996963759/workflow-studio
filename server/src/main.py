@@ -43,6 +43,7 @@ from .models import (
     WorkflowRecord,
     WorkflowRunRequest,
     WorkflowVersionCreatePayload,
+    WorkflowVersionDiffResponse,
     WorkflowVersionRecord,
     WorkflowValidationResult,
     UserRecord,
@@ -595,6 +596,20 @@ def create_workflow_version(
         {"version_id": version.id, "sequence": version.sequence},
     )
     return version
+
+
+@app.get("/api/workflows/{workflow_id}/versions/diff", response_model=WorkflowVersionDiffResponse)
+def compare_workflow_versions(
+    workflow_id: str,
+    base_version_id: str,
+    target_version_id: str,
+    context: WorkspaceContext = Depends(require_workspace_role("viewer")),
+) -> WorkflowVersionDiffResponse:
+    user, workspace_id = context
+    diff = store.compare_workflow_versions(workflow_id, base_version_id, target_version_id, user.id, workspace_id)
+    if not diff:
+        raise HTTPException(status_code=404, detail="Workflow version not found")
+    return diff
 
 
 @app.post("/api/workflows/{workflow_id}/versions/{version_id}/restore", response_model=WorkflowRecord)

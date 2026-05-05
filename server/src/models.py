@@ -37,6 +37,21 @@ class WorkflowPublishPayload(BaseModel):
     note: str | None = Field(default=None, max_length=200)
 
 
+class WorkflowVersionDiffItem(BaseModel):
+    category: str
+    change: str
+    label: str
+    before: str | None = None
+    after: str | None = None
+
+
+class WorkflowVersionDiffResponse(BaseModel):
+    base_version: WorkflowVersionRecord
+    target_version: WorkflowVersionRecord
+    summary: dict[str, int] = Field(default_factory=dict)
+    changes: list[WorkflowVersionDiffItem] = Field(default_factory=list)
+
+
 class WorkflowIssue(BaseModel):
     id: str
     level: str

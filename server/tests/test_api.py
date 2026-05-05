@@ -337,6 +337,36 @@ class ApiTestCase(unittest.TestCase):
         ).json()
         self.assertIn("workflow.publish", [item["action"] for item in logs])
 
+    def test_workflow_version_diff_reports_changed_nodes(self) -> None:
+        create_response = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers)
+        self.assertEqual(create_response.status_code, 201)
+        created = create_response.json()
+
+        changed = valid_workflow()
+        changed["nodes"][1]["data"]["prompt"] = "新的回答模板：{{user_request}}"
+        update_response = self.client.put(
+            f"/api/workflows/{created['id']}",
+            json=changed,
+            headers=self.auth_headers,
+        )
+        self.assertEqual(update_response.status_code, 200)
+
+        versions = self.client.get(f"/api/workflows/{created['id']}/versions", headers=self.auth_headers).json()
+        oldest = versions[-1]
+        newest = versions[0]
+        diff_response = self.client.get(
+            f"/api/workflows/{created['id']}/versions/diff"
+            f"?base_version_id={oldest['id']}&target_version_id={newest['id']}",
+            headers=self.auth_headers,
+        )
+        self.assertEqual(diff_response.status_code, 200)
+        diff = diff_response.json()
+        self.assertEqual(diff["base_version"]["id"], oldest["id"])
+        self.assertEqual(diff["target_version"]["id"], newest["id"])
+        self.assertEqual(diff["summary"]["changed"], 1)
+        self.assertEqual(diff["changes"][0]["category"], "node")
+        self.assertIn("新的回答模板", diff["changes"][0]["after"])
+
     def test_deleting_workflow_deletes_runs(self) -> None:
         created = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers).json()
         run_response = self.client.post(
