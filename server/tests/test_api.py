@@ -125,6 +125,8 @@ class ApiTestCase(unittest.TestCase):
                     status="done",
                     input="input",
                     output="output",
+                    kind="llm",
+                    provider="DeepSeek",
                     duration_ms=40,
                 )
             ],
@@ -138,6 +140,8 @@ class ApiTestCase(unittest.TestCase):
                     status="error",
                     input="input",
                     output="output",
+                    kind="tool",
+                    provider="HTTP 工具",
                     error="boom",
                     duration_ms=80,
                     attempt_count=2,
@@ -160,8 +164,14 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(metrics["success_rate"], 50)
         self.assertEqual(metrics["average_duration_ms"], 60)
         self.assertEqual(metrics["average_step_count"], 1)
+        self.assertEqual(metrics["billable_step_count"], 2)
+        self.assertEqual(metrics["total_cost_units"], 14)
+        self.assertEqual(metrics["average_cost_units"], 7)
+        self.assertEqual(metrics["provider_breakdown"]["DeepSeek"], 10)
+        self.assertEqual(metrics["provider_breakdown"]["HTTP 工具"], 4)
         self.assertEqual(metrics["recent_failed_runs"][0]["workflow_name"], "失败工作流")
         self.assertEqual(metrics["recent_failed_runs"][0]["steps"][0]["error"], "boom")
+        self.assertEqual(metrics["recent_failed_runs"][0]["cost_summary"]["cost_units"], 4)
 
     def test_auth_token_expires_and_is_pruned(self) -> None:
         register_response = self.client.post(
@@ -236,6 +246,7 @@ class ApiTestCase(unittest.TestCase):
         self.assertGreaterEqual(steps[0]["duration_ms"], 0)
         self.assertEqual(steps[0]["attempt_count"], 1)
         self.assertEqual(steps[1]["status"], "error")
+        self.assertEqual(steps[1]["kind"], "tool")
         self.assertEqual(steps[1]["attempt_count"], 3)
         self.assertGreaterEqual(steps[1]["duration_ms"], 0)
 

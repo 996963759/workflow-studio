@@ -188,6 +188,7 @@ class RunStep(BaseModel):
     status: str
     input: str
     output: str
+    kind: str | None = None
     variable: str | None = None
     provider: str | None = None
     error: str | None = None
@@ -206,6 +207,7 @@ class RunRecord(RunResponse):
     workflow_name: str
     input_text: str
     created_at: str
+    cost_summary: dict[str, Any] = Field(default_factory=dict)
 
 
 class RunJobRecord(BaseModel):
@@ -240,6 +242,10 @@ class RunMetricsRecord(BaseModel):
     success_rate: float = 0
     average_duration_ms: int = 0
     average_step_count: float = 0
+    billable_step_count: int = 0
+    total_cost_units: int = 0
+    average_cost_units: float = 0
+    provider_breakdown: dict[str, int] = Field(default_factory=dict)
     recent_failed_runs: list[RunRecord] = Field(default_factory=list)
 
 

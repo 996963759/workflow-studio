@@ -123,6 +123,7 @@ type RunStep = {
   status: 'done' | 'routed' | 'waiting' | 'skipped' | 'error'
   input: string
   output: string
+  kind?: string | null
   variable?: string
   provider?: string
   error?: string
@@ -218,7 +219,16 @@ type ServerRunRecord = {
   input_text: string
   status: string
   steps: RunStep[]
+  cost_summary?: RunCostSummary
   created_at: string
+}
+
+type RunCostSummary = {
+  billable_step_count?: number
+  cost_units?: number
+  provider_breakdown?: Record<string, number>
+  kind_breakdown?: Record<string, number>
+  note?: string
 }
 
 type WorkflowStore = {
@@ -345,6 +355,10 @@ type RunMetricsRecord = {
   success_rate: number
   average_duration_ms: number
   average_step_count: number
+  billable_step_count: number
+  total_cost_units: number
+  average_cost_units: number
+  provider_breakdown: Record<string, number>
   recent_failed_runs: ServerRunRecord[]
 }
 
@@ -437,8 +451,22 @@ const createEmptyRunMetrics = (): RunMetricsRecord => ({
   success_rate: 0,
   average_duration_ms: 0,
   average_step_count: 0,
+  billable_step_count: 0,
+  total_cost_units: 0,
+  average_cost_units: 0,
+  provider_breakdown: {},
   recent_failed_runs: [],
 })
+
+const formatProviderBreakdown = (breakdown: Record<string, number> | undefined) => {
+  const entries = Object.entries(breakdown ?? {})
+  if (entries.length === 0) return '暂无可计费调用'
+  return entries
+    .toSorted((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([provider, units]) => `${provider} ${units}`)
+    .join(' · ')
+}
 
 type KnowledgeStatus = {
   directory: string
@@ -5028,6 +5056,18 @@ function App() {
                   <span>失败运行</span>
                   <strong>{adminOverview.run_metrics.error_runs}</strong>
                 </div>
+                <div>
+                  <span>估算成本</span>
+                  <strong>{adminOverview.run_metrics.total_cost_units}</strong>
+                </div>
+                <div>
+                  <span>平均成本</span>
+                  <strong>{adminOverview.run_metrics.average_cost_units}</strong>
+                </div>
+                <div>
+                  <span>计费节点</span>
+                  <strong>{adminOverview.run_metrics.billable_step_count}</strong>
+                </div>
               </div>
               <div className="admin-overview-list">
                 <article className="admin-health-row">
@@ -5036,6 +5076,14 @@ function App() {
                     最近 {adminOverview.run_metrics.sampled_runs} 次采样 ·
                     成功 {adminOverview.run_metrics.ok_runs} ·
                     失败 {adminOverview.run_metrics.error_runs}
+                  </span>
+                </article>
+                <article className="admin-cost-row">
+                  <strong>成本估算</strong>
+                  <span>
+                    总成本单位 {adminOverview.run_metrics.total_cost_units} ·
+                    平均 {adminOverview.run_metrics.average_cost_units} ·
+                    {formatProviderBreakdown(adminOverview.run_metrics.provider_breakdown)}
                   </span>
                 </article>
                 <article>
@@ -6577,6 +6625,9 @@ function App() {
                       <strong>{run.workflow_name}</strong>
                       <span>{new Date(run.created_at).toLocaleString('zh-CN')}</span>
                       <small>{run.input_text}</small>
+                      <small>
+                        估算成本 {run.cost_summary?.cost_units ?? 0} · 计费节点 {run.cost_summary?.billable_step_count ?? 0}
+                      </small>
                       <small>{lastStep ? `结果：${lastStep.output}` : '暂无节点输出'}</small>
                     </button>
                     <span className={clsx('run-status-badge', hasError ? 'error' : 'ok')}>
@@ -6612,6 +6663,13 @@ function App() {
                       个，跳过 {selectedRunSkippedCount || runSteps.filter((step) => step.status === 'skipped').length} 个，错误{' '}
                       {selectedRunErrorCount || runSteps.filter((step) => step.status === 'error').length} 个
                     </span>
+                    {selectedRunRecord?.cost_summary && (
+                      <small>
+                        估算成本 {selectedRunRecord.cost_summary.cost_units ?? 0} ·
+                        计费节点 {selectedRunRecord.cost_summary.billable_step_count ?? 0} ·
+                        {formatProviderBreakdown(selectedRunRecord.cost_summary.provider_breakdown)}
+                      </small>
+                    )}
                   </div>
                   <button type="button" onClick={copyCurrentRunSummary}>
                     <Copy size={12} />
@@ -6629,6 +6687,7 @@ function App() {
                       <div>
                         <strong>{step.title}</strong>
                         <div className="run-step-meta">
+                          {step.kind && <span>{step.kind}</span>}
                           <span>耗时 {step.duration_ms ?? 0}ms</span>
                           <span>尝试 {step.attempt_count ?? 1} 次</span>
                         </div>

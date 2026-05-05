@@ -168,6 +168,8 @@ The database file is ignored by Git.
 
 Saved workflow records include `name`, `version`, `nodes`, `edges`, `archived`, `publish_status`, `published_version_id`, `published_at`, and `updated_at`.
 
+Saved run records include `cost_summary`, which reports estimated cost units, billable step count, and provider breakdown for local observability. These units are not real cloud billing amounts.
+
 ## Migrations
 
 Run Alembic migrations from the repo root:

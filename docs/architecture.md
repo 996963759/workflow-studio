@@ -39,6 +39,7 @@ flowchart LR
 - SQLAlchemy ORM 管理 `users`、`sessions`、`workspaces`、`workspace_members`、`workflows`、`workflow_versions`、`audit_logs`、`runs`、`run_jobs`、`knowledge_chunks`。
 - `workflows` 保存草稿和发布状态，`workflow_versions` 保存历史快照并标记发布版本；发布不会覆盖历史，只会新增一个已发布快照。
 - 版本对比基于 `workflow_versions` 中保存的节点和连线快照计算，不需要额外持久化 diff 结果。
+- 运行成本统计基于每次运行保存的步骤 `kind`、`provider` 和重试次数计算估算成本单位，不依赖云厂商账单 API。
 - Alembic 管理数据库迁移。
 - Bearer Token 鉴权。
 - 工作流、运行历史、知识库文件按团队空间隔离，并通过 owner/editor/viewer 角色控制读写。

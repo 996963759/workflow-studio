@@ -149,6 +149,40 @@ def diff_workflow_versions(
     return changes
 
 
+RUN_COST_UNITS_BY_KIND = {
+    "llm": 10,
+    "tts": 8,
+    "image": 30,
+    "knowledge": 3,
+    "tool": 2,
+}
+
+
+def summarize_run_cost(steps: list[dict]) -> dict[str, object]:
+    billable_steps = [
+        step
+        for step in steps
+        if isinstance(step, dict) and step.get("status") != "skipped" and step.get("kind") in RUN_COST_UNITS_BY_KIND
+    ]
+    provider_breakdown: dict[str, int] = {}
+    kind_breakdown: dict[str, int] = {}
+    total_units = 0
+    for step in billable_steps:
+        kind = str(step.get("kind") or "unknown")
+        units = RUN_COST_UNITS_BY_KIND.get(kind, 0) * max(1, int(step.get("attempt_count") or 1))
+        total_units += units
+        provider = str(step.get("provider") or kind)
+        provider_breakdown[provider] = provider_breakdown.get(provider, 0) + units
+        kind_breakdown[kind] = kind_breakdown.get(kind, 0) + units
+    return {
+        "billable_step_count": len(billable_steps),
+        "cost_units": total_units,
+        "provider_breakdown": provider_breakdown,
+        "kind_breakdown": kind_breakdown,
+        "note": "估算成本单位用于本地演示，不等同于真实云厂商账单。",
+    }
+
+
 def _sqlite_path_from_url(database_url: str) -> Path | None:
     if not database_url.startswith("sqlite:///"):
         return None
@@ -451,12 +485,20 @@ class WorkflowStore:
         error_runs = sum(1 for run in rows if run.status == "error")
         total_duration_ms = 0
         total_step_count = 0
+        billable_step_count = 0
+        total_cost_units = 0
+        provider_breakdown: dict[str, int] = {}
         failed_runs: list[RunRecord] = []
 
         for run in rows:
             steps = json.loads(run.steps_json)
             total_step_count += len(steps)
             total_duration_ms += sum(int(step.get("duration_ms") or 0) for step in steps if isinstance(step, dict))
+            cost_summary = summarize_run_cost(steps)
+            billable_step_count += int(cost_summary["billable_step_count"])
+            total_cost_units += int(cost_summary["cost_units"])
+            for provider, units in dict(cost_summary["provider_breakdown"]).items():
+                provider_breakdown[str(provider)] = provider_breakdown.get(str(provider), 0) + int(units)
             if run.status == "error" and len(failed_runs) < 3:
                 failed_runs.append(self._run_to_record(run))
 
@@ -468,6 +510,10 @@ class WorkflowStore:
             success_rate=round(ok_runs / sampled_runs * 100, 1),
             average_duration_ms=round(total_duration_ms / sampled_runs),
             average_step_count=round(total_step_count / sampled_runs, 1),
+            billable_step_count=billable_step_count,
+            total_cost_units=total_cost_units,
+            average_cost_units=round(total_cost_units / sampled_runs, 1),
+            provider_breakdown=provider_breakdown,
             recent_failed_runs=failed_runs,
         )
 
@@ -1147,6 +1193,8 @@ class WorkflowStore:
         workspace_id = workspace_id or self.ensure_default_workspace(user_id)
         run_id = str(uuid.uuid4())
         created_at = utc_now()
+        steps = [step.model_dump() for step in response.steps]
+        cost_summary = summarize_run_cost(steps)
         run = DbRun(
             id=run_id,
             user_id=user_id,
@@ -1155,7 +1203,7 @@ class WorkflowStore:
             workflow_name=workflow_name,
             input_text=input_text,
             status=response.status,
-            steps_json=json.dumps([step.model_dump() for step in response.steps], ensure_ascii=False),
+            steps_json=json.dumps(steps, ensure_ascii=False),
             created_at=created_at,
         )
         with self._connect() as session:
@@ -1169,6 +1217,7 @@ class WorkflowStore:
             created_at=created_at,
             status=response.status,
             steps=response.steps,
+            cost_summary=cost_summary,
         )
 
     def list_runs(self, user_id: str, workflow_id: str | None = None, workspace_id: str | None = None) -> list[RunRecord]:
@@ -1418,6 +1467,7 @@ class WorkflowStore:
             status=run.status,
             steps=json.loads(run.steps_json),
             created_at=run.created_at,
+            cost_summary=summarize_run_cost(json.loads(run.steps_json)),
         )
 
     def _job_to_record(self, job: DbRunJob) -> RunJobRecord:

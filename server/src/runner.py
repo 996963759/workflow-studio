@@ -566,6 +566,7 @@ def simulate_run(
                     status="error",
                     input="当前工作流连线",
                     output="工作流存在环形依赖或无效结构，后端无法计算执行顺序。",
+                    kind="workflow",
                     error="无法根据连线计算拓扑执行顺序。",
                     duration_ms=elapsed_ms(run_started_at),
                 )
@@ -594,6 +595,7 @@ def simulate_run(
                     status="skipped",
                     input="条件分支未命中该路径。",
                     output="已跳过该分支节点。",
+                    kind=str(kind or "unknown"),
                     duration_ms=elapsed_ms(step_started_at),
                 )
             )
@@ -690,6 +692,7 @@ def simulate_run(
                 status=status,
                 input=step_input,
                 output=output,
+                kind=str(kind or "unknown"),
                 variable=variable,
                 provider=provider,
                 error=error,
