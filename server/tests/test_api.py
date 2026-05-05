@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from server.src.auth import AuthService, set_auth_service
 from server.src import main as api
 from server.src import runner
+from server.src.orm import DbSession
 from server.src.providers import aliyun
 from server.src.db import create_session_factory
 from server.src.jobs import RunJobQueue, RunJobWorker
@@ -95,6 +96,26 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(body["status"], "ok")
         self.assertEqual(body["database"], "sqlite")
         self.assertEqual(body["queue_backend"], "thread")
+
+    def test_auth_token_expires_and_is_pruned(self) -> None:
+        register_response = self.client.post(
+            "/api/auth/register",
+            json={"username": f"expiring-{uuid4().hex[:8]}", "password": "password123"},
+        )
+        self.assertEqual(register_response.status_code, 201)
+        token = register_response.json()["token"]
+
+        with api.store._connect() as session:
+            db_session = session.get(DbSession, token)
+            self.assertIsNotNone(db_session)
+            db_session.expires_at = "2000-01-01T00:00:00+00:00"
+            session.commit()
+
+        response = self.client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+        self.assertEqual(response.status_code, 401)
+
+        with api.store._connect() as session:
+            self.assertIsNone(session.get(DbSession, token))
 
     def test_rejects_invalid_workflow(self) -> None:
         response = self.client.post("/api/workflows", json=invalid_workflow(), headers=self.auth_headers)

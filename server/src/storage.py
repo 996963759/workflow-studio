@@ -102,6 +102,14 @@ class WorkflowStore:
                 connection.execute("ALTER TABLE runs ADD COLUMN user_id TEXT")
             if "workspace_id" not in run_columns:
                 connection.execute("ALTER TABLE runs ADD COLUMN workspace_id TEXT")
+            session_columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(sessions)").fetchall()
+            }
+            if "expires_at" not in session_columns:
+                connection.execute(
+                    "ALTER TABLE sessions ADD COLUMN expires_at TEXT NOT NULL DEFAULT '9999-12-31T23:59:59+00:00'"
+                )
 
     def assign_unowned_records(self, user_id: str) -> None:
         workspace_id = self.ensure_default_workspace(user_id)

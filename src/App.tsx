@@ -2117,8 +2117,33 @@ function App() {
     }))
   }
 
+  const clearSessionState = useCallback(() => {
+    setAuthSession(null)
+    persistAuthSession(null)
+    setBackendStatus('unknown')
+    setProviderStatus(null)
+    setModelConfig(null)
+    setModelConfigForm(createDefaultProviderConfigForm('deepseek'))
+    setAliyunConfig({
+      record: null,
+      form: createDefaultProviderConfigForm('aliyun'),
+    })
+    setKnowledgeStatus(null)
+    setKnowledgeDocuments([])
+    setWorkspaces([])
+    setActiveWorkspaceId('')
+    persistActiveWorkspaceId('')
+    setRunJobs([])
+    setActiveRunJobId('')
+    setRunHistory([])
+    setSelectedRunId('')
+    setWorkflowVersions([])
+    setAuditLogs([])
+    setVersionNote('')
+  }, [])
+
   const apiFetch = useCallback(
-    (path: string, init: RequestInit = {}) => {
+    async (path: string, init: RequestInit = {}) => {
       const headers = new Headers(init.headers)
       if (authToken) {
         headers.set('Authorization', `Bearer ${authToken}`)
@@ -2126,9 +2151,14 @@ function App() {
       if (activeWorkspaceId) {
         headers.set('X-Workspace-Id', activeWorkspaceId)
       }
-      return fetch(`${API_BASE_URL}${path}`, { ...init, headers })
+      const response = await fetch(`${API_BASE_URL}${path}`, { ...init, headers })
+      if (response.status === 401 && authToken && !path.startsWith('/api/auth/')) {
+        clearSessionState()
+        setNotice('登录已过期，请重新登录。')
+      }
+      return response
     },
-    [activeWorkspaceId, authToken],
+    [activeWorkspaceId, authToken, clearSessionState],
   )
 
   const handleAuthSubmit = async () => {
@@ -2153,9 +2183,7 @@ function App() {
   const loadWorkspaces = useCallback(async () => {
     if (!authToken) return [] as WorkspaceRecord[]
     try {
-      const response = await fetch(`${API_BASE_URL}/api/workspaces`, {
-        headers: { Authorization: `Bearer ${authToken}` },
-      })
+      const response = await apiFetch('/api/workspaces')
       if (!response.ok) throw new Error('load workspaces failed')
       const records = (await response.json()) as WorkspaceRecord[]
       setWorkspaces(records)
@@ -2171,7 +2199,7 @@ function App() {
       setNotice('团队空间读取失败：请确认后端服务在线。')
       return []
     }
-  }, [authToken])
+  }, [apiFetch, authToken])
 
   const logout = async () => {
     try {
@@ -2179,28 +2207,7 @@ function App() {
     } catch {
       // Local logout still clears the browser session.
     }
-    setAuthSession(null)
-    persistAuthSession(null)
-    setBackendStatus('unknown')
-    setProviderStatus(null)
-    setModelConfig(null)
-    setModelConfigForm(createDefaultProviderConfigForm('deepseek'))
-    setAliyunConfig({
-      record: null,
-      form: createDefaultProviderConfigForm('aliyun'),
-    })
-    setKnowledgeStatus(null)
-    setKnowledgeDocuments([])
-    setWorkspaces([])
-    setActiveWorkspaceId('')
-    persistActiveWorkspaceId('')
-    setRunJobs([])
-    setActiveRunJobId('')
-    setRunHistory([])
-    setSelectedRunId('')
-    setWorkflowVersions([])
-    setAuditLogs([])
-    setVersionNote('')
+    clearSessionState()
     setNotice('已退出登录。')
   }
 

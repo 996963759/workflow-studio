@@ -1,17 +1,31 @@
 import hashlib
 import hmac
 import secrets
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Header, HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
+from .config import SESSION_TTL_HOURS
 from .models import AuthPayload, AuthResponse, UserRecord
 from .orm import DbSession, DbUser
 from .storage import WorkflowStore, utc_now
 
 
 DEFAULT_USERNAME = "local"
+
+
+def parse_timestamp(value: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def session_expires_at() -> str:
+    ttl_hours = max(1, SESSION_TTL_HOURS)
+    return (datetime.now(timezone.utc) + timedelta(hours=ttl_hours)).isoformat()
 
 
 def hash_password(password: str, salt: str | None = None) -> str:
@@ -76,7 +90,14 @@ class AuthService:
     def create_session(self, user_id: str) -> str:
         token = secrets.token_urlsafe(32)
         with self.store._connect() as connection:
-            connection.add(DbSession(token=token, user_id=user_id, created_at=utc_now()))
+            connection.add(
+                DbSession(
+                    token=token,
+                    user_id=user_id,
+                    created_at=utc_now(),
+                    expires_at=session_expires_at(),
+                )
+            )
             connection.commit()
         return token
 
@@ -87,12 +108,29 @@ class AuthService:
 
     def get_user_by_token(self, token: str) -> UserRecord | None:
         with self.store._connect() as connection:
-            row = connection.scalar(
-                select(DbUser)
+            row = connection.execute(
+                select(DbUser, DbSession)
                 .join(DbSession, DbSession.user_id == DbUser.id)
                 .where(DbSession.token == token)
+            ).one_or_none()
+            if not row:
+                return None
+            db_user, session = row
+            expires_at = parse_timestamp(session.expires_at)
+            if not expires_at or expires_at <= datetime.now(timezone.utc):
+                connection.execute(delete(DbSession).where(DbSession.token == token))
+                connection.commit()
+                return None
+        return UserRecord(id=db_user.id, username=db_user.username, created_at=db_user.created_at)
+
+    def prune_expired_sessions(self) -> int:
+        now = utc_now()
+        with self.store._connect() as connection:
+            result = connection.execute(
+                delete(DbSession).where(DbSession.expires_at <= now)
             )
-        return UserRecord(id=row.id, username=row.username, created_at=row.created_at) if row else None
+            connection.commit()
+        return result.rowcount or 0
 
     def logout(self, token: str) -> None:
         with self.store._connect() as connection:

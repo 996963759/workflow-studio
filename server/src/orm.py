@@ -21,6 +21,7 @@ class DbSession(Base):
     token: Mapped[str] = mapped_column(String, primary_key=True)
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
+    expires_at: Mapped[str] = mapped_column(String, nullable=False)
 
 
 class DbWorkspace(Base):

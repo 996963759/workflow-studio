@@ -17,9 +17,11 @@ dist-ssr
 server/.venv
 server/data/*.db
 server/data/*.db-*
+server/data/knowledge/*/
 server/__pycache__
 server/src/**/__pycache__
 server/tests/**/__pycache__
+server/migrations/**/__pycache__
 .pytest_cache
 
 # Editor directories and files

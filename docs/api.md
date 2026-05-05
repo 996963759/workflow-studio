@@ -12,6 +12,8 @@ http://127.0.0.1:8000
 Authorization: Bearer <token>
 ```
 
+登录 token 默认 7 天过期，可通过后端环境变量 `SESSION_TTL_HOURS` 调整。过期后接口会返回 `401`，前端会清除本地登录态并提示重新登录。
+
 团队空间接口还可以传：
 
 ```text
