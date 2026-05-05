@@ -45,7 +45,9 @@ import {
 import clsx from 'clsx'
 import '@xyflow/react/dist/style.css'
 import './App.css'
+import { AdminOverviewPanel } from './components/AdminOverviewPanel'
 import { AuthView } from './components/AuthView'
+import { RunHistoryPanel } from './components/RunHistoryPanel'
 
 type NodeKind =
   | 'input'
@@ -1430,13 +1432,6 @@ const readResponseErrorMessage = async (response: Response, fallback: string) =>
 
 const getErrorMessage = (error: unknown, fallback: string) =>
   error instanceof Error && error.message ? error.message : fallback
-
-const extractFirstUrl = (value: string) => value.match(/https?:\/\/[^\s)）"'，。]+/)?.[0]
-
-const isAudioStep = (step: RunStep) => step.provider?.includes('TTS') || step.output.includes('音频地址')
-
-const isSimulatedAudioStep = (step: RunStep) =>
-  step.output.includes('模拟音频') || step.output.includes('模拟生成音频') || step.error?.includes('AliyunProviderError')
 
 const invitationStatusLabel = (invitation: WorkspaceInvitationRecord) => {
   if (invitation.status === 'pending' && new Date(invitation.expires_at).getTime() <= Date.now()) return '已过期'
@@ -4990,161 +4985,14 @@ function App() {
           </div>
         </section>
 
-        {adminView === 'system' && <section className="panel admin-overview-panel">
-          <div className="panel-title between">
-            <span>
-              <TerminalSquare size={16} />
-              系统概览
-            </span>
-            <button
-              type="button"
-              className="mini-action"
-              disabled={adminOverviewBusy}
-              onClick={() => void loadAdminOverview()}
-            >
-              {adminOverviewBusy ? '刷新中...' : '刷新'}
-            </button>
-          </div>
-          {adminOverview ? (
-            <>
-              <div className="admin-overview-grid">
-                <div>
-                  <span>数据库</span>
-                  <strong>{adminOverview.database}</strong>
-                </div>
-                <div>
-                  <span>队列</span>
-                  <strong>{adminOverview.queue_backend}</strong>
-                </div>
-                <div>
-                  <span>成员</span>
-                  <strong>{adminOverview.counts.members ?? 0}</strong>
-                </div>
-                <div>
-                  <span>待用邀请</span>
-                  <strong>{adminOverview.counts.pending_invitations ?? 0}</strong>
-                </div>
-                <div>
-                  <span>工作流</span>
-                  <strong>{adminOverview.counts.workflows ?? 0}</strong>
-                </div>
-                <div>
-                  <span>运行记录</span>
-                  <strong>{adminOverview.counts.runs ?? 0}</strong>
-                </div>
-                <div>
-                  <span>排队任务</span>
-                  <strong>{adminOverview.counts.queued_run_jobs ?? 0}</strong>
-                </div>
-                <div>
-                  <span>失败任务</span>
-                  <strong>{adminOverview.counts.failed_run_jobs ?? 0}</strong>
-                </div>
-                <div>
-                  <span>成功率</span>
-                  <strong>{adminOverview.run_metrics.success_rate}%</strong>
-                </div>
-                <div>
-                  <span>平均耗时</span>
-                  <strong>{adminOverview.run_metrics.average_duration_ms}ms</strong>
-                </div>
-                <div>
-                  <span>平均节点</span>
-                  <strong>{adminOverview.run_metrics.average_step_count}</strong>
-                </div>
-                <div>
-                  <span>失败运行</span>
-                  <strong>{adminOverview.run_metrics.error_runs}</strong>
-                </div>
-                <div>
-                  <span>估算成本</span>
-                  <strong>{adminOverview.run_metrics.total_cost_units}</strong>
-                </div>
-                <div>
-                  <span>平均成本</span>
-                  <strong>{adminOverview.run_metrics.average_cost_units}</strong>
-                </div>
-                <div>
-                  <span>计费节点</span>
-                  <strong>{adminOverview.run_metrics.billable_step_count}</strong>
-                </div>
-              </div>
-              <div className="admin-overview-list">
-                <article className="admin-health-row">
-                  <strong>运行健康</strong>
-                  <span>
-                    最近 {adminOverview.run_metrics.sampled_runs} 次采样 ·
-                    成功 {adminOverview.run_metrics.ok_runs} ·
-                    失败 {adminOverview.run_metrics.error_runs}
-                  </span>
-                </article>
-                <article className="admin-cost-row">
-                  <strong>成本估算</strong>
-                  <span>
-                    总成本单位 {adminOverview.run_metrics.total_cost_units} ·
-                    平均 {adminOverview.run_metrics.average_cost_units} ·
-                    {formatProviderBreakdown(adminOverview.run_metrics.provider_breakdown)}
-                  </span>
-                </article>
-                <article>
-                  <strong>模型与知识库</strong>
-                  <span>
-                    DeepSeek {adminOverview.provider_status.deepseek_configured ? '已配置' : '未配置'} ·
-                    阿里云 {adminOverview.provider_status.aliyun_configured ? '已配置' : '未配置'} ·
-                    知识文档 {adminOverview.knowledge_status.document_count}
-                  </span>
-                </article>
-                <article>
-                  <strong>当前空间</strong>
-                  <span>{adminOverview.workspace.name} · {adminOverview.workspace.role}</span>
-                </article>
-                <article>
-                  <strong>安全配置</strong>
-                  <span>
-                    登录 {adminOverview.settings.session_ttl_hours ?? '-'} 小时 ·
-                    邀请 {adminOverview.settings.workspace_invitation_ttl_hours ?? '-'} 小时 ·
-                    密钥保护 {adminOverview.settings.model_config_secret_configured ? '已启用' : '未启用'}
-                  </span>
-                </article>
-                <article>
-                  <strong>运行配置</strong>
-                  <span>
-                    {adminOverview.settings.app_env ?? 'development'} ·
-                    Worker {adminOverview.settings.run_job_workers ?? 0} ·
-                    RAG {adminOverview.settings.external_rag_enabled ? '已启用' : '未启用'}
-                  </span>
-                </article>
-                <article>
-                  <strong>访问来源</strong>
-                  <span>{adminOverview.settings.cors_origins?.join(', ') || '未配置'}</span>
-                </article>
-                {adminOverview.recent_audit_logs.slice(0, 3).map((log) => (
-                  <article key={log.id}>
-                    <strong>{log.summary}</strong>
-                    <span>{log.actor_username} · {new Date(log.created_at).toLocaleString('zh-CN')}</span>
-                  </article>
-                ))}
-                {adminOverview.recent_run_jobs.slice(0, 3).map((job) => (
-                  <article key={job.id}>
-                    <strong>任务 {job.status}</strong>
-                    <span>{new Date(job.updated_at).toLocaleString('zh-CN')}</span>
-                  </article>
-                ))}
-                {adminOverview.run_metrics.recent_failed_runs.map((run) => (
-                  <article key={run.id} className="admin-failed-run">
-                    <strong>{run.workflow_name}</strong>
-                    <span>
-                      最近失败 · {run.steps.find((step) => step.status === 'error')?.error ?? '未记录错误原因'} ·{' '}
-                      {new Date(run.created_at).toLocaleString('zh-CN')}
-                    </span>
-                  </article>
-                ))}
-              </div>
-            </>
-          ) : (
-            <p className="model-status-note">点击刷新读取当前团队空间的系统概览。</p>
-          )}
-        </section>}
+        {adminView === 'system' && (
+          <AdminOverviewPanel
+            overview={adminOverview}
+            busy={adminOverviewBusy}
+            onRefresh={() => void loadAdminOverview()}
+            formatProviderBreakdown={formatProviderBreakdown}
+          />
+        )}
 
         {adminView === 'node' && <section className="panel inspector">
           <div className="panel-title between">
@@ -6589,188 +6437,25 @@ function App() {
             ))}
           </div>
 
-          <div className="run-history-tools">
-            <label className="run-history-search">
-              <Search size={14} />
-              <input
-                type="search"
-                value={runHistorySearch}
-                onChange={(event) => setRunHistorySearch(event.target.value)}
-                placeholder="搜索输入或输出"
-              />
-            </label>
-            <select
-              value={runHistoryStatusFilter}
-              aria-label="运行历史状态筛选"
-              onChange={(event) => setRunHistoryStatusFilter(event.target.value as RunHistoryStatusFilter)}
-            >
-              <option value="all">全部状态</option>
-              <option value="ok">成功</option>
-              <option value="error">失败</option>
-            </select>
-          </div>
-
-          <div className="run-history">
-            {runHistory.length === 0 ? (
-              <p>暂无后端运行历史。</p>
-            ) : visibleRunHistory.length === 0 ? (
-              <p>没有匹配的运行历史。</p>
-            ) : (
-              visibleRunHistory.slice(0, 8).map((run) => {
-                const hasError = run.status === 'error' || run.steps.some((step) => step.status === 'error')
-                const lastStep = [...run.steps].reverse().find((step) => step.status !== 'skipped') ?? run.steps.at(-1)
-                return (
-                  <div key={run.id} className={clsx('run-history-item', run.id === selectedRunId && 'active')}>
-                    <button type="button" onClick={() => selectRunHistory(run.id)}>
-                      <strong>{run.workflow_name}</strong>
-                      <span>{new Date(run.created_at).toLocaleString('zh-CN')}</span>
-                      <small>{run.input_text}</small>
-                      <small>
-                        估算成本 {run.cost_summary?.cost_units ?? 0} · 计费节点 {run.cost_summary?.billable_step_count ?? 0}
-                      </small>
-                      <small>{lastStep ? `结果：${lastStep.output}` : '暂无节点输出'}</small>
-                    </button>
-                    <span className={clsx('run-status-badge', hasError ? 'error' : 'ok')}>
-                      {hasError ? '失败' : '成功'}
-                    </span>
-                    <button
-                      type="button"
-                      className="run-delete-button"
-                      aria-label="删除运行历史"
-                      onClick={() => deleteRunHistory(run.id)}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                )
-              })
-            )}
-          </div>
-
-          <div className="run-log">
-            {runSteps.length === 0 ? (
-              <div className="empty-run">
-                <Sparkles size={18} />
-                <span>点击运行后，可以查看每个节点的模拟输出。</span>
-              </div>
-            ) : (
-              <>
-                <div className="run-summary">
-                  <div>
-                    <strong>{selectedRunRecord ? selectedRunRecord.workflow_name : '当前运行结果'}</strong>
-                    <span>
-                      完成 {selectedRunDoneCount || runSteps.filter((step) => step.status === 'done' || step.status === 'routed').length}
-                      个，跳过 {selectedRunSkippedCount || runSteps.filter((step) => step.status === 'skipped').length} 个，错误{' '}
-                      {selectedRunErrorCount || runSteps.filter((step) => step.status === 'error').length} 个
-                    </span>
-                    {selectedRunRecord?.cost_summary && (
-                      <small>
-                        估算成本 {selectedRunRecord.cost_summary.cost_units ?? 0} ·
-                        计费节点 {selectedRunRecord.cost_summary.billable_step_count ?? 0} ·
-                        {formatProviderBreakdown(selectedRunRecord.cost_summary.provider_breakdown)}
-                      </small>
-                    )}
-                  </div>
-                  <button type="button" onClick={copyCurrentRunSummary}>
-                    <Copy size={12} />
-                    复制整次结果
-                  </button>
-                </div>
-                {runSteps.map((step) => {
-                  const stepId = step.nodeId ?? step.node_id ?? step.title
-                  const outputUrl = extractFirstUrl(step.output)
-                  const audioUrl = outputUrl && isAudioStep(step) ? outputUrl : ''
-                  const simulatedAudio = !audioUrl && isSimulatedAudioStep(step)
-                  return (
-                    <article key={stepId}>
-                      <span className={clsx('status-dot', step.status)} />
-                      <div>
-                        <strong>{step.title}</strong>
-                        <div className="run-step-meta">
-                          {step.kind && <span>{step.kind}</span>}
-                          <span>耗时 {step.duration_ms ?? 0}ms</span>
-                          <span>尝试 {step.attempt_count ?? 1} 次</span>
-                        </div>
-                        <dl>
-                          <div>
-                            <dt>
-                              输入
-                              <button type="button" onClick={() => copyText('节点输入', step.input)}>
-                                <Copy size={12} />
-                                复制
-                              </button>
-                            </dt>
-                            <dd>{step.input}</dd>
-                          </div>
-                          <div>
-                            <dt>
-                              输出
-                              <button type="button" onClick={() => copyText('节点输出', step.output)}>
-                                <Copy size={12} />
-                                复制
-                              </button>
-                            </dt>
-                            <dd>{step.output}</dd>
-                          </div>
-                          {audioUrl && (
-                            <div className="audio-output">
-                              <dt>音频播放</dt>
-                              <dd>
-                                <audio controls src={audioUrl}>
-                                  当前浏览器不支持音频播放。
-                                </audio>
-                                <div className="audio-output-actions">
-                                  <a href={audioUrl} target="_blank" rel="noreferrer">
-                                    打开音频
-                                  </a>
-                                  <button type="button" onClick={() => copyText('音频链接', audioUrl)}>
-                                    <Copy size={12} />
-                                    复制链接
-                                  </button>
-                                </div>
-                              </dd>
-                            </div>
-                          )}
-                          {simulatedAudio && (
-                            <div className="audio-output unavailable">
-                              <dt>音频播放</dt>
-                              <dd>
-                                这次没有生成真实音频文件。当前节点使用了模拟音频或调用失败回退，重新运行成功后这里会显示播放器和打开按钮。
-                              </dd>
-                            </div>
-                          )}
-                          {step.variable && (
-                            <div>
-                              <dt>写入</dt>
-                              <dd>{step.variable}</dd>
-                            </div>
-                          )}
-                          {step.provider && (
-                            <div>
-                              <dt>来源</dt>
-                              <dd>{step.provider}</dd>
-                            </div>
-                          )}
-                          {step.error && (
-                            <div className="run-error-detail">
-                              <dt>
-                                错误原因
-                                <button type="button" onClick={() => copyText('错误原因', step.error)}>
-                                  <Copy size={12} />
-                                  复制
-                                </button>
-                              </dt>
-                              <dd>{step.error}</dd>
-                            </div>
-                          )}
-                        </dl>
-                      </div>
-                    </article>
-                  )
-                })}
-              </>
-            )}
-          </div>
+          <RunHistoryPanel
+            runHistory={runHistory}
+            visibleRunHistory={visibleRunHistory}
+            selectedRunId={selectedRunId}
+            selectedRunRecord={selectedRunRecord}
+            runHistorySearch={runHistorySearch}
+            runHistoryStatusFilter={runHistoryStatusFilter}
+            runSteps={runSteps}
+            selectedRunDoneCount={selectedRunDoneCount}
+            selectedRunSkippedCount={selectedRunSkippedCount}
+            selectedRunErrorCount={selectedRunErrorCount}
+            onSearchChange={setRunHistorySearch}
+            onStatusFilterChange={setRunHistoryStatusFilter}
+            onSelectRunHistory={(runId) => void selectRunHistory(runId)}
+            onDeleteRunHistory={(runId) => void deleteRunHistory(runId)}
+            onCopyCurrentRunSummary={copyCurrentRunSummary}
+            onCopyText={(label, value) => void copyText(label, value)}
+            formatProviderBreakdown={formatProviderBreakdown}
+          />
         </section>}
 
         {adminView === 'json' && <section className="panel json-panel">
