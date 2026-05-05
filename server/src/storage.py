@@ -631,8 +631,14 @@ class WorkflowStore:
                 )
             )
         if not row:
-            default_model = "cosyvoice-v2" if provider == "aliyun" else "deepseek-v4-flash"
-            default_base_url = "https://dashscope.aliyuncs.com" if provider == "aliyun" else "https://api.deepseek.com"
+            default_model = {
+                "aliyun": "cosyvoice-v2",
+                "paismart": "hybrid",
+            }.get(provider, "deepseek-v4-flash")
+            default_base_url = {
+                "aliyun": "https://dashscope.aliyuncs.com",
+                "paismart": "http://127.0.0.1:8080",
+            }.get(provider, "https://api.deepseek.com")
             return ModelConfigRecord(
                 provider=provider,
                 enabled=False,

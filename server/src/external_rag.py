@@ -22,15 +22,25 @@ def external_rag_status() -> ExternalRagStatus:
     )
 
 
-def search_paismart(query: str, top_k: int) -> list[KnowledgeChunk]:
-    if not EXTERNAL_RAG_ENABLED:
+def paismart_configured(runtime_config: dict[str, str | bool] | None = None) -> bool:
+    return bool(runtime_config and runtime_config.get("enabled")) or EXTERNAL_RAG_ENABLED
+
+
+def search_paismart(
+    query: str,
+    top_k: int,
+    runtime_config: dict[str, str | bool] | None = None,
+) -> list[KnowledgeChunk]:
+    if not paismart_configured(runtime_config):
         raise RuntimeError("External RAG is disabled")
 
     params = urlencode({"query": query, "topK": max(1, top_k)})
-    url = f"{PAISMART_BASE_URL.rstrip('/')}/api/v1/search/hybrid?{params}"
+    base_url = str(runtime_config.get("base_url") or "").strip() if runtime_config else PAISMART_BASE_URL
+    token = str(runtime_config.get("api_key") or "").strip() if runtime_config else PAISMART_TOKEN
+    url = f"{base_url.rstrip('/')}/api/v1/search/hybrid?{params}"
     headers = {"Accept": "application/json"}
-    if PAISMART_TOKEN:
-        headers["Authorization"] = f"Bearer {PAISMART_TOKEN}"
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
 
     request = Request(url, headers=headers, method="GET")
     with urlopen(request, timeout=PAISMART_TIMEOUT_SECONDS) as response:

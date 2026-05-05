@@ -675,7 +675,7 @@ class ApiTestCase(unittest.TestCase):
         self.assertIn("退款", run["steps"][1]["output"])
 
     def test_knowledge_node_can_use_paismart_adapter(self) -> None:
-        def fake_search_paismart(query: str, top_k: int):
+        def fake_search_paismart(query: str, top_k: int, runtime_config=None):
             from server.src.knowledge import KnowledgeChunk
 
             self.assertEqual(query, "外部检索")
@@ -723,6 +723,81 @@ class ApiTestCase(unittest.TestCase):
         knowledge_step = run["steps"][1]
         self.assertEqual(knowledge_step["provider"], "PaiSmart RAG")
         self.assertIn("PaiSmart 返回的企业知识片段", knowledge_step["output"])
+
+    def test_workspace_paismart_config_is_used_by_knowledge_runner(self) -> None:
+        save_response = self.client.put(
+            "/api/model-configs/paismart",
+            json={
+                "enabled": True,
+                "model": "hybrid",
+                "base_url": "http://paismart.test",
+                "api_key": "paismart-workspace-token",
+            },
+            headers=self.auth_headers,
+        )
+        self.assertEqual(save_response.status_code, 200)
+        saved = save_response.json()
+        self.assertTrue(saved["has_api_key"])
+        self.assertNotIn("paismart-workspace-token", str(saved))
+
+        test_response = self.client.post("/api/model-configs/paismart/test", headers=self.auth_headers)
+        self.assertEqual(test_response.status_code, 200)
+        self.assertTrue(test_response.json()["ok"])
+
+        captured = {}
+
+        def fake_search_paismart(query: str, top_k: int, runtime_config=None):
+            from server.src.knowledge import KnowledgeChunk
+
+            captured["runtime_config"] = runtime_config
+            return [KnowledgeChunk(source="pai-doc#1", text="团队空间 PaiSmart 片段", score=0.99)]
+
+        previous = runner.search_paismart
+        runner.search_paismart = fake_search_paismart
+        try:
+            workflow = {
+                **valid_workflow(),
+                "nodes": [
+                    {
+                        "id": "input-1",
+                        "position": {"x": 0, "y": 0},
+                        "data": {"kind": "input", "label": "用户输入", "outputKey": "user_request"},
+                    },
+                    {
+                        "id": "knowledge-1",
+                        "position": {"x": 240, "y": 0},
+                        "data": {
+                            "kind": "knowledge",
+                            "label": "PaiSmart 检索",
+                            "knowledgeProvider": "paismart",
+                            "query": "{{user_request}}",
+                            "topK": 1,
+                            "outputKey": "context",
+                        },
+                    },
+                    {
+                        "id": "output-1",
+                        "position": {"x": 480, "y": 0},
+                        "data": {"kind": "output", "label": "最终输出", "prompt": "{{context}}", "outputKey": "answer"},
+                    },
+                ],
+                "edges": [
+                    {"id": "e1", "source": "input-1", "target": "knowledge-1"},
+                    {"id": "e2", "source": "knowledge-1", "target": "output-1"},
+                ],
+            }
+            run = self.client.post(
+                "/api/runs",
+                json={"workflow": workflow, "input_text": "团队空间检索"},
+                headers=self.auth_headers,
+            ).json()
+        finally:
+            runner.search_paismart = previous
+
+        self.assertEqual(run["steps"][1]["provider"], "PaiSmart RAG")
+        self.assertIn("团队空间 PaiSmart 片段", run["steps"][1]["output"])
+        self.assertEqual(captured["runtime_config"]["api_key"], "paismart-workspace-token")
+        self.assertEqual(captured["runtime_config"]["base_url"], "http://paismart.test")
 
     def test_aliyun_multimodal_nodes_fall_back_without_key(self) -> None:
         workflow = {

@@ -77,7 +77,7 @@
 - 异步运行队列，支持任务提交、取消排队任务、失败重试、终态任务清理、轮询和运行历史落库
 - 运行日志展示节点级输入输出、来源、错误原因、耗时和尝试次数
 - 知识库上传后自动写入本地向量索引，检索时混合关键词和相似度
-- 知识检索节点可切换为 PaiSmart 外部 RAG 服务
+- 知识检索节点可切换为 PaiSmart 外部 RAG 服务，并支持团队空间级地址和 Token 配置
 - 前端已拆出登录组件，并增加 Playwright E2E 用例
 - 节点支持失败策略和重试次数配置
 - 运行输入可以手动编辑，也可以一键套用示例
@@ -267,6 +267,7 @@ http://127.0.0.1:8000/api/health
 - `PAISMART_BASE_URL`：PaiSmart 服务地址，默认 `http://127.0.0.1:8080`
 - `PAISMART_TOKEN`：调用 PaiSmart 时使用的 Bearer Token，可留空
 - `PAISMART_TIMEOUT_SECONDS`：PaiSmart 请求超时时间
+- PaiSmart 也可以在前端“管理中心 -> 模型”里按团队空间保存地址和 Token；团队空间配置优先于环境变量。
 - `MODEL_CONFIG_SECRET`：保护团队空间模型 API Key 的本地密钥；共享数据库前请改成自己的长随机字符串
 - `SESSION_TTL_HOURS`：登录 token 有效期，默认 `168` 小时
 - `WORKSPACE_INVITATION_TTL_HOURS`：团队邀请码有效期，默认 `168` 小时
@@ -322,7 +323,7 @@ docker compose logs -f api worker
 server/data/knowledge/
 ```
 
-后端运行“知识检索”节点时，默认读取当前团队空间的本地文档。上传后会写入 SQLite 本地向量索引，检索时混合关键词命中和哈希向量相似度，不需要额外安装向量数据库。也可以在节点配置里把“知识来源”切换为 `PaiSmart RAG`，此时后端会请求 PaiSmart 的 `/api/v1/search/hybrid` 接口。单个上传文件限制为 1MB。项目已内置一个示例文档：
+后端运行“知识检索”节点时，默认读取当前团队空间的本地文档。上传后会写入 SQLite 本地向量索引，检索时混合关键词命中和哈希向量相似度，不需要额外安装向量数据库。也可以在节点配置里把“知识来源”切换为 `PaiSmart RAG`，此时后端会请求 PaiSmart 的 `/api/v1/search/hybrid` 接口，并优先使用当前团队空间保存的 PaiSmart 地址和 Token。单个上传文件限制为 1MB。项目已内置一个示例文档：
 
 ```text
 server/data/knowledge/customer-support.md

@@ -350,13 +350,14 @@ type ModelConfigRecord = {
 }
 
 type ModelConfigFeedback = {
-  provider: ProviderConfigKey
+  provider: RuntimeConfigKey
   type: 'ok' | 'error' | 'info'
   text: string
 }
 
 type ModelConfigAction = 'load' | 'save' | 'test'
 type ProviderConfigKey = 'deepseek' | 'aliyun'
+type RuntimeConfigKey = ProviderConfigKey | 'paismart'
 
 type ProviderConfigState = {
   record: ModelConfigRecord | null
@@ -383,9 +384,17 @@ const PROVIDER_CONFIG_DEFAULTS: Record<ProviderConfigKey, ProviderConfigState['f
   },
 }
 
-const PROVIDER_CONFIG_LABELS: Record<ProviderConfigKey, string> = {
+const PAISMART_CONFIG_DEFAULTS: ProviderConfigState['form'] = {
+  enabled: true,
+  model: 'hybrid',
+  baseUrl: 'http://127.0.0.1:8080',
+  apiKey: '',
+}
+
+const PROVIDER_CONFIG_LABELS: Record<RuntimeConfigKey, string> = {
   deepseek: 'DeepSeek',
   aliyun: '阿里云百炼',
+  paismart: 'PaiSmart RAG',
 }
 
 const ttsVoiceOptions = [
@@ -2036,6 +2045,10 @@ function App() {
     record: null,
     form: createDefaultProviderConfigForm('aliyun'),
   })
+  const [paismartConfig, setPaismartConfig] = useState<ProviderConfigState>({
+    record: null,
+    form: { ...PAISMART_CONFIG_DEFAULTS },
+  })
   const [modelConfigForm, setModelConfigForm] = useState(createDefaultProviderConfigForm('deepseek'))
   const [modelConfigFeedback, setModelConfigFeedback] = useState<ModelConfigFeedback | null>(null)
   const [modelConfigBusy, setModelConfigBusy] = useState<ModelConfigAction | null>(null)
@@ -2180,6 +2193,7 @@ function App() {
 
   const deepseekWorkspaceConfigured = Boolean(modelConfig?.enabled && modelConfig.has_api_key)
   const aliyunWorkspaceConfigured = Boolean(aliyunConfig.record?.enabled && aliyunConfig.record.has_api_key)
+  const paismartWorkspaceConfigured = Boolean(paismartConfig.record?.enabled && paismartConfig.record.has_api_key)
   const deepseekConfigured = Boolean(providerStatus?.deepseek_configured || deepseekWorkspaceConfigured)
   const aliyunConfigured = Boolean(providerStatus?.aliyun_configured || aliyunWorkspaceConfigured)
   const hasRealModelProvider = Boolean(deepseekConfigured || providerStatus?.openai_configured || aliyunConfigured)
@@ -2219,6 +2233,13 @@ function App() {
     }))
   }
 
+  const updatePaismartConfigForm = (patch: Partial<ProviderConfigState['form']>) => {
+    setPaismartConfig((current) => ({
+      ...current,
+      form: { ...current.form, ...patch },
+    }))
+  }
+
   const clearSessionState = useCallback(() => {
     setAuthSession(null)
     persistAuthSession(null)
@@ -2229,6 +2250,10 @@ function App() {
     setAliyunConfig({
       record: null,
       form: createDefaultProviderConfigForm('aliyun'),
+    })
+    setPaismartConfig({
+      record: null,
+      form: { ...PAISMART_CONFIG_DEFAULTS },
     })
     setKnowledgeStatus(null)
     setKnowledgeDocuments([])
@@ -2650,6 +2675,17 @@ function App() {
     }
   }, [])
 
+  const applyPaismartConfig = useCallback((config: ModelConfigRecord) => {
+    const form = {
+      ...PAISMART_CONFIG_DEFAULTS,
+      enabled: config.has_api_key || config.updated_at ? config.enabled : PAISMART_CONFIG_DEFAULTS.enabled,
+      model: config.model || PAISMART_CONFIG_DEFAULTS.model,
+      baseUrl: config.base_url || PAISMART_CONFIG_DEFAULTS.baseUrl,
+      apiKey: '',
+    }
+    setPaismartConfig({ record: config, form })
+  }, [])
+
   const loadProviderModelConfig = useCallback(async (provider: ProviderConfigKey, showNotice = false) => {
     if (!authSession || !activeWorkspaceId) return null
     const label = PROVIDER_CONFIG_LABELS[provider]
@@ -2696,6 +2732,39 @@ function App() {
     (showNotice = false) => loadProviderModelConfig('aliyun', showNotice),
     [loadProviderModelConfig],
   )
+
+  const loadPaismartConfig = useCallback(async (showNotice = false) => {
+    if (!authSession || !activeWorkspaceId) return null
+    const label = PROVIDER_CONFIG_LABELS.paismart
+    if (showNotice) {
+      setModelConfigBusy('load')
+      setModelConfigFeedback({ provider: 'paismart', type: 'info', text: `正在读取当前团队空间的 ${label} 配置...` })
+    }
+    try {
+      const response = await apiFetch('/api/model-configs/paismart')
+      if (!response.ok) {
+        throw new Error(await readResponseErrorMessage(response, `读取 ${label} 配置失败：请确认后端在线。`))
+      }
+      const config = (await response.json()) as ModelConfigRecord
+      applyPaismartConfig(config)
+      if (showNotice) {
+        const message = `已读取当前团队空间的 ${label} 配置。`
+        setModelConfigFeedback({ provider: 'paismart', type: 'ok', text: message })
+        setNotice(message)
+      }
+      return config
+    } catch (error) {
+      const message = getErrorMessage(error, `读取 ${label} 配置失败：请确认后端在线。`)
+      setPaismartConfig((current) => ({ ...current, record: null }))
+      if (showNotice) {
+        setModelConfigFeedback({ provider: 'paismart', type: 'error', text: message })
+        setNotice(message)
+      }
+      return null
+    } finally {
+      if (showNotice) setModelConfigBusy(null)
+    }
+  }, [activeWorkspaceId, apiFetch, applyPaismartConfig, authSession])
 
   const persistProviderModelConfig = async (provider: ProviderConfigKey) => {
     if (!activeWorkspaceId) {
@@ -2781,6 +2850,80 @@ function App() {
   const testModelConfig = () => testProviderModelConfig('deepseek')
   const saveAliyunConfig = () => saveProviderModelConfig('aliyun')
   const testAliyunConfig = () => testProviderModelConfig('aliyun')
+
+  const persistPaismartConfig = async () => {
+    if (!activeWorkspaceId) {
+      throw new Error('请先选择团队空间。')
+    }
+    if (!paismartConfig.record?.has_api_key && !paismartConfig.form.apiKey.trim()) {
+      throw new Error('首次保存 PaiSmart RAG 配置时需要填写 Token；如果服务不需要 Token，可以填写 none。')
+    }
+    const response = await apiFetch('/api/model-configs/paismart', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        enabled: paismartConfig.form.enabled,
+        model: paismartConfig.form.model,
+        base_url: paismartConfig.form.baseUrl,
+        api_key: paismartConfig.form.apiKey.trim() || null,
+      }),
+    })
+    if (!response.ok) {
+      throw new Error(await readResponseErrorMessage(response, '保存 PaiSmart RAG 配置失败：请确认你有当前团队空间的编辑权限。'))
+    }
+    const config = (await response.json()) as ModelConfigRecord
+    applyPaismartConfig(config)
+    await refreshProviderStatus(false)
+    return config
+  }
+
+  const savePaismartConfig = async () => {
+    if (modelConfigBusy) return
+    setModelConfigBusy('save')
+    setModelConfigFeedback({ provider: 'paismart', type: 'info', text: '正在保存 PaiSmart RAG 配置...' })
+    try {
+      await persistPaismartConfig()
+      const message = '已保存当前团队空间的 PaiSmart RAG 配置。'
+      setModelConfigFeedback({ provider: 'paismart', type: 'ok', text: message })
+      setNotice(message)
+    } catch (error) {
+      const message = getErrorMessage(error, '保存 PaiSmart RAG 配置失败：请确认你有当前团队空间的编辑权限。')
+      setModelConfigFeedback({ provider: 'paismart', type: 'error', text: message })
+      setNotice(message)
+    } finally {
+      setModelConfigBusy(null)
+    }
+  }
+
+  const testPaismartConfig = async () => {
+    if (modelConfigBusy) return
+    const hasNewApiKey = Boolean(paismartConfig.form.apiKey.trim())
+    setModelConfigBusy('test')
+    setModelConfigFeedback({
+      provider: 'paismart',
+      type: 'info',
+      text: hasNewApiKey ? '检测到新的 Token，正在先保存再测试...' : '正在测试当前团队空间的 PaiSmart RAG 配置...',
+    })
+    try {
+      if (hasNewApiKey) {
+        await persistPaismartConfig()
+      }
+      const response = await apiFetch('/api/model-configs/paismart/test', { method: 'POST' })
+      if (!response.ok) {
+        throw new Error(await readResponseErrorMessage(response, 'PaiSmart RAG 配置测试失败：请确认后端在线。'))
+      }
+      const result = (await response.json()) as { ok: boolean; message: string }
+      setModelConfigFeedback({ provider: 'paismart', type: result.ok ? 'ok' : 'error', text: result.message })
+      setNotice(result.message)
+      if (result.ok) await refreshProviderStatus(false)
+    } catch (error) {
+      const message = getErrorMessage(error, 'PaiSmart RAG 配置测试失败：请确认后端在线，且你有当前团队空间的编辑权限。')
+      setModelConfigFeedback({ provider: 'paismart', type: 'error', text: message })
+      setNotice(message)
+    } finally {
+      setModelConfigBusy(null)
+    }
+  }
 
   const refreshKnowledgeStatus = async (showNotice = true) => {
     try {
@@ -3315,9 +3458,10 @@ function App() {
     const timer = window.setTimeout(() => {
       void loadModelConfig(false)
       void loadAliyunConfig(false)
+      void loadPaismartConfig(false)
     }, 0)
     return () => window.clearTimeout(timer)
-  }, [activeWorkspaceId, authSession, loadAliyunConfig, loadModelConfig])
+  }, [activeWorkspaceId, authSession, loadAliyunConfig, loadModelConfig, loadPaismartConfig])
 
   useEffect(() => {
     if (!authSession || !activeWorkspaceId || adminView !== 'system') return
@@ -3384,6 +3528,10 @@ function App() {
     setAliyunConfig({
       record: null,
       form: createDefaultProviderConfigForm('aliyun'),
+    })
+    setPaismartConfig({
+      record: null,
+      form: { ...PAISMART_CONFIG_DEFAULTS },
     })
     setRunHistory([])
     setRunJobs([])
@@ -5553,9 +5701,13 @@ function App() {
             </div>
             <div>
               <span>PaiSmart RAG</span>
-              <strong className={clsx(providerStatus?.external_rag_enabled ? 'ready' : 'fallback')}>
-                {providerStatus?.external_rag_enabled ? '已启用' : '未启用'}
+              <strong className={clsx(providerStatus?.external_rag_enabled || paismartWorkspaceConfigured ? 'ready' : 'fallback')}>
+                {providerStatus?.external_rag_enabled || paismartWorkspaceConfigured ? '已启用' : '未启用'}
               </strong>
+            </div>
+            <div>
+              <span>RAG 地址</span>
+              <strong>{paismartConfig.record?.base_url ?? providerStatus?.external_rag_base_url ?? '未读取'}</strong>
             </div>
           </div>
           <p className="model-status-note">
@@ -5713,6 +5865,67 @@ function App() {
                   : '当前团队空间还没有保存阿里云百炼 Key。'}
               </p>
               <p className="model-status-note">保存后，文字转语音和图片生成节点会优先使用当前团队空间配置。</p>
+            </div>
+            <div className="model-config-block">
+              <div className="model-config-heading">
+                <strong>PaiSmart RAG</strong>
+                <span>用于知识检索节点的外部 RAG 服务</span>
+              </div>
+              <label className="inline-check">
+                <input
+                  type="checkbox"
+                  checked={paismartConfig.form.enabled}
+                  onChange={(event) => updatePaismartConfigForm({ enabled: event.target.checked })}
+                />
+                启用团队空间 PaiSmart
+              </label>
+              <label>
+                检索模式
+                <input
+                  value={paismartConfig.form.model}
+                  onChange={(event) => updatePaismartConfigForm({ model: event.target.value })}
+                  placeholder="hybrid"
+                />
+              </label>
+              <label>
+                Base URL
+                <input
+                  value={paismartConfig.form.baseUrl}
+                  onChange={(event) => updatePaismartConfigForm({ baseUrl: event.target.value })}
+                  placeholder="http://127.0.0.1:8080"
+                />
+              </label>
+              <label>
+                Token
+                <input
+                  type="password"
+                  value={paismartConfig.form.apiKey}
+                  onChange={(event) => updatePaismartConfigForm({ apiKey: event.target.value })}
+                  placeholder={paismartConfig.record?.masked_api_key ?? '首次保存需要填写；无 Token 可填 none'}
+                />
+              </label>
+              <div className="model-config-actions">
+                <button type="button" className="mini-action" disabled={Boolean(modelConfigBusy)} onClick={() => void savePaismartConfig()}>
+                  {modelConfigBusy === 'save' && modelConfigFeedback?.provider === 'paismart' ? '保存中...' : '保存配置'}
+                </button>
+                <button type="button" className="mini-action" disabled={Boolean(modelConfigBusy)} onClick={() => void testPaismartConfig()}>
+                  {modelConfigBusy === 'test' && modelConfigFeedback?.provider === 'paismart' ? '测试中...' : '测试配置'}
+                </button>
+                <button type="button" className="mini-action" disabled={Boolean(modelConfigBusy)} onClick={() => void loadPaismartConfig(true)}>
+                  {modelConfigBusy === 'load' && modelConfigFeedback?.provider === 'paismart' ? '读取中...' : '重新读取'}
+                </button>
+              </div>
+              {modelConfigFeedback?.provider === 'paismart' && (
+                <p className={clsx('model-config-feedback', modelConfigFeedback.type)}>
+                  {modelConfigFeedback.text}
+                </p>
+              )}
+              <p className="model-status-note">
+                {paismartConfig.record?.has_api_key
+                  ? `当前团队空间已保存 Token：${paismartConfig.record.masked_api_key ?? '******'}`
+                  : '当前团队空间还没有保存 PaiSmart Token。'}
+              </p>
+              <p className="model-status-note">知识检索节点选择 PaiSmart RAG 时，会优先使用当前团队空间配置。</p>
             </div>
           </div>
           {providerStatusCheckedAt && (

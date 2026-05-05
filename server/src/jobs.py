@@ -150,6 +150,9 @@ class RunJobQueue:
             aliyun_config = self.store.get_runtime_model_config_for_job(job.id, "aliyun")
             if aliyun_config:
                 model_configs["aliyun"] = aliyun_config
+            paismart_config = self.store.get_runtime_model_config_for_job(job.id, "paismart")
+            if paismart_config:
+                model_configs["paismart"] = paismart_config
             response = simulate_run(
                 workflow,
                 job.input_text,

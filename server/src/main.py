@@ -144,11 +144,14 @@ def workspace_model_configs(workspace_id: str) -> dict[str, dict[str, str | bool
     aliyun_config = store.get_runtime_model_config(workspace_id, "aliyun")
     if aliyun_config:
         configs["aliyun"] = aliyun_config
+    paismart_config = store.get_runtime_model_config(workspace_id, "paismart")
+    if paismart_config:
+        configs["paismart"] = paismart_config
     return configs
 
 
 def ensure_supported_model_provider(provider: str) -> None:
-    if provider not in {"deepseek", "aliyun"}:
+    if provider not in {"deepseek", "aliyun", "paismart"}:
         raise HTTPException(status_code=400, detail="Unsupported model provider")
 
 
@@ -383,10 +386,12 @@ def test_model_config(
         message = (
             "当前团队空间还没有可用的阿里云百炼 Key。"
             if provider == "aliyun"
+            else "当前团队空间还没有可用的 PaiSmart Token。"
+            if provider == "paismart"
             else "当前团队空间还没有可用的 DeepSeek Key。"
         )
         return ModelConfigTestResponse(ok=False, message=message, provider=provider, model="")
-    label = "阿里云百炼" if provider == "aliyun" else "DeepSeek"
+    label = "阿里云百炼" if provider == "aliyun" else "PaiSmart RAG" if provider == "paismart" else "DeepSeek"
     return ModelConfigTestResponse(
         ok=True,
         message=f"{label} 配置已保存。运行工作流时会优先使用当前团队空间配置。",

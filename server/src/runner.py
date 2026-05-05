@@ -465,6 +465,7 @@ def run_knowledge_node(
     input_text: str,
     user_id: str | None = None,
     workspace_id: str | None = None,
+    model_configs: dict[str, dict[str, str | bool]] | None = None,
 ) -> tuple[str, str, str | None]:
     query = render_template(data.get("query"), context).strip() or input_text
     top_k = int(data.get("topK") or 4)
@@ -474,7 +475,7 @@ def run_knowledge_node(
 
     if provider_mode == "paismart":
         try:
-            matches = search_paismart(query, top_k)
+            matches = search_paismart(query, top_k, model_configs.get("paismart") if model_configs else None)
             provider = "PaiSmart RAG"
         except Exception as error:  # noqa: BLE001 - fallback is shown in the run log.
             matches = search_knowledge(query, top_k, user_id, workspace_id)
@@ -602,7 +603,7 @@ def simulate_run(
             output = input_text or data.get("sampleInput") or ""
             step_input = "用户请求"
         elif kind == "knowledge":
-            output, step_input, provider = run_knowledge_node(data, context, input_text, user_id, workspace_id)
+            output, step_input, provider = run_knowledge_node(data, context, input_text, user_id, workspace_id, model_configs)
         elif kind == "assign":
             output, step_input = run_assign_node(data, context)
         elif kind == "template":
