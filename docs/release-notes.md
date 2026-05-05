@@ -21,7 +21,7 @@
 - 系统页展示安全设置摘要，不暴露密钥内容
 - 异步运行队列，支持任务取消、失败重试、终态任务清理、本地线程、数据库轮询、Redis + Worker 和 Kafka + Worker 部署
 - 运行日志展示节点级输入输出、来源、错误原因、耗时和尝试次数
-- 本地哈希向量知识库和 PaiSmart 外部 RAG 适配，支持团队空间级 PaiSmart 地址、Token 配置、连接诊断和检索预览
+- 本地哈希向量知识库和 PaiSmart 外部 RAG 适配，支持团队空间级 PaiSmart 状态提示、地址、Token 配置、连接诊断和检索预览
 - SQLAlchemy ORM
 - Alembic 数据库迁移
 - Docker Compose，包含 PostgreSQL、Redis、Kafka、API 和 Worker
@@ -31,6 +31,6 @@
 
 - 拆分 `src/App.tsx` 为多个前端组件。
 - 增加成员邀请链接和管理员后台。
-- 强化 PaiSmart 知识库管理联动。
+- 增加工作流发布态、版本对比和运行成本统计。
 - 增加工作流发布态、版本对比和运行成本统计。
 - 增加外网工具白名单、请求审计和插件执行器。

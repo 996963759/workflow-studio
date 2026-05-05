@@ -2785,6 +2785,14 @@ function App() {
     }
   }, [activeWorkspaceId, apiFetch, applyPaismartConfig, authSession])
 
+  const focusPaismartSettings = () => {
+    setAdminView('model')
+    setNotice('已打开 PaiSmart RAG 配置。')
+    if (authSession && activeWorkspaceId) {
+      void loadPaismartConfig(true)
+    }
+  }
+
   const persistProviderModelConfig = async (provider: ProviderConfigKey) => {
     if (!activeWorkspaceId) {
       throw new Error('请先选择团队空间。')
@@ -5205,6 +5213,21 @@ function App() {
 
           {selectedNode.data.kind === 'knowledge' && (
             <>
+              <div className={clsx('rag-node-status', selectedNode.data.knowledgeProvider === 'paismart' && paismartWorkspaceConfigured ? 'ready' : 'fallback')}>
+                <strong>{selectedNode.data.knowledgeProvider === 'paismart' ? 'PaiSmart RAG' : '本地知识库'}</strong>
+                <span>
+                  {selectedNode.data.knowledgeProvider === 'paismart'
+                    ? paismartWorkspaceConfigured
+                      ? `已使用团队空间配置：${paismartConfig.record?.base_url ?? 'PaiSmart'}`
+                      : '当前团队空间还没有保存 PaiSmart 配置。'
+                    : `本地文档 ${knowledgeStatus?.document_count ?? 0} 个，索引 ${knowledgeStatus?.indexed_chunk_count ?? 0} 个片段。`}
+                </span>
+                {selectedNode.data.knowledgeProvider === 'paismart' && (
+                  <button type="button" onClick={focusPaismartSettings}>
+                    配置 PaiSmart
+                  </button>
+                )}
+              </div>
               <label>
                 知识来源
                 <select
@@ -6089,6 +6112,17 @@ function App() {
           <p className="model-status-note">
             知识检索节点会读取后端本地 knowledge 目录中的 Markdown 和 TXT 文档。
           </p>
+          <div className={clsx('rag-node-status', paismartWorkspaceConfigured ? 'ready' : 'fallback')}>
+            <strong>PaiSmart RAG</strong>
+            <span>
+              {paismartWorkspaceConfigured
+                ? `团队空间已配置：${paismartConfig.record?.base_url ?? 'PaiSmart'}`
+                : '未配置团队空间 PaiSmart；知识节点选择 PaiSmart 时会尝试环境变量配置或回退本地知识库。'}
+            </span>
+            <button type="button" onClick={focusPaismartSettings}>
+              配置 PaiSmart
+            </button>
+          </div>
           <div className="knowledge-document-list">
             {knowledgeDocuments.length === 0 ? (
               <p>暂无已加载文档。</p>
