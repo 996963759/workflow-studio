@@ -137,6 +137,57 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertFalse(response.json()["detail"]["valid"])
 
+    def test_run_steps_include_observability_fields(self) -> None:
+        workflow = {
+            **valid_workflow(),
+            "nodes": [
+                {
+                    "id": "input-1",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"kind": "input", "label": "用户输入", "outputKey": "user_request"},
+                },
+                {
+                    "id": "tool-1",
+                    "position": {"x": 240, "y": 0},
+                    "data": {
+                        "kind": "tool",
+                        "label": "失败工具",
+                        "toolName": "local.unreachable",
+                        "toolUrl": "http://127.0.0.1:65535/not-found",
+                        "toolMethod": "GET",
+                        "toolHeaders": "{}",
+                        "toolParams": "{}",
+                        "retryCount": 2,
+                        "failurePolicy": "continue",
+                        "outputKey": "tool_result",
+                    },
+                },
+                {
+                    "id": "output-1",
+                    "position": {"x": 480, "y": 0},
+                    "data": {"kind": "output", "label": "最终输出", "prompt": "{{tool_result}}", "outputKey": "answer"},
+                },
+            ],
+            "edges": [
+                {"id": "e1", "source": "input-1", "target": "tool-1"},
+                {"id": "e2", "source": "tool-1", "target": "output-1"},
+            ],
+        }
+
+        response = self.client.post(
+            "/api/runs",
+            json={"workflow": workflow, "input_text": "观测字段"},
+            headers=self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        steps = response.json()["steps"]
+        self.assertGreaterEqual(steps[0]["duration_ms"], 0)
+        self.assertEqual(steps[0]["attempt_count"], 1)
+        self.assertEqual(steps[1]["status"], "error")
+        self.assertEqual(steps[1]["attempt_count"], 3)
+        self.assertGreaterEqual(steps[1]["duration_ms"], 0)
+
     def test_workflow_crud_persists_archive_state(self) -> None:
         create_response = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers)
         self.assertEqual(create_response.status_code, 201)

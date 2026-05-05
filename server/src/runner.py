@@ -1,5 +1,6 @@
 import os
 import json
+import time
 from collections import defaultdict, deque
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -132,6 +133,10 @@ def summarize_error(error: Exception) -> str:
     if len(message) > 220:
         message = f"{message[:217]}..."
     return f"{error.__class__.__name__}: {message}" if message else error.__class__.__name__
+
+
+def elapsed_ms(started_at: float) -> int:
+    return max(0, round((time.perf_counter() - started_at) * 1000))
 
 
 def clamp_number(value: Any, default: float, minimum: float, maximum: float) -> float:
@@ -547,6 +552,7 @@ def simulate_run(
     workspace_id: str | None = None,
     model_configs: dict[str, dict[str, str | bool]] | None = None,
 ) -> RunResponse:
+    run_started_at = time.perf_counter()
     context: dict[str, str] = {}
     nodes = create_execution_order(workflow.nodes, workflow.edges)
     if nodes is None:
@@ -560,6 +566,7 @@ def simulate_run(
                     input="当前工作流连线",
                     output="工作流存在环形依赖或无效结构，后端无法计算执行顺序。",
                     error="无法根据连线计算拓扑执行顺序。",
+                    duration_ms=elapsed_ms(run_started_at),
                 )
             ],
     )
@@ -567,6 +574,7 @@ def simulate_run(
     skipped_by_branch: set[str] = set()
 
     for index, node in enumerate(nodes, start=1):
+        step_started_at = time.perf_counter()
         current_id = node_id(node)
         data = node.get("data", {})
         kind = data.get("kind")
@@ -575,6 +583,7 @@ def simulate_run(
         provider = None
         error = None
         status = "done"
+        attempts = 1
 
         if current_id in skipped_by_branch:
             steps.append(
@@ -584,6 +593,7 @@ def simulate_run(
                     status="skipped",
                     input="条件分支未命中该路径。",
                     output="已跳过该分支节点。",
+                    duration_ms=elapsed_ms(step_started_at),
                 )
             )
             continue
@@ -682,6 +692,8 @@ def simulate_run(
                 variable=variable,
                 provider=provider,
                 error=error,
+                duration_ms=elapsed_ms(step_started_at),
+                attempt_count=attempts,
             )
         )
 

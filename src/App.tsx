@@ -117,7 +117,8 @@ type WorkflowNodeData = {
 type WorkflowNode = Node<WorkflowNodeData, 'workflow'>
 
 type RunStep = {
-  nodeId: string
+  nodeId?: string
+  node_id?: string
   title: string
   status: 'done' | 'routed' | 'waiting' | 'skipped' | 'error'
   input: string
@@ -125,6 +126,8 @@ type RunStep = {
   variable?: string
   provider?: string
   error?: string
+  duration_ms?: number
+  attempt_count?: number
 }
 
 type WorkflowDefinition = {
@@ -2547,6 +2550,8 @@ function App() {
       ...runSteps.map((step, index) =>
         [
           `${index + 1}. ${step.title} [${step.status}]`,
+          `耗时：${step.duration_ms ?? 0}ms`,
+          `尝试：${step.attempt_count ?? 1} 次`,
           `输入：${step.input}`,
           `输出：${step.output}`,
           step.variable ? `写入：${step.variable}` : '',
@@ -5927,14 +5932,19 @@ function App() {
                   </button>
                 </div>
                 {runSteps.map((step) => {
+                  const stepId = step.nodeId ?? step.node_id ?? step.title
                   const outputUrl = extractFirstUrl(step.output)
                   const audioUrl = outputUrl && isAudioStep(step) ? outputUrl : ''
                   const simulatedAudio = !audioUrl && isSimulatedAudioStep(step)
                   return (
-                    <article key={step.nodeId}>
+                    <article key={stepId}>
                       <span className={clsx('status-dot', step.status)} />
                       <div>
                         <strong>{step.title}</strong>
+                        <div className="run-step-meta">
+                          <span>耗时 {step.duration_ms ?? 0}ms</span>
+                          <span>尝试 {step.attempt_count ?? 1} 次</span>
+                        </div>
                         <dl>
                           <div>
                             <dt>

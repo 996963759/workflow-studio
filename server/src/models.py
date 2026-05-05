@@ -154,6 +154,8 @@ class RunStep(BaseModel):
     variable: str | None = None
     provider: str | None = None
     error: str | None = None
+    duration_ms: int = 0
+    attempt_count: int = 1
 
 
 class RunResponse(BaseModel):
