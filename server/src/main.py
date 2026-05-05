@@ -721,5 +721,48 @@ def get_run_job(job_id: str, context: WorkspaceContext = Depends(require_workspa
     return job
 
 
+@app.post("/api/run-jobs/{job_id}/cancel", response_model=RunJobRecord)
+def cancel_run_job(job_id: str, context: WorkspaceContext = Depends(require_workspace_role("viewer"))) -> RunJobRecord:
+    user, workspace_id = context
+    try:
+        job = store.cancel_run_job(job_id, user.id, workspace_id)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if not job:
+        raise HTTPException(status_code=404, detail="Run job not found")
+    store.append_audit_log(
+        workspace_id,
+        user.id,
+        "run_job.cancel",
+        "run_job",
+        f"取消异步运行任务：{job.id[:8]}",
+        job.id,
+        {"status": job.status},
+    )
+    return job
+
+
+@app.post("/api/run-jobs/{job_id}/retry", response_model=RunJobRecord)
+def retry_run_job(job_id: str, context: WorkspaceContext = Depends(require_workspace_role("viewer"))) -> RunJobRecord:
+    user, workspace_id = context
+    try:
+        job = store.retry_run_job(job_id, user.id, workspace_id)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if not job:
+        raise HTTPException(status_code=404, detail="Run job not found")
+    job_queue.publish(job.id)
+    store.append_audit_log(
+        workspace_id,
+        user.id,
+        "run_job.retry",
+        "run_job",
+        f"重试异步运行任务：{job.id[:8]}",
+        job.id,
+        {"status": job.status},
+    )
+    return job
+
+
 if DIST_DIR.exists():
     app.mount("/", StaticFiles(directory=DIST_DIR, html=True), name="frontend")

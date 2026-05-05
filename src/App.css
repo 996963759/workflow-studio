@@ -152,6 +152,11 @@
   min-width: 160px;
 }
 
+.run-job-item {
+  display: inline-flex;
+  gap: 5px;
+}
+
 .run-job-strip button {
   background: #ffffff;
   border: 1px solid #cbd5e1;

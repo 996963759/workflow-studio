@@ -18,7 +18,7 @@
 - 右侧管理中心分区入口
 - 系统概览接口和管理中心系统页
 - 系统页展示安全设置摘要，不暴露密钥内容
-- 异步运行队列，支持本地线程、数据库轮询、Redis + Worker 和 Kafka + Worker 部署
+- 异步运行队列，支持任务取消、失败重试、本地线程、数据库轮询、Redis + Worker 和 Kafka + Worker 部署
 - 本地哈希向量知识库和 PaiSmart 外部 RAG 适配
 - SQLAlchemy ORM
 - Alembic 数据库迁移

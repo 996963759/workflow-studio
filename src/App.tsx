@@ -246,7 +246,7 @@ type WorkspaceInvitationRecord = {
 type RunJobRecord = {
   id: string
   workflow_id: string
-  status: 'queued' | 'running' | 'succeeded' | 'failed'
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled'
   input_text: string
   run_id?: string | null
   error?: string | null
@@ -2174,6 +2174,13 @@ function App() {
     : '未检查'
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaces[0]
   const activeRunJob = runJobs.find((job) => job.id === activeRunJobId)
+  const runJobStatusLabels: Record<RunJobRecord['status'], string> = {
+    queued: '排队中',
+    running: '运行中',
+    succeeded: '已完成',
+    failed: '失败',
+    canceled: '已取消',
+  }
   const authToken = authSession?.token
 
   const updateModelConfigForm = (patch: Partial<typeof modelConfigForm>) => {
@@ -3447,6 +3454,10 @@ function App() {
         setNotice(`异步运行失败：${job.error ?? '后端没有返回错误原因'}`)
         return
       }
+      if (job.status === 'canceled') {
+        setNotice('异步运行任务已取消。')
+        return
+      }
     }
     setNotice('异步运行仍在队列中，请稍后刷新运行任务。')
   }
@@ -3497,6 +3508,37 @@ function App() {
     } catch {
       setBackendStatus('offline')
       setNotice('加载异步运行任务失败：请确认后端在线。')
+    }
+  }
+
+  const cancelRunJob = async (jobId: string) => {
+    try {
+      const response = await apiFetch(`/api/run-jobs/${jobId}/cancel`, { method: 'POST' })
+      if (!response.ok) throw new Error('cancel job failed')
+      const job = (await response.json()) as RunJobRecord
+      setRunJobs((current) => [job, ...current.filter((item) => item.id !== job.id)])
+      setActiveRunJobId(job.id)
+      setBackendStatus('online')
+      setNotice('已取消排队中的异步任务。')
+    } catch {
+      setBackendStatus('offline')
+      setNotice('取消异步任务失败：任务可能已经开始运行，请刷新队列查看最新状态。')
+    }
+  }
+
+  const retryRunJob = async (jobId: string) => {
+    try {
+      const response = await apiFetch(`/api/run-jobs/${jobId}/retry`, { method: 'POST' })
+      if (!response.ok) throw new Error('retry job failed')
+      const job = (await response.json()) as RunJobRecord
+      setRunJobs((current) => [job, ...current.filter((item) => item.id !== job.id)])
+      setActiveRunJobId(job.id)
+      setBackendStatus('online')
+      setNotice('失败任务已重新入队，正在轮询结果。')
+      void pollRunJob(job.id)
+    } catch {
+      setBackendStatus('offline')
+      setNotice('重试异步任务失败：请确认后端在线，且任务状态仍为失败。')
     }
   }
 
@@ -5782,16 +5824,28 @@ function App() {
           <div className="run-job-strip">
             {activeRunJob ? (
               <span>
-                当前任务：{activeRunJob.status}
+                当前任务：{runJobStatusLabels[activeRunJob.status]}
                 {activeRunJob.run_id ? ` · 运行记录 ${activeRunJob.run_id.slice(0, 8)}` : ''}
               </span>
             ) : (
               <span>异步队列空闲</span>
             )}
             {runJobs.slice(0, 3).map((job) => (
-              <button key={job.id} type="button" onClick={() => setActiveRunJobId(job.id)}>
-                {job.status}
-              </button>
+              <div key={job.id} className="run-job-item">
+                <button type="button" onClick={() => setActiveRunJobId(job.id)}>
+                  {runJobStatusLabels[job.status]}
+                </button>
+                {job.status === 'queued' ? (
+                  <button type="button" onClick={() => void cancelRunJob(job.id)}>
+                    取消
+                  </button>
+                ) : null}
+                {job.status === 'failed' ? (
+                  <button type="button" onClick={() => void retryRunJob(job.id)}>
+                    重试
+                  </button>
+                ) : null}
+              </div>
             ))}
           </div>
 

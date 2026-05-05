@@ -104,20 +104,23 @@ class RunJobQueue:
 
     def enqueue(self, user_id: str, workspace_id: str, workflow_id: str, input_text: str) -> RunJobRecord:
         job = self.store.create_run_job(user_id, workspace_id, workflow_id, input_text)
+        self.publish(job.id)
+        return job
+
+    def publish(self, job_id: str) -> None:
         if self.backend == "thread":
-            executor.submit(self.run_job_by_id, job.id)
+            executor.submit(self.run_job_by_id, job_id)
         elif self.backend == "redis":
             try:
-                self.redis_client.lpush(self.redis_queue, job.id)  # type: ignore[union-attr]
+                self.redis_client.lpush(self.redis_queue, job_id)  # type: ignore[union-attr]
             except RedisError:
-                logger.exception("failed to publish run job to redis; job stays queued job_id=%s", job.id)
+                logger.exception("failed to publish run job to redis; job stays queued job_id=%s", job_id)
         elif self.backend == "kafka":
             try:
-                future = self.kafka_producer.send(self.kafka_topic, job.id)  # type: ignore[union-attr]
+                future = self.kafka_producer.send(self.kafka_topic, job_id)  # type: ignore[union-attr]
                 future.get(timeout=10)
             except KafkaError:
-                logger.exception("failed to publish run job to kafka; job stays queued job_id=%s", job.id)
-        return job
+                logger.exception("failed to publish run job to kafka; job stays queued job_id=%s", job_id)
 
     def run_job_by_id(self, job_id: str) -> bool:
         job = self.store.claim_run_job(job_id)

@@ -1056,6 +1056,43 @@ class WorkflowStore:
             session.commit()
         return result.rowcount
 
+    def cancel_run_job(self, job_id: str, user_id: str, workspace_id: str) -> RunJobRecord | None:
+        with self._connect() as session:
+            job = session.scalar(
+                select(DbRunJob).where(
+                    DbRunJob.id == job_id,
+                    DbRunJob.workspace_id == workspace_id,
+                )
+            )
+            if not job:
+                return None
+            if job.status != "queued":
+                raise ValueError("Only queued jobs can be canceled")
+            job.status = "canceled"
+            job.error = "用户已取消任务。"
+            job.updated_at = utc_now()
+            session.commit()
+            return self._job_to_record(job)
+
+    def retry_run_job(self, job_id: str, user_id: str, workspace_id: str) -> RunJobRecord | None:
+        with self._connect() as session:
+            job = session.scalar(
+                select(DbRunJob).where(
+                    DbRunJob.id == job_id,
+                    DbRunJob.workspace_id == workspace_id,
+                )
+            )
+            if not job:
+                return None
+            if job.status != "failed":
+                raise ValueError("Only failed jobs can be retried")
+            job.status = "queued"
+            job.run_id = None
+            job.error = None
+            job.updated_at = utc_now()
+            session.commit()
+            return self._job_to_record(job)
+
     def get_run_job(self, job_id: str, user_id: str, workspace_id: str | None = None) -> RunJobRecord | None:
         workspace_id = workspace_id or self.ensure_default_workspace(user_id)
         with self._connect() as session:

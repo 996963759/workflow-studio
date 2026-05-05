@@ -397,6 +397,50 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(latest["status"], "succeeded")
         self.assertTrue(latest["run_id"])
 
+    def test_queued_run_job_can_be_canceled(self) -> None:
+        created = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers).json()
+        user = self.client.get("/api/auth/me", headers=self.auth_headers).json()
+        workspace = self.client.get("/api/workspaces", headers=self.auth_headers).json()[0]
+        job = api.store.create_run_job(user["id"], workspace["id"], created["id"], "取消排队任务")
+
+        canceled = self.client.post(f"/api/run-jobs/{job.id}/cancel", headers=self.auth_headers)
+
+        self.assertEqual(canceled.status_code, 200)
+        self.assertEqual(canceled.json()["status"], "canceled")
+        self.assertIn("取消", canceled.json()["error"])
+        self.assertIsNone(api.store.claim_run_job(job.id))
+
+    def test_failed_run_job_can_be_retried_and_republished(self) -> None:
+        created = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers).json()
+        user = self.client.get("/api/auth/me", headers=self.auth_headers).json()
+        workspace = self.client.get("/api/workspaces", headers=self.auth_headers).json()[0]
+        job = api.store.create_run_job(user["id"], workspace["id"], created["id"], "重试失败任务")
+        api.store.update_run_job(job.id, "failed", error="boom")
+
+        class FakeFuture:
+            def get(self, timeout=None):
+                return None
+
+        class FakeProducer:
+            def __init__(self):
+                self.messages = []
+
+            def send(self, topic, value):
+                self.messages.append((topic, value))
+                return FakeFuture()
+
+        api.job_queue = RunJobQueue(api.store, backend="database")
+        api.job_queue.backend = "kafka"
+        producer = FakeProducer()
+        api.job_queue.kafka_producer = producer
+
+        retried = self.client.post(f"/api/run-jobs/{job.id}/retry", headers=self.auth_headers)
+
+        self.assertEqual(retried.status_code, 200)
+        self.assertEqual(retried.json()["status"], "queued")
+        self.assertIsNone(retried.json()["error"])
+        self.assertEqual(producer.messages, [(api.job_queue.kafka_topic, job.id)])
+
     def test_kafka_queue_publishes_and_worker_claims_job(self) -> None:
         created = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers).json()
         user = self.client.get("/api/auth/me", headers=self.auth_headers).json()
