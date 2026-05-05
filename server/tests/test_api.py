@@ -839,6 +839,45 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(captured["top_k"], 2)
         self.assertEqual(captured["runtime_config"]["api_key"], "paismart-preview-token")
 
+    def test_paismart_diagnose_reports_connection_status(self) -> None:
+        self.client.put(
+            "/api/model-configs/paismart",
+            json={
+                "enabled": True,
+                "model": "hybrid",
+                "base_url": "http://paismart.test",
+                "api_key": "paismart-diagnose-token",
+            },
+            headers=self.auth_headers,
+        )
+
+        from server.src import main as api_module
+        from server.src.knowledge import KnowledgeChunk
+
+        captured = {}
+
+        def fake_search_paismart(query: str, top_k: int, runtime_config=None):
+            captured["query"] = query
+            captured["top_k"] = top_k
+            captured["runtime_config"] = runtime_config
+            return [KnowledgeChunk(source="doc.md#1", text="诊断片段", score=0.8)]
+
+        previous = api_module.search_paismart
+        api_module.search_paismart = fake_search_paismart
+        try:
+            response = self.client.post("/api/rag/paismart/diagnose", headers=self.auth_headers)
+        finally:
+            api_module.search_paismart = previous
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["base_url"], "http://paismart.test")
+        self.assertTrue(body["token_configured"])
+        self.assertEqual(body["result_count"], 1)
+        self.assertEqual(captured["query"], "连接诊断")
+        self.assertEqual(captured["runtime_config"]["api_key"], "paismart-diagnose-token")
+
     def test_aliyun_multimodal_nodes_fall_back_without_key(self) -> None:
         workflow = {
             **valid_workflow(),

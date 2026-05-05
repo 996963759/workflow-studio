@@ -25,6 +25,7 @@ from .models import (
     ModelConfigPayload,
     ModelConfigRecord,
     ModelConfigTestResponse,
+    RagDiagnoseResponse,
     RagPreviewPayload,
     RunRecord,
     RunJobRecord,
@@ -415,6 +416,39 @@ def preview_paismart_rag(
     except Exception as error:  # noqa: BLE001 - surfaced as preview diagnostic.
         raise HTTPException(status_code=502, detail=f"PaiSmart RAG 检索失败：{error}") from error
     return [{"source": chunk.source, "text": chunk.text, "score": chunk.score} for chunk in chunks]
+
+
+@app.post("/api/rag/paismart/diagnose", response_model=RagDiagnoseResponse)
+def diagnose_paismart_rag(
+    context: WorkspaceContext = Depends(require_workspace_role("viewer")),
+) -> RagDiagnoseResponse:
+    _, workspace_id = context
+    runtime_config = store.get_runtime_model_config(workspace_id, "paismart")
+    if not runtime_config:
+        return RagDiagnoseResponse(
+            ok=False,
+            base_url="",
+            token_configured=False,
+            message="当前团队空间还没有可用的 PaiSmart RAG 配置。",
+        )
+    base_url = str(runtime_config.get("base_url") or "")
+    token_configured = bool(str(runtime_config.get("api_key") or ""))
+    try:
+        chunks = search_paismart("连接诊断", 1, runtime_config)
+    except Exception as error:  # noqa: BLE001 - returned as an operator-facing diagnostic.
+        return RagDiagnoseResponse(
+            ok=False,
+            base_url=base_url,
+            token_configured=token_configured,
+            message=f"PaiSmart RAG 连接失败：{error}",
+        )
+    return RagDiagnoseResponse(
+        ok=True,
+        base_url=base_url,
+        token_configured=token_configured,
+        result_count=len(chunks),
+        message=f"PaiSmart RAG 连接正常，诊断查询返回 {len(chunks)} 个片段。",
+    )
 
 
 @app.get("/api/knowledge/status")

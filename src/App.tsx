@@ -436,6 +436,15 @@ type RagPreviewItem = {
   score: number
 }
 
+type RagDiagnoseResult = {
+  ok: boolean
+  provider: string
+  base_url: string
+  token_configured: boolean
+  result_count: number
+  message: string
+}
+
 type WorkflowTemplate = {
   id: string
   name: string
@@ -2058,6 +2067,7 @@ function App() {
   const [paismartPreviewQuery, setPaismartPreviewQuery] = useState('报销需要准备哪些材料？')
   const [paismartPreviewTopK, setPaismartPreviewTopK] = useState(3)
   const [paismartPreviewResults, setPaismartPreviewResults] = useState<RagPreviewItem[]>([])
+  const [paismartDiagnoseResult, setPaismartDiagnoseResult] = useState<RagDiagnoseResult | null>(null)
   const [modelConfigForm, setModelConfigForm] = useState(createDefaultProviderConfigForm('deepseek'))
   const [modelConfigFeedback, setModelConfigFeedback] = useState<ModelConfigFeedback | null>(null)
   const [modelConfigBusy, setModelConfigBusy] = useState<ModelConfigAction | null>(null)
@@ -2961,6 +2971,29 @@ function App() {
       setModelConfigFeedback({ provider: 'paismart', type: 'error', text: message })
       setNotice(message)
       setPaismartPreviewResults([])
+    } finally {
+      setModelConfigBusy(null)
+    }
+  }
+
+  const diagnosePaismartRag = async () => {
+    if (modelConfigBusy) return
+    setModelConfigBusy('test')
+    setModelConfigFeedback({ provider: 'paismart', type: 'info', text: '正在诊断 PaiSmart RAG 连接...' })
+    try {
+      const response = await apiFetch('/api/rag/paismart/diagnose', { method: 'POST' })
+      if (!response.ok) {
+        throw new Error(await readResponseErrorMessage(response, 'PaiSmart RAG 连接诊断失败。'))
+      }
+      const result = (await response.json()) as RagDiagnoseResult
+      setPaismartDiagnoseResult(result)
+      setModelConfigFeedback({ provider: 'paismart', type: result.ok ? 'ok' : 'error', text: result.message })
+      setNotice(result.message)
+    } catch (error) {
+      const message = getErrorMessage(error, 'PaiSmart RAG 连接诊断失败。')
+      setPaismartDiagnoseResult(null)
+      setModelConfigFeedback({ provider: 'paismart', type: 'error', text: message })
+      setNotice(message)
     } finally {
       setModelConfigBusy(null)
     }
@@ -5952,6 +5985,9 @@ function App() {
                 <button type="button" className="mini-action" disabled={Boolean(modelConfigBusy)} onClick={() => void testPaismartConfig()}>
                   {modelConfigBusy === 'test' && modelConfigFeedback?.provider === 'paismart' ? '测试中...' : '测试配置'}
                 </button>
+                <button type="button" className="mini-action" disabled={Boolean(modelConfigBusy)} onClick={() => void diagnosePaismartRag()}>
+                  {modelConfigBusy === 'test' && modelConfigFeedback?.provider === 'paismart' ? '诊断中...' : '连接诊断'}
+                </button>
                 <button type="button" className="mini-action" disabled={Boolean(modelConfigBusy)} onClick={() => void loadPaismartConfig(true)}>
                   {modelConfigBusy === 'load' && modelConfigFeedback?.provider === 'paismart' ? '读取中...' : '重新读取'}
                 </button>
@@ -5967,6 +6003,16 @@ function App() {
                   : '当前团队空间还没有保存 PaiSmart Token。'}
               </p>
               <p className="model-status-note">知识检索节点选择 PaiSmart RAG 时，会优先使用当前团队空间配置。</p>
+              {paismartDiagnoseResult && (
+                <div className={clsx('rag-diagnose', paismartDiagnoseResult.ok ? 'ok' : 'error')}>
+                  <strong>{paismartDiagnoseResult.ok ? '连接正常' : '连接异常'}</strong>
+                  <span>{paismartDiagnoseResult.message}</span>
+                  <small>
+                    {paismartDiagnoseResult.base_url || '未配置地址'} · Token {paismartDiagnoseResult.token_configured ? '已配置' : '未配置'} ·
+                    返回 {paismartDiagnoseResult.result_count} 个片段
+                  </small>
+                </div>
+              )}
               <div className="rag-preview">
                 <label>
                   检索预览

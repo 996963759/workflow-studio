@@ -52,6 +52,15 @@ class RagPreviewPayload(BaseModel):
     top_k: int = Field(default=3, ge=1, le=10)
 
 
+class RagDiagnoseResponse(BaseModel):
+    ok: bool
+    provider: str = "PaiSmart RAG"
+    base_url: str
+    token_configured: bool
+    result_count: int = 0
+    message: str
+
+
 class AuthPayload(BaseModel):
     username: str = Field(min_length=3, max_length=64)
     password: str = Field(min_length=6, max_length=128)
