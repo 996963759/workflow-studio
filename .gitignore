@@ -23,6 +23,8 @@ server/src/**/__pycache__
 server/tests/**/__pycache__
 server/migrations/**/__pycache__
 .pytest_cache
+test-results
+playwright-report
 
 # Editor directories and files
 .vscode/*

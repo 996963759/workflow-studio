@@ -146,6 +146,7 @@ type WorkflowRecord = Required<Pick<WorkflowDefinition, 'id' | 'name' | 'version
 type WorkflowSortMode = 'updated' | 'name' | 'sync'
 type WorkflowSyncState = 'local' | 'synced' | 'dirty'
 type RunHistoryStatusFilter = 'all' | 'ok' | 'error'
+type AdminView = 'node' | 'team' | 'model' | 'knowledge' | 'ops' | 'json'
 
 type ServerWorkflowRecord = {
   id: string
@@ -1977,6 +1978,7 @@ function App() {
   const [showArchivedWorkflows, setShowArchivedWorkflows] = useState(false)
   const [runHistorySearch, setRunHistorySearch] = useState('')
   const [runHistoryStatusFilter, setRunHistoryStatusFilter] = useState<RunHistoryStatusFilter>('all')
+  const [adminView, setAdminView] = useState<AdminView>('node')
   const [remoteValidation, setRemoteValidation] = useState<RemoteValidationState | null>(null)
   const [providerStatus, setProviderStatus] = useState<ProviderStatus | null>(null)
   const [providerStatusCheckedAt, setProviderStatusCheckedAt] = useState('')
@@ -4405,7 +4407,33 @@ function App() {
       </section>
 
       <aside className="right-rail">
-        <section className="panel inspector">
+        <section className="panel admin-center-panel">
+          <div className="panel-title">
+            <Settings2 size={16} />
+            <span>管理中心</span>
+          </div>
+          <div className="admin-tabs" role="tablist" aria-label="管理中心视图">
+            {[
+              ['node', '节点'],
+              ['team', '团队'],
+              ['model', '模型'],
+              ['knowledge', '知识库'],
+              ['ops', '运维'],
+              ['json', 'JSON'],
+            ].map(([view, label]) => (
+              <button
+                key={view}
+                type="button"
+                className={clsx(adminView === view && 'active')}
+                onClick={() => setAdminView(view as AdminView)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        {adminView === 'node' && <section className="panel inspector">
           <div className="panel-title between">
             <span>
               <Settings2 size={16} />
@@ -5057,9 +5085,9 @@ function App() {
               </label>
             </div>
           )}
-        </section>
+        </section>}
 
-        <section className="panel workspace-admin-panel">
+        {adminView === 'team' && <section className="panel workspace-admin-panel">
           <div className="panel-title between">
             <span>
               <Shield size={16} />
@@ -5197,9 +5225,9 @@ function App() {
           ) : (
             <p className="model-status-note">当前角色不是 owner，只能使用邀请码加入其他团队空间。</p>
           )}
-        </section>
+        </section>}
 
-        <section className="panel model-status-panel">
+        {adminView === 'model' && <section className="panel model-status-panel">
           <div className="panel-title between">
             <span>
               <Bot size={16} />
@@ -5413,9 +5441,9 @@ function App() {
               更新：{new Date(providerStatusCheckedAt).toLocaleString('zh-CN')}
             </time>
           )}
-        </section>
+        </section>}
 
-        <section className="panel knowledge-status-panel">
+        {adminView === 'knowledge' && <section className="panel knowledge-status-panel">
           <div className="panel-title between">
             <span>
               <Search size={16} />
@@ -5464,9 +5492,9 @@ function App() {
             )}
           </div>
           {knowledgeStatus && <time className="model-status-time">{knowledgeStatus.directory}</time>}
-        </section>
+        </section>}
 
-        <section className="panel workflow-meta-panel">
+        {adminView === 'ops' && <section className="panel workflow-meta-panel">
           <div className="panel-title between">
             <span>
               <Archive size={16} />
@@ -5549,9 +5577,9 @@ function App() {
               </div>
             </>
           )}
-        </section>
+        </section>}
 
-        <section className="panel runner">
+        {adminView === 'ops' && <section className="panel runner">
           <div className="panel-title">
             <ListChecks size={16} />
             <span>运行预览</span>
@@ -5776,9 +5804,9 @@ function App() {
               </>
             )}
           </div>
-        </section>
+        </section>}
 
-        <section className="panel json-panel">
+        {adminView === 'json' && <section className="panel json-panel">
           <div className="panel-title">
             <Code2 size={16} />
             <span>定义摘要</span>
@@ -5796,7 +5824,7 @@ function App() {
               2,
             )}
           </pre>
-        </section>
+        </section>}
       </aside>
     </main>
   )
