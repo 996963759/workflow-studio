@@ -29,6 +29,7 @@ flowchart LR
 
 - React + TypeScript + Vite。
 - React Flow 负责画布、节点和连线。
+- 管理中心的系统概览、运行历史和版本审计已拆为 `src/components/*Panel.tsx` 展示组件，`src/App.tsx` 保留主要状态和业务编排。
 - `localStorage` 保存本地草稿、当前工作流和登录 token。
 - 前端运行器支持变量传递、条件分支和模拟执行。
 - 后端同步状态分为：仅本地、已同步、未同步改动。

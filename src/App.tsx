@@ -48,6 +48,7 @@ import './App.css'
 import { AdminOverviewPanel } from './components/AdminOverviewPanel'
 import { AuthView } from './components/AuthView'
 import { RunHistoryPanel } from './components/RunHistoryPanel'
+import { WorkflowMetaPanel } from './components/WorkflowMetaPanel'
 
 type NodeKind =
   | 'input'
@@ -1561,24 +1562,6 @@ const workflowSyncLabels: Record<WorkflowSyncState, string> = {
   local: '仅本地',
   synced: '已同步',
   dirty: '未同步改动',
-}
-
-const workflowPublishLabels: Record<WorkflowPublishStatus, string> = {
-  draft: '草稿',
-  published: '已发布',
-  changed: '发布后有改动',
-}
-
-const versionDiffChangeLabels: Record<WorkflowVersionDiffItem['change'], string> = {
-  added: '新增',
-  removed: '删除',
-  changed: '变更',
-}
-
-const versionDiffCategoryLabels: Record<WorkflowVersionDiffItem['category'], string> = {
-  workflow: '工作流',
-  node: '节点',
-  edge: '连线',
 }
 
 const isServerWorkflowNewer = (workflow: WorkflowRecord, serverWorkflow: ServerWorkflowRecord) => {
@@ -6197,171 +6180,31 @@ function App() {
           {knowledgeStatus && <time className="model-status-time">{knowledgeStatus.directory}</time>}
         </section>}
 
-        {adminView === 'ops' && <section className="panel workflow-meta-panel">
-          <div className="panel-title between">
-            <span>
-              <Archive size={16} />
-              版本与审计
-            </span>
-            <div className="workflow-meta-actions">
-              <button
-                type="button"
-                className="mini-action"
-                disabled={!activeWorkflow.serverId || Boolean(workflowMetaBusy)}
-                onClick={() => void loadWorkflowVersions()}
-              >
-                {workflowMetaBusy === 'versions' ? '刷新中...' : '版本'}
-              </button>
-              <button
-                type="button"
-                className="mini-action"
-                disabled={!activeWorkflow.serverId || Boolean(workflowMetaBusy)}
-                onClick={() => void loadAuditLogs()}
-              >
-                {workflowMetaBusy === 'audit' ? '刷新中...' : '审计'}
-              </button>
-            </div>
-          </div>
-          {!activeWorkflow.serverId ? (
-            <p className="model-status-note">当前工作流还没有同步到后端，暂无版本历史和审计记录。</p>
-          ) : (
-            <>
-              <label className="version-note-input">
-                版本备注
-                <input
-                  value={versionNote}
-                  onChange={(event) => setVersionNote(event.target.value)}
-                  placeholder="例如：面试演示稳定版，也会用于发布备注"
-                />
-              </label>
-              <div className={clsx('publish-status-card', activeWorkflowPublishStatus)}>
-                <span>发布状态</span>
-                <strong>{workflowPublishLabels[activeWorkflowPublishStatus]}</strong>
-                <small>
-                  {activeWorkflow.publishedAt
-                    ? `上次发布：${new Date(activeWorkflow.publishedAt).toLocaleString('zh-CN')}`
-                    : '还没有发布过，发布后会生成一个可标记的稳定版本。'}
-                </small>
-              </div>
-              <div className="workflow-version-buttons">
-                <button
-                  type="button"
-                  className="workflow-version-save"
-                  disabled={Boolean(workflowMetaBusy) || activeWorkflowSyncState === 'dirty'}
-                  onClick={() => void saveWorkflowVersion()}
-                >
-                  {workflowMetaBusy === 'save-version' ? '保存中...' : '保存当前版本'}
-                </button>
-                <button
-                  type="button"
-                  className="workflow-publish-button"
-                  disabled={Boolean(workflowMetaBusy) || activeWorkflowSyncState === 'dirty'}
-                  onClick={() => void publishWorkflow()}
-                >
-                  {workflowMetaBusy === 'publish' ? '发布中...' : '发布当前版本'}
-                </button>
-              </div>
-              <div className="workflow-version-list">
-                {workflowVersions.length === 0 ? (
-                  <p>暂无版本记录。</p>
-                ) : (
-                  workflowVersions.slice(0, 5).map((version) => (
-                    <article key={version.id}>
-                      <div>
-                        <strong>
-                          版本 #{version.sequence}
-                          {version.is_published ? ' · 已发布' : ''}
-                        </strong>
-                        <span>{new Date(version.created_at).toLocaleString('zh-CN')}</span>
-                        <small>{version.note || version.name}</small>
-                      </div>
-                      <button
-                        type="button"
-                        disabled={Boolean(workflowMetaBusy) || activeWorkflowSyncState === 'dirty'}
-                        onClick={() => void restoreWorkflowVersion(version)}
-                      >
-                        恢复
-                      </button>
-                    </article>
-                  ))
-                )}
-              </div>
-              <div className="workflow-version-diff">
-                <div className="workflow-version-diff-title">
-                  <strong>版本对比</strong>
-                  <span>比较两个历史快照的节点、连线和基础信息。</span>
-                </div>
-                <div className="workflow-version-diff-controls">
-                  <label>
-                    基准版本
-                    <select value={versionDiffBaseId} onChange={(event) => setVersionDiffBaseId(event.target.value)}>
-                      <option value="">选择版本</option>
-                      {orderedVersionOptions.map((version) => (
-                        <option key={version.id} value={version.id}>
-                          #{version.sequence} {version.is_published ? '已发布' : version.note || version.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    目标版本
-                    <select value={versionDiffTargetId} onChange={(event) => setVersionDiffTargetId(event.target.value)}>
-                      <option value="">选择版本</option>
-                      {orderedVersionOptions.map((version) => (
-                        <option key={version.id} value={version.id}>
-                          #{version.sequence} {version.is_published ? '已发布' : version.note || version.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <button
-                    type="button"
-                    disabled={workflowVersions.length < 2 || Boolean(workflowMetaBusy)}
-                    onClick={() => void compareWorkflowVersions()}
-                  >
-                    {workflowMetaBusy === 'diff' ? '对比中...' : '开始对比'}
-                  </button>
-                </div>
-                {versionDiff && (
-                  <div className="workflow-version-diff-results">
-                    <p>
-                      #{versionDiff.base_version.sequence} 到 #{versionDiff.target_version.sequence}：
-                      新增 {versionDiff.summary.added ?? 0}，删除 {versionDiff.summary.removed ?? 0}，变更 {versionDiff.summary.changed ?? 0}
-                    </p>
-                    {versionDiff.changes.length === 0 ? (
-                      <span>两个版本内容一致。</span>
-                    ) : (
-                      versionDiff.changes.slice(0, 8).map((change, index) => (
-                        <article key={`${change.category}-${change.change}-${change.label}-${index}`}>
-                          <strong>
-                            {versionDiffChangeLabels[change.change]} · {versionDiffCategoryLabels[change.category]}
-                          </strong>
-                          <span>{change.label}</span>
-                          {change.before && <small>之前：{change.before}</small>}
-                          {change.after && <small>之后：{change.after}</small>}
-                        </article>
-                      ))
-                    )}
-                  </div>
-                )}
-              </div>
-              <div className="audit-log-list">
-                {auditLogs.length === 0 ? (
-                  <p>暂无审计记录。</p>
-                ) : (
-                  auditLogs.slice(0, 6).map((log) => (
-                    <article key={log.id}>
-                      <strong>{log.summary}</strong>
-                      <span>
-                        {log.actor_username} · {new Date(log.created_at).toLocaleString('zh-CN')}
-                      </span>
-                    </article>
-                  ))
-                )}
-              </div>
-            </>
-          )}
-        </section>}
+        {adminView === 'ops' && (
+          <WorkflowMetaPanel
+            serverId={activeWorkflow.serverId}
+            syncState={activeWorkflowSyncState}
+            publishStatus={activeWorkflowPublishStatus}
+            publishedAt={activeWorkflow.publishedAt}
+            busy={workflowMetaBusy}
+            versionNote={versionNote}
+            workflowVersions={workflowVersions}
+            orderedVersionOptions={orderedVersionOptions}
+            versionDiffBaseId={versionDiffBaseId}
+            versionDiffTargetId={versionDiffTargetId}
+            versionDiff={versionDiff}
+            auditLogs={auditLogs}
+            onLoadVersions={() => void loadWorkflowVersions()}
+            onLoadAuditLogs={() => void loadAuditLogs()}
+            onVersionNoteChange={setVersionNote}
+            onSaveVersion={() => void saveWorkflowVersion()}
+            onPublish={() => void publishWorkflow()}
+            onRestoreVersion={(version) => void restoreWorkflowVersion(version)}
+            onVersionDiffBaseChange={setVersionDiffBaseId}
+            onVersionDiffTargetChange={setVersionDiffTargetId}
+            onCompareVersions={() => void compareWorkflowVersions()}
+          />
+        )}
 
         {adminView === 'ops' && <section className="panel runner">
           <div className="panel-title">
