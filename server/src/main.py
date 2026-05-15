@@ -65,7 +65,7 @@ from .validation import validate_workflow
 
 configure_logging()
 logger = logging.getLogger("workflow_studio.api")
-app = FastAPI(title="Workflow Studio API", version="0.1.0")
+app = FastAPI(title="WeaveFlow AI API", version="0.1.0")
 store = default_store
 set_knowledge_session_factory(store.SessionLocal)
 auth_service = AuthService(store)

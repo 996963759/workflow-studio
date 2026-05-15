@@ -4621,8 +4621,8 @@ function App() {
             <Workflow size={21} />
           </span>
           <div>
-            <strong>流程工坊</strong>
-            <small>工作流编辑器</small>
+            <strong>织流 AI</strong>
+            <small>AI 工作流编排</small>
           </div>
         </div>
 

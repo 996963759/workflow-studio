@@ -1,6 +1,6 @@
-# Workflow Studio API
+# 织流 AI / WeaveFlow AI API
 
-FastAPI backend for Workflow Studio. The backend stores users, sessions, workspaces, workflows, run history, async jobs and knowledge indexes through SQLAlchemy. Local development defaults to SQLite; Docker Compose uses PostgreSQL, Redis and a separate Worker process. It validates workflow structure, records workflow runs, searches per-workspace Markdown/TXT knowledge documents, can call DeepSeek or OpenAI for LLM nodes, can call Alibaba Cloud Model Studio / DashScope for TTS and image generation nodes, and can execute localhost HTTP tool nodes.
+FastAPI backend for 织流 AI / WeaveFlow AI. The backend stores users, sessions, workspaces, workflows, run history, async jobs and knowledge indexes through SQLAlchemy. Local development defaults to SQLite; Docker Compose uses PostgreSQL, Redis and a separate Worker process. It validates workflow structure, records workflow runs, searches per-workspace Markdown/TXT knowledge documents, can call DeepSeek or OpenAI for LLM nodes, can call Alibaba Cloud Model Studio / DashScope for TTS and image generation nodes, and can execute localhost HTTP tool nodes.
 
 ## Setup
 

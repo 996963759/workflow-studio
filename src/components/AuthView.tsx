@@ -30,7 +30,7 @@ export function AuthView({
             <Shield size={22} />
           </span>
           <div>
-            <strong>流程工坊</strong>
+            <strong>织流 AI</strong>
             <small>登录后进入工作台</small>
           </div>
         </div>
