@@ -1,6 +1,39 @@
-# 工作流编辑器
+# Workflow Studio
 
-这是一个本地运行的类 Dify 工作流应用 MVP，使用 React、TypeScript、Vite 和 React Flow 构建。
+一个面向 AI 应用落地的可视化工作流编排平台。项目覆盖工作流画布、模型调用、RAG 知识检索、工具节点、异步队列、多用户团队空间、权限隔离、版本发布、审计日志、运行成本估算和 Docker Compose 部署。
+
+> 个人定位：主语言 Java，使用 Python/FastAPI 完成 AI 应用后端工程化实践；项目重点展示后端通用工程能力和 AI 应用落地能力，而不是包装成 Python 专家。
+
+## 项目亮点
+
+- 可视化编排：基于 React Flow 实现节点拖拽、连线、变量传递、条件分支和运行日志。
+- AI 应用能力：支持 DeepSeek、阿里云百炼 TTS/图片生成、PaiSmart 外部 RAG 和本地知识库检索。
+- 后端工程化：FastAPI、SQLAlchemy、Alembic、Bearer Token、多用户隔离、团队空间和 owner/editor/viewer 权限。
+- 稳定运行：支持同步运行、异步队列、失败重试、Kafka/Redis/数据库队列、运行历史和成本估算。
+- 版本治理：支持工作流保存、发布态、历史版本、版本恢复、版本对比和审计日志。
+- 可交付性：包含 unittest、Playwright E2E、Docker Compose、部署说明、API 文档和演示脚本。
+
+## 技术栈
+
+| 模块 | 技术 |
+| --- | --- |
+| 前端 | React 19, TypeScript, Vite, React Flow, lucide-react |
+| 后端 | Python, FastAPI, Pydantic, SQLAlchemy, Alembic |
+| 数据与队列 | SQLite, PostgreSQL, Redis, Kafka |
+| AI 能力 | DeepSeek/OpenAI 兼容接口, 阿里云百炼/DashScope, PaiSmart RAG |
+| 工程化 | Docker Compose, unittest, Playwright E2E, ESLint |
+
+## 项目截图
+
+> 截图位于 `docs/assets/screenshots/`，用于 GitHub README 和简历展示。
+
+| 工作流画布 | 系统概览 |
+| --- | --- |
+| ![工作流画布](docs/assets/screenshots/workflow-canvas.png) | ![系统概览](docs/assets/screenshots/system-overview.png) |
+
+| 版本审计 | 模型配置 |
+| --- | --- |
+| ![版本审计](docs/assets/screenshots/version-audit.png) | ![模型配置](docs/assets/screenshots/model-config.png) |
 
 ## 文档导航
 
@@ -9,6 +42,8 @@
 - [演示流程](docs/demo-script.md)
 - [安全与边界](docs/security.md)
 - [简历描述](docs/resume.md)
+- [Java 背景面试讲法](docs/interview-guide-java.md)
+- [GitHub 发布检查清单](docs/github-release-checklist.md)
 - [发布说明](docs/release-notes.md)
 - [需求与计划](docs/requirements-and-plan.md)
 - [成熟化部署说明](docs/production-readiness.md)
