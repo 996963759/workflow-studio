@@ -2,8 +2,6 @@
 
 一个面向 AI 应用落地的可视化工作流编排平台。项目覆盖工作流画布、模型调用、RAG 知识检索、工具节点、异步队列、多用户团队空间、权限隔离、版本发布、审计日志、运行成本估算和 Docker Compose 部署。
 
-> 个人定位：主语言 Java，使用 Python/FastAPI 完成 AI 应用后端工程化实践；项目重点展示后端通用工程能力和 AI 应用落地能力，而不是包装成 Python 专家。
-
 ## 项目亮点
 
 - 可视化编排：基于 React Flow 实现节点拖拽、连线、变量传递、条件分支和运行日志。
@@ -25,7 +23,7 @@
 
 ## 项目截图
 
-> 截图位于 `docs/assets/screenshots/`，用于 GitHub README 和简历展示。
+> 截图位于 `docs/assets/screenshots/`，用于 GitHub README 和项目展示。
 
 | 工作流画布 | 系统概览 |
 | --- | --- |
@@ -41,8 +39,6 @@
 - [API 摘要](docs/api.md)
 - [演示流程](docs/demo-script.md)
 - [安全与边界](docs/security.md)
-- [简历描述](docs/resume.md)
-- [Java 背景面试讲法](docs/interview-guide-java.md)
 - [GitHub 发布检查清单](docs/github-release-checklist.md)
 - [发布说明](docs/release-notes.md)
 - [需求与计划](docs/requirements-and-plan.md)

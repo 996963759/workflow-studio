@@ -12,6 +12,7 @@ dist
 dist-ssr
 *.local
 .env
+local-notes/
 
 # Backend runtime data
 server/.venv

@@ -29,7 +29,7 @@ http://127.0.0.1:5173
 9. 运行 `scripts/test-all.ps1`，说明 lint、build、unit test、smoke test。
 10. 打开 `docs/architecture.md`，讲解执行器和数据隔离设计。
 
-## 面试讲解重点
+## 讲解重点
 
 - 为什么按连线拓扑排序执行工作流。
 - 本地草稿和后端持久化如何处理冲突。

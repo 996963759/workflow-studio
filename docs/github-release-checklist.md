@@ -47,13 +47,3 @@ rag
 deepseek
 dashscope
 ```
-
-## 简历表述建议
-
-不要写“精通 Python”。建议写：
-
-```text
-主语言 Java，熟悉 Spring Boot 后端开发；了解 Python/FastAPI，能基于 FastAPI 构建 AI 应用后端服务。
-熟悉 AI 应用工程化：LLM API 集成、RAG、工作流编排、异步任务队列、模型配置管理。
-```
-
