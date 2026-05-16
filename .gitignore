@@ -23,6 +23,7 @@ server/__pycache__
 server/src/**/__pycache__
 server/tests/**/__pycache__
 server/migrations/**/__pycache__
+server/scripts/**/__pycache__
 .pytest_cache
 test-results
 playwright-report
