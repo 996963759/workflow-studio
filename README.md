@@ -86,103 +86,16 @@ flowchart LR
 
 - [架构说明](docs/architecture.md)
 - [API 摘要](docs/api.md)
+- [用户教程](docs/user-guide.md)
 - [演示流程](docs/demo-script.md)
+- [演示录制说明](docs/demo-recording.md)
 - [安全与边界](docs/security.md)
 - [GitHub 发布检查清单](docs/github-release-checklist.md)
 - [发布说明](docs/release-notes.md)
 - [需求与计划](docs/requirements-and-plan.md)
 - [成熟化部署说明](docs/production-readiness.md)
 
-## 使用说明
-
-- 首次使用先注册本地账号，后续使用账号密码登录。
-- 登录后会自动进入默认团队空间；左侧“团队空间”可以切换当前空间。
-- 工作流、运行历史、异步任务和知识文档都按团队空间隔离。
-- 角色权限：owner 可管理成员，editor 可编辑工作流和知识库，viewer 可查看和运行。
-- 点击左侧节点库可以新增节点。
-- 点击左侧“工作流模板”可以一键创建可运行示例工作流。
-- 在左侧“我的工作流”里可以新建、切换、搜索、排序、复制、归档、恢复和删除工作流。
-- “仅本地”表示还没保存到后端，“已同步”表示本地和后端一致，“未同步改动”表示已同步过但本地又改过。
-- 默认会隐藏已归档工作流，勾选“显示归档”后可以查看并恢复。
-- 顶部工作流名称可以直接编辑。
-- 在画布中拖拽节点并连接节点端点可以调整流程。
-- 点击节点后，在右侧节点配置中修改名称、用途、提示词和输出变量。
-- 节点配置字段下方会显示错误或提醒，点击“恢复默认配置”可以重置当前节点配置。
-- 编辑内容会写入当前浏览器的 `localStorage`，下次打开会自动恢复。
-- 点击保存会手动确认保存全部本地工作流。
-- 点击导出会下载当前工作流 JSON 文件。
-- 点击导入可以载入之前导出的 JSON 文件，并作为新的工作流加入列表。
-- 点击重置会恢复为内置示例工作流。
-- 点击运行会按节点连线顺序执行当前工作流，并在右侧显示每个节点的输入、输出和写入变量。
-- 在运行日志里点击“复制”，可以复制单个节点的输入、输出或错误原因。
-- 左侧工作流检查会显示当前问题。严重问题需要修复后才能运行，提醒不会阻止运行。
-- 工作流检查里的节点级问题可以点击，画布会自动移动到对应节点。
-- 在运行预览里可以编辑“本次运行输入”，用于测试不同用户请求。
-- 在支持变量的配置项下方点击变量按钮，可以快速插入 `{{变量名}}`。
-- 条件分支不需要手写规则，直接选择变量、判断方式和判断值。
-- 条件节点右侧有“真”和“假”两个出口。把真出口连到通过路径，把假出口连到不通过路径。
-- 条件节点没有使用真 / 假出口时，会保持旧的顺序执行兼容行为。
-- 点击“检查后端”可以确认 FastAPI 服务是否在线。
-- 点击“同步到后端”会把当前工作流保存到 SQLite。
-- 点击“同步全部”会批量同步未归档且还没同步的工作流。
-- 如果后端版本比本地上次同步时间更新，前端会停止覆盖并提示先从后端加载。
-- 页面打开后会自动尝试从后端加载工作流；如果后端离线，本地工作流仍可正常编辑。
-- 从后端加载时，如果本地有未同步改动且后端也更新过，前端会保留本地版本并统计为冲突。
-- 工作流同步到后端后，归档和恢复状态也会同步保存。
-- 点击“从后端加载”会把后端工作流导入或更新到前端列表。
-- 删除已同步工作流时，会先删除后端工作流和对应运行历史，再从本地列表移除。
-- 点击“同步运行”会调用 FastAPI 执行当前已同步工作流，并保存运行历史。
-- 点击“异步入队”会把当前工作流提交到后端运行队列，前端会轮询任务状态，完成后自动加载运行结果。
-- 当前工作流有“未同步改动”时，后端运行会先拦截，避免运行旧版本。
-- 后端运行前会检查后端版本；如果后端已更新，会先刷新当前工作流并让你确认后再运行。
-- 后端运行会按画布连线顺序执行，即使节点位置被拖乱，也会以连线依赖为准。
-- 后端遇到条件节点时，会根据判断结果跳过未命中的真 / 假分支。
-- 知识检索节点会从 `server/data/knowledge/` 读取 `.md` 和 `.txt` 文档，并按检索语句返回相关片段。
-- 右侧“知识库”面板可以查看当前后端加载了多少文档和片段，也可以上传或删除 `.md/.txt` 文档。
-- 知识检索节点的“知识来源”可以选择“本地知识库”或“PaiSmart RAG”。选择 PaiSmart 时，后端会调用外部 PaiSmart 检索接口；调用失败会回退本地知识库。
-- 工具节点可以填写请求地址、方法、请求头 JSON 和请求体 JSON；后端运行时会真实调用本机 HTTP 接口。
-- 工具节点默认只允许请求 `localhost`、`127.0.0.1` 或 `::1`，避免误请求外网。
-- 可以在右侧“模型状态”里保存当前团队空间的 DeepSeek 配置；保存后，该空间内所有工作流运行都会优先使用这份配置。
-- 在右侧“模型状态”输入新的 API Key 后，点击“测试配置”会先保存再测试，并在按钮下方显示成功或失败原因。
-- 如果团队空间没有保存模型配置，但后端配置了 `DEEPSEEK_API_KEY`，大模型节点会使用环境变量里的 DeepSeek。
-- 如果没有 DeepSeek Key，但配置了 `OPENAI_API_KEY`，大模型节点会调用 OpenAI；都没有时继续使用模拟输出。
-- 大模型节点可以单独配置温度、最大输出长度和超时时间，后端真实调用和模拟输出都会读取这些节点参数。
-- 运行日志里的“来源”会显示大模型节点来自 `DeepSeek`、`OpenAI` 还是 `模拟输出`。
-- 真实模型调用失败时，运行日志会单独显示“错误原因”，并自动回退模拟输出。
-- 节点失败策略支持“终止运行”“记录错误并继续”“跳过下游节点”，并可配置 0 到 5 次重试。
-- 右侧“模型状态”可以刷新后端模型配置状态，只显示已配置 / 未配置，不显示 Key 内容。
-- 点击“加载历史”会读取当前工作流的后端运行历史，点击历史项可查看当次运行步骤。
-- 可以按输入或输出搜索运行历史，也可以只看成功或失败记录。
-- 在运行历史中可以删除单条记录，也可以清空当前工作流的历史。
-- 运行结果顶部会显示完成、跳过和错误数量，点击“复制整次结果”可以复制完整运行摘要。
-- 后端接口 `POST /api/workflows/validate` 可以单独检查工作流结构。
-- 后端保存、更新和运行工作流时，会拒绝存在严重问题的工作流。
-- 工作流检查面板会显示当前使用“后端校验”还是“本地校验”。
-- 后端离线时，前端仍然使用浏览器本地保存正常工作。
-
-## 当前校验规则
-
-- 至少需要一个用户输入节点。
-- 至少需要一个最终回答节点。
-- 工作流不能存在环形依赖。
-- 最终回答节点必须连接上游节点。
-- 输出变量名不能重复。
-- 孤立节点会显示提醒。
-- 非用户输入节点没有上游输入会显示提醒。
-
-## 模型调用排查
-
-| 页面现象 | 常见原因 | 处理方式 |
-| --- | --- | --- |
-| 模型状态显示 DeepSeek 未配置 | 没有保存团队空间 Key，也没有设置 `DEEPSEEK_API_KEY` | 在右侧“模型状态”保存 DeepSeek Key，或在后端启动前设置环境变量 |
-| 点击保存或测试配置后看起来没反应 | 请求正在处理或后端返回了错误 | 查看按钮下方的状态提示；如果提示后端离线，先启动后端或刷新页面 |
-| 来源显示模拟输出，且没有错误原因 | 没有配置团队空间 Key，也没有配置 DeepSeek/OpenAI 环境变量 | 在右侧“模型状态”保存 DeepSeek Key，或配置 `DEEPSEEK_API_KEY` 后重启后端 |
-| 来源显示模拟输出，并出现错误原因 | 已配置 Key，但真实调用失败 | 查看“错误原因”，重点检查 Key、余额、模型名和网络 |
-| 错误原因包含 401/Authentication | Key 错误或无效 | 重新生成 DeepSeek Key 并重启后端 |
-| 错误原因包含 model | 模型名不被当前服务支持 | 改用 `deepseek-v4-flash` 或更新 `DEEPSEEK_MODEL` |
-| 错误原因包含 timeout | 节点超时时间太短或网络慢 | 调大大模型节点里的“超时秒数” |
-
-## 本地运行
+## 快速启动
 
 推荐新手直接运行：
 
@@ -209,100 +122,21 @@ npm.cmd install
 npm.cmd run dev
 ```
 
-## 后端运行
-
-如果使用 `scripts/start-dev.ps1`，通常不需要手动执行下面命令。
-
-```powershell
-python -m venv server/.venv
-server\.venv\Scripts\python.exe -m pip install -r server/requirements.txt
-server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 --port 8000
-```
-
-可选：启用 DeepSeek 大模型节点。
-
-```powershell
-$env:DEEPSEEK_API_KEY="你的 DeepSeek API Key"
-server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 --port 8000
-```
-
-也可以指定 DeepSeek 模型，默认是 `deepseek-v4-flash`。
-
-```powershell
-$env:DEEPSEEK_MODEL="deepseek-v4-pro"
-```
-
-可选：启用 OpenAI 大模型节点。
-
-```powershell
-$env:OPENAI_API_KEY="你的 OpenAI API Key"
-server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 --port 8000
-```
-
-可选：启用阿里云百炼 / DashScope 多模态节点。
-
-```powershell
-$env:DASHSCOPE_API_KEY="你的阿里云百炼 API Key"
-server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 --port 8000
-```
-
-后端健康检查：
-
-```text
-http://127.0.0.1:8000/api/health
-```
+完整操作说明见 [用户教程](docs/user-guide.md)。
 
 ## 环境变量
 
-项目提供 `.env.example` 作为配置模板。常用项：
+项目提供 `.env.example` 作为配置模板。常用项包括：
 
-- `DEEPSEEK_API_KEY`：启用 DeepSeek 大模型节点
-- `DEEPSEEK_MODEL`：DeepSeek 模型，默认 `deepseek-v4-flash`
-- `OPENAI_API_KEY`：没有 DeepSeek Key 时可启用 OpenAI
-- `DASHSCOPE_API_KEY`：启用阿里云百炼 / DashScope 多模态节点
-- `ALIYUN_TTS_MODEL`：阿里云 TTS 模型，默认 `cosyvoice-v2`
-- `ALIYUN_IMAGE_MODEL`：阿里云图片生成模型，默认 `wanx2.1-t2i-turbo`
-- `WORKFLOW_STUDIO_DB`：SQLite 数据库路径
-- `DATABASE_URL`：完整数据库连接串；配置后优先于 `WORKFLOW_STUDIO_DB`，可使用 PostgreSQL，例如 `postgresql+psycopg://user:password@localhost:5432/workflow_studio`
-- `RUN_JOB_QUEUE_BACKEND`：异步队列模式；本地默认 `thread`，可选 `database` / `redis` / `kafka`，Docker Compose 默认 `kafka`
-- `REDIS_URL`：Redis 队列地址，生产 Docker Compose 默认使用 `redis://redis:6379/0`
-- `KAFKA_BOOTSTRAP_SERVERS`：Kafka 地址，Docker Compose 默认 `kafka:9092`
-- `KAFKA_RUN_JOB_TOPIC`：Kafka 任务 Topic，默认 `workflow-studio-run-jobs`
-- `KAFKA_CONSUMER_GROUP`：Worker 消费组，默认 `workflow-studio-workers`
-- `LOG_LEVEL`：后端日志级别，默认 `INFO`
-- `CORS_ORIGINS`：允许访问 API 的前端地址
-- `EXTERNAL_RAG_ENABLED`：是否启用 PaiSmart 外部 RAG，默认 `false`
-- `PAISMART_BASE_URL`：PaiSmart 服务地址，默认 `http://127.0.0.1:8080`
-- `PAISMART_TOKEN`：调用 PaiSmart 时使用的 Bearer Token，可留空
-- `PAISMART_TIMEOUT_SECONDS`：PaiSmart 请求超时时间
-- PaiSmart 也可以在前端“管理中心 -> 模型”里按团队空间保存地址和 Token，执行连接诊断，并直接输入问题预览检索结果；团队空间配置优先于环境变量。
-- `MODEL_CONFIG_SECRET`：保护团队空间模型 API Key 的本地密钥；共享数据库前请改成自己的长随机字符串
-- `SESSION_TTL_HOURS`：登录 token 有效期，默认 `168` 小时
-- `WORKSPACE_INVITATION_TTL_HOURS`：团队邀请码有效期，默认 `168` 小时
+- `DEEPSEEK_API_KEY` / `OPENAI_API_KEY`：启用大模型节点。
+- `DASHSCOPE_API_KEY`：启用阿里云百炼 TTS 和图片生成节点。
+- `DATABASE_URL`：切换到 PostgreSQL 等数据库。
+- `RUN_JOB_QUEUE_BACKEND`：异步队列模式，可选 `thread` / `database` / `redis` / `kafka`。
+- `MODEL_CONFIG_SECRET`：保护团队空间级模型 API Key。
 
-启用 PaiSmart 外部 RAG：
+更多配置见 [用户教程](docs/user-guide.md#模型配置) 和 `.env.example`。
 
-```powershell
-$env:EXTERNAL_RAG_ENABLED="true"
-$env:PAISMART_BASE_URL="http://127.0.0.1:8080"
-server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 --port 8000
-```
-
-## 数据库迁移
-
-项目已接入 SQLAlchemy ORM 和 Alembic。升级数据库结构：
-
-```powershell
-server\.venv\Scripts\python.exe -m alembic upgrade head
-```
-
-生成迁移草稿：
-
-```powershell
-server\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "描述变更"
-```
-
-## Docker 运行
+## Docker
 
 ```powershell
 docker compose up --build
@@ -314,35 +148,6 @@ docker compose up --build
 
 ```text
 http://127.0.0.1:8000
-```
-
-查看服务状态：
-
-```powershell
-docker compose ps
-docker compose logs -f api worker
-```
-
-## 本地知识库
-
-可以在右侧“知识库”面板上传 Markdown 或 TXT 文档，也可以手动把文件放到：
-
-```text
-server/data/knowledge/
-```
-
-后端运行“知识检索”节点时，默认读取当前团队空间的本地文档。上传后会写入 SQLite 本地向量索引，检索时混合关键词命中和哈希向量相似度，不需要额外安装向量数据库。也可以在节点配置里把“知识来源”切换为 `PaiSmart RAG`，此时后端会请求 PaiSmart 的 `/api/v1/search/hybrid` 接口，并优先使用当前团队空间保存的 PaiSmart 地址和 Token。单个上传文件限制为 1MB。项目已内置一个示例文档：
-
-```text
-server/data/knowledge/customer-support.md
-```
-
-可以用“退款多久到账”“API 调用失败”这类输入体验检索效果。
-
-## 构建
-
-```powershell
-npm.cmd run build
 ```
 
 ## 回归测试
@@ -361,39 +166,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\test-all.ps1
 
 脚本会执行前端 lint、前端构建、Python 编译、后端 unittest，并启动临时后端运行 smoke test。
 
-前端 E2E 测试：
-
-```powershell
-npx.cmd playwright install chromium
-npm.cmd run e2e
-```
-
-## 项目体检
-
-快速检查依赖、构建、测试、Alembic 配置：
-
-```powershell
-npm.cmd run doctor
-```
-
-如果要额外检查 Docker Compose 配置：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\doctor.ps1
-```
+更多测试和体检命令见 [用户教程](docs/user-guide.md#测试和体检)。
 
 ## 当前边界
 
 这是本地单机版 / 私有化版工作流平台雏形。当前前端运行逻辑已支持变量传递和模拟执行；后端已提供 FastAPI、SQLite/PostgreSQL 工作流 CRUD、工作流结构校验、同步/异步运行、运行历史接口、本地向量知识库检索、DeepSeek / OpenAI 大模型节点最小真实调用、阿里云 TTS / 图片生成多模态节点、本机 HTTP 工具调用、本地账号隔离、团队空间和角色权限。Docker Compose 已提供 PostgreSQL、Redis 和独立 Worker 的生产化雏形；真实 embedding/pgvector 和外网工具白名单管理仍未实现。
-
-## 本地存储
-
-- `workflow-studio.workflows`：保存所有本地工作流。
-- `workflow-studio.active-workflow-id`：保存当前选中的工作流。
-- `workflow-studio.auth-session`：保存当前浏览器登录 token。
-- `workflow-studio.active-workspace-id`：保存当前选中的团队空间。
-- 旧版 `workflow-studio.current-workflow` 会在首次打开时自动迁移。
-- 同步到后端后，本地工作流会记录后端 ID 和最近同步时间。
 
 ## 需求与计划
 
