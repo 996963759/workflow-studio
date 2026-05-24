@@ -2306,6 +2306,17 @@ textarea:focus {
   gap: 8px;
 }
 
+.evaluation-trend {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #dbeafe;
+  border-radius: 7px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-size: 12px;
+  padding: 8px;
+}
+
 .evaluation-case-row,
 .evaluation-result-row {
   border: 1px solid #e5e7eb;
@@ -2332,6 +2343,15 @@ textarea:focus {
 
 .evaluation-run.active button strong {
   color: #047857;
+}
+
+.evaluation-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #475569;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .evaluation-run small,

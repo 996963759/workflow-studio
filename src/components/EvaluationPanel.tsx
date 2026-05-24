@@ -90,12 +90,18 @@ export function EvaluationPanel({ apiFetch, currentWorkflowId, currentWorkflowNa
   const [busy, setBusy] = useState<'load' | 'save' | 'delete' | 'run' | null>(null)
   const [feedback, setFeedback] = useState('')
   const [selectedRunId, setSelectedRunId] = useState('')
+  const [showFailedOnly, setShowFailedOnly] = useState(false)
 
   const selectedDataset = useMemo(
     () => datasets.find((dataset) => dataset.id === selectedDatasetId) ?? null,
     [datasets, selectedDatasetId],
   )
   const selectedRun = useMemo(() => runs.find((run) => run.id === selectedRunId) ?? null, [runs, selectedRunId])
+  const recentPassRates = useMemo(() => runs.slice(0, 5).map((run) => run.pass_rate), [runs])
+  const visibleResults = useMemo(
+    () => (showFailedOnly ? selectedRun?.results.filter((result) => !result.passed) : selectedRun?.results) ?? [],
+    [selectedRun, showFailedOnly],
+  )
 
   const loadDatasets = async () => {
     setBusy('load')
@@ -382,6 +388,12 @@ export function EvaluationPanel({ apiFetch, currentWorkflowId, currentWorkflowNa
         <div className="panel-title">
           <span>评测历史</span>
         </div>
+        {recentPassRates.length > 0 && (
+          <div className="evaluation-trend">
+            <strong>最近通过率</strong>
+            <span>{recentPassRates.map((rate) => `${rate}%`).join(' -> ')}</span>
+          </div>
+        )}
         {runs.length === 0 ? (
           <p className="model-status-note">暂无评测历史。</p>
         ) : (
@@ -400,26 +412,38 @@ export function EvaluationPanel({ apiFetch, currentWorkflowId, currentWorkflowNa
 
       {selectedRun && (
         <div className="evaluation-run-detail">
-          <div className="panel-title">
+          <div className="panel-title between">
             <span>最新结果</span>
+            <label className="evaluation-filter">
+              <input
+                type="checkbox"
+                checked={showFailedOnly}
+                onChange={(event) => setShowFailedOnly(event.target.checked)}
+              />
+              只看未通过
+            </label>
           </div>
           <p className="model-status-note">
             {selectedRun.workflow_name} · {selectedRun.status} · 平均 {selectedRun.average_duration_ms}ms
           </p>
-          {selectedRun.results.map((result) => (
-            <article key={result.case_id} className="evaluation-result-row">
-              <strong>{result.passed ? '通过' : '未通过'}</strong>
-              <span>
-                输入：{result.input_text}
-              </span>
-              <span>
-                输出：{result.output || '无输出'}
-              </span>
-              {!result.passed && result.missing_keywords.length > 0 && (
-                <span>缺少关键词：{result.missing_keywords.join('、')}</span>
-              )}
-            </article>
-          ))}
+          {visibleResults.length === 0 ? (
+            <p className="model-status-note">当前筛选下没有样例。</p>
+          ) : (
+            visibleResults.map((result) => (
+              <article key={result.case_id} className="evaluation-result-row">
+                <strong>{result.passed ? '通过' : '未通过'}</strong>
+                <span>
+                  输入：{result.input_text}
+                </span>
+                <span>
+                  输出：{result.output || '无输出'}
+                </span>
+                {!result.passed && result.missing_keywords.length > 0 && (
+                  <span>缺少关键词：{result.missing_keywords.join('、')}</span>
+                )}
+              </article>
+            ))
+          )}
         </div>
       )}
     </section>
