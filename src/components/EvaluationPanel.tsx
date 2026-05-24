@@ -149,11 +149,12 @@ export function EvaluationPanel({ apiFetch, currentWorkflowId, currentWorkflowNa
     if (!response.ok) throw new Error('load evaluation runs failed')
     const records = (await response.json()) as EvaluationRunRecord[]
     setRuns(records)
-    setSelectedRunId((current) => current || records[0]?.id || '')
+    setSelectedRunId((current) => (records.some((record) => record.id === current) ? current : records[0]?.id || ''))
   }
 
   const resetForm = () => {
     setSelectedDatasetId('')
+    setSelectedRunId('')
     setForm(emptyDataset())
     setFeedback('已切换到新评测集。')
   }
@@ -218,6 +219,7 @@ export function EvaluationPanel({ apiFetch, currentWorkflowId, currentWorkflowNa
       if (!response.ok) throw new Error('delete dataset failed')
       setDatasets((current) => current.filter((item) => item.id !== selectedDatasetId))
       setRuns((current) => current.filter((item) => item.dataset_id !== selectedDatasetId))
+      setSelectedRunId('')
       resetForm()
       onNotice('评测集已删除。')
     } catch {
