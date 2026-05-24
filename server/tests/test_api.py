@@ -173,6 +173,57 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(metrics["recent_failed_runs"][0]["steps"][0]["error"], "boom")
         self.assertEqual(metrics["recent_failed_runs"][0]["cost_summary"]["cost_units"], 4)
 
+    def test_evaluation_dataset_runs_keyword_checks(self) -> None:
+        workflow_response = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers)
+        self.assertEqual(workflow_response.status_code, 201)
+        workflow_id = workflow_response.json()["id"]
+        dataset_response = self.client.post(
+            "/api/evaluations/datasets",
+            headers=self.auth_headers,
+            json={
+                "name": "客服回复评测",
+                "description": "检查输出是否包含关键词。",
+                "cases": [
+                    {
+                        "input_text": "退款多久到账？",
+                        "expected_output": "应该回答退款问题。",
+                        "expected_keywords": ["退款"],
+                    },
+                    {
+                        "input_text": "普通咨询",
+                        "expected_output": "故意设置一个不会命中的关键词。",
+                        "expected_keywords": ["不存在的关键词"],
+                    },
+                ],
+            },
+        )
+        self.assertEqual(dataset_response.status_code, 201)
+        dataset = dataset_response.json()
+        self.assertEqual(dataset["case_count"], 2)
+        detail_response = self.client.get(f"/api/evaluations/datasets/{dataset['id']}", headers=self.auth_headers)
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertEqual(len(detail_response.json()["cases"]), 2)
+
+        run_response = self.client.post(
+            f"/api/evaluations/datasets/{dataset['id']}/runs",
+            headers=self.auth_headers,
+            json={"workflow_id": workflow_id},
+        )
+
+        self.assertEqual(run_response.status_code, 201)
+        body = run_response.json()
+        self.assertEqual(body["total_cases"], 2)
+        self.assertEqual(body["passed_cases"], 1)
+        self.assertEqual(body["failed_cases"], 1)
+        self.assertEqual(body["pass_rate"], 50)
+        self.assertTrue(body["results"][0]["passed"])
+        self.assertFalse(body["results"][1]["passed"])
+        self.assertEqual(body["results"][1]["missing_keywords"], ["不存在的关键词"])
+
+        history_response = self.client.get(f"/api/evaluations/runs?dataset_id={dataset['id']}", headers=self.auth_headers)
+        self.assertEqual(history_response.status_code, 200)
+        self.assertEqual(history_response.json()[0]["id"], body["id"])
+
     def test_auth_token_expires_and_is_pruned(self) -> None:
         register_response = self.client.post(
             "/api/auth/register",

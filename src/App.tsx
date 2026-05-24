@@ -47,6 +47,7 @@ import '@xyflow/react/dist/style.css'
 import './App.css'
 import { AdminOverviewPanel } from './components/AdminOverviewPanel'
 import { AuthView } from './components/AuthView'
+import { EvaluationPanel } from './components/EvaluationPanel'
 import { RunHistoryPanel } from './components/RunHistoryPanel'
 import { WorkflowMetaPanel } from './components/WorkflowMetaPanel'
 
@@ -157,7 +158,7 @@ type WorkflowSortMode = 'updated' | 'name' | 'sync'
 type WorkflowSyncState = 'local' | 'synced' | 'dirty'
 type WorkflowPublishStatus = 'draft' | 'published' | 'changed'
 type RunHistoryStatusFilter = 'all' | 'ok' | 'error'
-type AdminView = 'node' | 'system' | 'team' | 'model' | 'knowledge' | 'ops' | 'json'
+type AdminView = 'node' | 'system' | 'team' | 'model' | 'knowledge' | 'eval' | 'ops' | 'json'
 
 type ServerWorkflowRecord = {
   id: string
@@ -4953,6 +4954,7 @@ function App() {
               ['team', '团队'],
               ['model', '模型'],
               ['knowledge', '知识库'],
+              ['eval', '评测'],
               ['ops', '运维'],
               ['json', 'JSON'],
             ].map(([view, label]) => (
@@ -6179,6 +6181,15 @@ function App() {
           </div>
           {knowledgeStatus && <time className="model-status-time">{knowledgeStatus.directory}</time>}
         </section>}
+
+        {adminView === 'eval' && (
+          <EvaluationPanel
+            apiFetch={apiFetch}
+            currentWorkflowId={activeWorkflow.serverId}
+            currentWorkflowName={activeWorkflow.name}
+            onNotice={setNotice}
+          />
+        )}
 
         {adminView === 'ops' && (
           <WorkflowMetaPanel

@@ -21,6 +21,11 @@ from .models import (
     AuthPayload,
     AuthResponse,
     AuditLogRecord,
+    EvaluationCaseResult,
+    EvaluationDatasetPayload,
+    EvaluationDatasetRecord,
+    EvaluationRunRecord,
+    EvaluationRunRequest,
     KnowledgeDocumentPayload,
     ModelConfigPayload,
     ModelConfigRecord,
@@ -719,6 +724,175 @@ def run_workflow(payload: RunRequest, context: WorkspaceContext = Depends(requir
     user, workspace_id = context
     raise_on_validation_errors(payload.workflow)
     return simulate_run(payload.workflow, payload.input_text, user.id, workspace_id, workspace_model_configs(workspace_id))
+
+
+def final_output_from_response(response: RunResponse) -> str:
+    output_steps = [step for step in response.steps if step.kind == "output" and step.status != "skipped"]
+    if output_steps:
+        return output_steps[-1].output
+    completed_steps = [step for step in response.steps if step.status in {"done", "routed"}]
+    return completed_steps[-1].output if completed_steps else ""
+
+
+def evaluate_case_output(output: str, expected_keywords: list[str]) -> tuple[bool, list[str]]:
+    normalized_output = output.lower()
+    keywords = [keyword.strip() for keyword in expected_keywords if keyword.strip()]
+    missing = [keyword for keyword in keywords if keyword.lower() not in normalized_output]
+    return len(missing) == 0, missing
+
+
+@app.get("/api/evaluations/datasets", response_model=list[EvaluationDatasetRecord])
+def list_evaluation_datasets(context: WorkspaceContext = Depends(require_workspace_role("viewer"))) -> list[EvaluationDatasetRecord]:
+    user, workspace_id = context
+    datasets = store.list_evaluation_datasets(user.id, workspace_id)
+    if datasets is None:
+        raise HTTPException(status_code=403, detail="Workspace access denied")
+    return datasets
+
+
+@app.post("/api/evaluations/datasets", response_model=EvaluationDatasetRecord, status_code=201)
+def create_evaluation_dataset(
+    payload: EvaluationDatasetPayload,
+    context: WorkspaceContext = Depends(require_workspace_role("editor")),
+) -> EvaluationDatasetRecord:
+    user, workspace_id = context
+    dataset = store.create_evaluation_dataset(payload, user.id, workspace_id)
+    if not dataset:
+        raise HTTPException(status_code=403, detail="Workspace editor access required")
+    store.append_audit_log(
+        workspace_id,
+        user.id,
+        "evaluation.dataset_create",
+        "evaluation_dataset",
+        f"创建评测集：{dataset.name}",
+        dataset.id,
+        {"case_count": dataset.case_count},
+    )
+    return dataset
+
+
+@app.get("/api/evaluations/datasets/{dataset_id}", response_model=EvaluationDatasetRecord)
+def get_evaluation_dataset(
+    dataset_id: str,
+    context: WorkspaceContext = Depends(require_workspace_role("viewer")),
+) -> EvaluationDatasetRecord:
+    user, workspace_id = context
+    dataset = store.get_evaluation_dataset(dataset_id, user.id, workspace_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Evaluation dataset not found")
+    return dataset
+
+
+@app.put("/api/evaluations/datasets/{dataset_id}", response_model=EvaluationDatasetRecord)
+def update_evaluation_dataset(
+    dataset_id: str,
+    payload: EvaluationDatasetPayload,
+    context: WorkspaceContext = Depends(require_workspace_role("editor")),
+) -> EvaluationDatasetRecord:
+    user, workspace_id = context
+    dataset = store.update_evaluation_dataset(dataset_id, payload, user.id, workspace_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Evaluation dataset not found")
+    store.append_audit_log(
+        workspace_id,
+        user.id,
+        "evaluation.dataset_update",
+        "evaluation_dataset",
+        f"更新评测集：{dataset.name}",
+        dataset.id,
+        {"case_count": dataset.case_count},
+    )
+    return dataset
+
+
+@app.delete("/api/evaluations/datasets/{dataset_id}", status_code=204)
+def delete_evaluation_dataset(
+    dataset_id: str,
+    context: WorkspaceContext = Depends(require_workspace_role("editor")),
+) -> None:
+    user, workspace_id = context
+    deleted = store.delete_evaluation_dataset(dataset_id, user.id, workspace_id)
+    if deleted is None:
+        raise HTTPException(status_code=403, detail="Workspace editor access required")
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Evaluation dataset not found")
+    store.append_audit_log(
+        workspace_id,
+        user.id,
+        "evaluation.dataset_delete",
+        "evaluation_dataset",
+        "删除评测集",
+        dataset_id,
+    )
+
+
+@app.post("/api/evaluations/datasets/{dataset_id}/runs", response_model=EvaluationRunRecord, status_code=201)
+def run_evaluation_dataset(
+    dataset_id: str,
+    payload: EvaluationRunRequest,
+    context: WorkspaceContext = Depends(require_workspace_role("viewer")),
+) -> EvaluationRunRecord:
+    user, workspace_id = context
+    dataset = store.get_evaluation_dataset(dataset_id, user.id, workspace_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Evaluation dataset not found")
+    if not dataset.cases:
+        raise HTTPException(status_code=400, detail="Evaluation dataset has no cases")
+    workflow = store.get_workflow(payload.workflow_id, user.id, workspace_id)
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    raise_on_validation_errors(workflow)
+
+    results: list[EvaluationCaseResult] = []
+    for case in dataset.cases:
+        response = simulate_run(workflow, case.input_text, user.id, workspace_id, workspace_model_configs(workspace_id))
+        run = store.create_run(workflow.id, user.id, workflow.name, case.input_text, response, workspace_id)
+        output = final_output_from_response(response)
+        passed, missing_keywords = evaluate_case_output(output, case.expected_keywords)
+        duration_ms = sum(step.duration_ms for step in response.steps)
+        error = next((step.error for step in response.steps if step.error), None)
+        results.append(
+            EvaluationCaseResult(
+                case_id=case.id,
+                input_text=case.input_text,
+                expected_keywords=case.expected_keywords,
+                output=output,
+                passed=passed and response.status == "ok",
+                missing_keywords=missing_keywords,
+                status=response.status,
+                duration_ms=duration_ms,
+                run_id=run.id,
+                error=error,
+            )
+        )
+
+    evaluation_run = store.create_evaluation_run(dataset, workflow, user.id, workspace_id, results)
+    store.append_audit_log(
+        workspace_id,
+        user.id,
+        "evaluation.run",
+        "evaluation_dataset",
+        f"运行评测集：{dataset.name}",
+        dataset.id,
+        {
+            "workflow_id": workflow.id,
+            "evaluation_run_id": evaluation_run.id,
+            "pass_rate": evaluation_run.pass_rate,
+        },
+    )
+    return evaluation_run
+
+
+@app.get("/api/evaluations/runs", response_model=list[EvaluationRunRecord])
+def list_evaluation_runs(
+    dataset_id: str | None = None,
+    context: WorkspaceContext = Depends(require_workspace_role("viewer")),
+) -> list[EvaluationRunRecord]:
+    user, workspace_id = context
+    runs = store.list_evaluation_runs(user.id, workspace_id, dataset_id)
+    if runs is None:
+        raise HTTPException(status_code=403, detail="Workspace access denied")
+    return runs
 
 
 @app.get("/api/runs", response_model=list[RunRecord])

@@ -58,7 +58,7 @@ flowchart LR
 | AI 节点 | 大模型对话、知识检索、文字转语音、图片生成、HTTP 工具调用 |
 | 多用户协作 | 本地账号、团队空间、owner/editor/viewer 角色、成员管理、邀请码 |
 | 持久化与治理 | 工作流 CRUD、归档恢复、发布态、版本快照、版本对比、审计日志 |
-| 运行系统 | 同步运行、异步入队、失败重试、运行历史、节点级输入输出、成本估算 |
+| 运行与评测 | 同步运行、异步入队、失败重试、运行历史、节点级输入输出、成本估算、关键词评测集 |
 | 工程化 | SQLAlchemy、Alembic、Docker Compose、GitHub Actions、unittest、Playwright E2E |
 
 ## 内置场景模板

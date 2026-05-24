@@ -152,6 +152,49 @@ class DbRunJob(Base):
     updated_at: Mapped[str] = mapped_column(String, nullable=False)
 
 
+class DbEvaluationDataset(Base):
+    __tablename__ = "evaluation_datasets"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String, ForeignKey("workspaces.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class DbEvaluationCase(Base):
+    __tablename__ = "evaluation_cases"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    dataset_id: Mapped[str] = mapped_column(String, ForeignKey("evaluation_datasets.id"), nullable=False, index=True)
+    workspace_id: Mapped[str] = mapped_column(String, ForeignKey("workspaces.id"), nullable=False, index=True)
+    input_text: Mapped[str] = mapped_column(Text, nullable=False)
+    expected_output: Mapped[str] = mapped_column(Text, nullable=False)
+    expected_keywords_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class DbEvaluationRun(Base):
+    __tablename__ = "evaluation_runs"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    dataset_id: Mapped[str] = mapped_column(String, ForeignKey("evaluation_datasets.id"), nullable=False, index=True)
+    workspace_id: Mapped[str] = mapped_column(String, ForeignKey("workspaces.id"), nullable=False, index=True)
+    workflow_id: Mapped[str] = mapped_column(String, index=True)
+    workflow_name: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    total_cases: Mapped[int] = mapped_column(nullable=False)
+    passed_cases: Mapped[int] = mapped_column(nullable=False)
+    failed_cases: Mapped[int] = mapped_column(nullable=False)
+    average_duration_ms: Mapped[int] = mapped_column(nullable=False, default=0)
+    results_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
 class DbKnowledgeChunk(Base):
     __tablename__ = "knowledge_chunks"
 

@@ -17,6 +17,12 @@ from .models import (
     RunMetricsRecord,
     RunRecord,
     RunResponse,
+    EvaluationCaseRecord,
+    EvaluationCasePayload,
+    EvaluationCaseResult,
+    EvaluationDatasetPayload,
+    EvaluationDatasetRecord,
+    EvaluationRunRecord,
     WorkflowPayload,
     WorkflowPublishPayload,
     WorkflowRecord,
@@ -31,6 +37,9 @@ from .models import (
 from .orm import (
     Base,
     DbAuditLog,
+    DbEvaluationCase,
+    DbEvaluationDataset,
+    DbEvaluationRun,
     DbRun,
     DbRunJob,
     DbUser,
@@ -268,6 +277,24 @@ class WorkflowStore:
                 connection.execute(
                     "ALTER TABLE workspace_invitations ADD COLUMN expires_at TEXT NOT NULL DEFAULT '9999-12-31T23:59:59+00:00'"
                 )
+            dataset_columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(evaluation_datasets)").fetchall()
+            }
+            if dataset_columns and "updated_at" not in dataset_columns:
+                connection.execute("ALTER TABLE evaluation_datasets ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
+            case_columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(evaluation_cases)").fetchall()
+            }
+            if case_columns and "updated_at" not in case_columns:
+                connection.execute("ALTER TABLE evaluation_cases ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
+            run_columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(evaluation_runs)").fetchall()
+            }
+            if run_columns and "average_duration_ms" not in run_columns:
+                connection.execute("ALTER TABLE evaluation_runs ADD COLUMN average_duration_ms INTEGER NOT NULL DEFAULT 0")
 
     def assign_unowned_records(self, user_id: str) -> None:
         workspace_id = self.ensure_default_workspace(user_id)
@@ -1444,6 +1471,191 @@ class WorkflowStore:
             jobs = session.scalars(statement.order_by(DbRunJob.created_at.desc())).all()
         return [self._job_to_record(job) for job in jobs]
 
+    def list_evaluation_datasets(self, user_id: str, workspace_id: str) -> list[EvaluationDatasetRecord] | None:
+        if not self.can_access_workspace(workspace_id, user_id):
+            return None
+        with self._connect() as session:
+            datasets = session.scalars(
+                select(DbEvaluationDataset)
+                .where(DbEvaluationDataset.workspace_id == workspace_id)
+                .order_by(DbEvaluationDataset.updated_at.desc())
+            ).all()
+            counts = dict(
+                session.execute(
+                    select(DbEvaluationCase.dataset_id, func.count())
+                    .where(DbEvaluationCase.workspace_id == workspace_id)
+                    .group_by(DbEvaluationCase.dataset_id)
+                ).all()
+            )
+        return [self._evaluation_dataset_to_record(dataset, [], int(counts.get(dataset.id, 0))) for dataset in datasets]
+
+    def get_evaluation_dataset(
+        self,
+        dataset_id: str,
+        user_id: str,
+        workspace_id: str,
+    ) -> EvaluationDatasetRecord | None:
+        if not self.can_access_workspace(workspace_id, user_id):
+            return None
+        with self._connect() as session:
+            dataset = session.scalar(
+                select(DbEvaluationDataset).where(
+                    DbEvaluationDataset.id == dataset_id,
+                    DbEvaluationDataset.workspace_id == workspace_id,
+                )
+            )
+            if not dataset:
+                return None
+            cases = session.scalars(
+                select(DbEvaluationCase)
+                .where(DbEvaluationCase.dataset_id == dataset_id, DbEvaluationCase.workspace_id == workspace_id)
+                .order_by(DbEvaluationCase.created_at.asc())
+            ).all()
+        return self._evaluation_dataset_to_record(dataset, [self._evaluation_case_to_record(row) for row in cases], len(cases))
+
+    def create_evaluation_dataset(
+        self,
+        payload: EvaluationDatasetPayload,
+        user_id: str,
+        workspace_id: str,
+    ) -> EvaluationDatasetRecord | None:
+        if not self.can_access_workspace(workspace_id, user_id, "editor"):
+            return None
+        now = utc_now()
+        dataset = DbEvaluationDataset(
+            id=str(uuid.uuid4()),
+            workspace_id=workspace_id,
+            name=payload.name.strip(),
+            description=payload.description.strip(),
+            created_by=user_id,
+            created_at=now,
+            updated_at=now,
+        )
+        with self._connect() as session:
+            session.add(dataset)
+            for case_payload in payload.cases:
+                session.add(self._new_evaluation_case(dataset.id, workspace_id, case_payload, now))
+            session.commit()
+        return self.get_evaluation_dataset(dataset.id, user_id, workspace_id)
+
+    def update_evaluation_dataset(
+        self,
+        dataset_id: str,
+        payload: EvaluationDatasetPayload,
+        user_id: str,
+        workspace_id: str,
+    ) -> EvaluationDatasetRecord | None:
+        if not self.can_access_workspace(workspace_id, user_id, "editor"):
+            return None
+        now = utc_now()
+        with self._connect() as session:
+            dataset = session.scalar(
+                select(DbEvaluationDataset).where(
+                    DbEvaluationDataset.id == dataset_id,
+                    DbEvaluationDataset.workspace_id == workspace_id,
+                )
+            )
+            if not dataset:
+                return None
+            dataset.name = payload.name.strip()
+            dataset.description = payload.description.strip()
+            dataset.updated_at = now
+            session.execute(delete(DbEvaluationCase).where(DbEvaluationCase.dataset_id == dataset_id))
+            for case_payload in payload.cases:
+                session.add(self._new_evaluation_case(dataset_id, workspace_id, case_payload, now))
+            session.commit()
+        return self.get_evaluation_dataset(dataset_id, user_id, workspace_id)
+
+    def delete_evaluation_dataset(self, dataset_id: str, user_id: str, workspace_id: str) -> bool | None:
+        if not self.can_access_workspace(workspace_id, user_id, "editor"):
+            return None
+        with self._connect() as session:
+            dataset = session.scalar(
+                select(DbEvaluationDataset).where(
+                    DbEvaluationDataset.id == dataset_id,
+                    DbEvaluationDataset.workspace_id == workspace_id,
+                )
+            )
+            if not dataset:
+                return False
+            session.execute(delete(DbEvaluationRun).where(DbEvaluationRun.dataset_id == dataset_id))
+            session.execute(delete(DbEvaluationCase).where(DbEvaluationCase.dataset_id == dataset_id))
+            session.delete(dataset)
+            session.commit()
+        return True
+
+    def create_evaluation_run(
+        self,
+        dataset: EvaluationDatasetRecord,
+        workflow: WorkflowRecord,
+        user_id: str,
+        workspace_id: str,
+        results: list[EvaluationCaseResult],
+    ) -> EvaluationRunRecord:
+        now = utc_now()
+        total_cases = len(results)
+        passed_cases = sum(1 for result in results if result.passed)
+        failed_cases = total_cases - passed_cases
+        average_duration_ms = round(sum(result.duration_ms for result in results) / total_cases) if total_cases else 0
+        status = "passed" if total_cases > 0 and failed_cases == 0 else "failed"
+        row = DbEvaluationRun(
+            id=str(uuid.uuid4()),
+            dataset_id=dataset.id,
+            workspace_id=workspace_id,
+            workflow_id=workflow.id,
+            workflow_name=workflow.name,
+            status=status,
+            total_cases=total_cases,
+            passed_cases=passed_cases,
+            failed_cases=failed_cases,
+            average_duration_ms=average_duration_ms,
+            results_json=json.dumps([result.model_dump() for result in results], ensure_ascii=False),
+            created_by=user_id,
+            created_at=now,
+        )
+        with self._connect() as session:
+            session.add(row)
+            session.commit()
+        return self._evaluation_run_to_record(row, dataset.name)
+
+    def list_evaluation_runs(
+        self,
+        user_id: str,
+        workspace_id: str,
+        dataset_id: str | None = None,
+    ) -> list[EvaluationRunRecord] | None:
+        if not self.can_access_workspace(workspace_id, user_id):
+            return None
+        with self._connect() as session:
+            statement = (
+                select(DbEvaluationRun, DbEvaluationDataset.name)
+                .join(DbEvaluationDataset, DbEvaluationDataset.id == DbEvaluationRun.dataset_id)
+                .where(DbEvaluationRun.workspace_id == workspace_id)
+            )
+            if dataset_id:
+                statement = statement.where(DbEvaluationRun.dataset_id == dataset_id)
+            rows = session.execute(statement.order_by(DbEvaluationRun.created_at.desc()).limit(100)).all()
+        return [self._evaluation_run_to_record(run, dataset_name) for run, dataset_name in rows]
+
+    def _new_evaluation_case(
+        self,
+        dataset_id: str,
+        workspace_id: str,
+        payload: EvaluationCasePayload,
+        now: str,
+    ) -> DbEvaluationCase:
+        keywords = [keyword.strip() for keyword in payload.expected_keywords if keyword.strip()]
+        return DbEvaluationCase(
+            id=str(uuid.uuid4()),
+            dataset_id=dataset_id,
+            workspace_id=workspace_id,
+            input_text=payload.input_text,
+            expected_output=payload.expected_output,
+            expected_keywords_json=json.dumps(keywords, ensure_ascii=False),
+            created_at=now,
+            updated_at=now,
+        )
+
     def _workflow_to_record(self, workflow: DbWorkflow) -> WorkflowRecord:
         return WorkflowRecord(
             id=workflow.id,
@@ -1480,6 +1692,52 @@ class WorkflowStore:
             error=job.error,
             created_at=job.created_at,
             updated_at=job.updated_at,
+        )
+
+    def _evaluation_case_to_record(self, row: DbEvaluationCase) -> EvaluationCaseRecord:
+        return EvaluationCaseRecord(
+            id=row.id,
+            input_text=row.input_text,
+            expected_output=row.expected_output,
+            expected_keywords=json.loads(row.expected_keywords_json),
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+
+    def _evaluation_dataset_to_record(
+        self,
+        row: DbEvaluationDataset,
+        cases: list,
+        case_count: int,
+    ) -> EvaluationDatasetRecord:
+        return EvaluationDatasetRecord(
+            id=row.id,
+            name=row.name,
+            description=row.description,
+            case_count=case_count,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+            cases=cases,
+        )
+
+    def _evaluation_run_to_record(self, row: DbEvaluationRun, dataset_name: str) -> EvaluationRunRecord:
+        results = [EvaluationCaseResult(**item) for item in json.loads(row.results_json)]
+        pass_rate = round((row.passed_cases / row.total_cases) * 100, 2) if row.total_cases else 0
+        return EvaluationRunRecord(
+            id=row.id,
+            dataset_id=row.dataset_id,
+            dataset_name=dataset_name,
+            workflow_id=row.workflow_id,
+            workflow_name=row.workflow_name,
+            status=row.status,
+            total_cases=row.total_cases,
+            passed_cases=row.passed_cases,
+            failed_cases=row.failed_cases,
+            pass_rate=pass_rate,
+            average_duration_ms=row.average_duration_ms,
+            created_by=row.created_by,
+            created_at=row.created_at,
+            results=results,
         )
 
     def _workflow_version_to_record(self, version: DbWorkflowVersion) -> WorkflowVersionRecord:

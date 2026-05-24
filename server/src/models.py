@@ -221,6 +221,68 @@ class RunJobRecord(BaseModel):
     updated_at: str
 
 
+class EvaluationCasePayload(BaseModel):
+    input_text: str = Field(min_length=1, max_length=4000)
+    expected_output: str = Field(default="", max_length=4000)
+    expected_keywords: list[str] = Field(default_factory=list)
+
+
+class EvaluationDatasetPayload(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=500)
+    cases: list[EvaluationCasePayload] = Field(default_factory=list)
+
+
+class EvaluationCaseRecord(EvaluationCasePayload):
+    id: str
+    created_at: str
+    updated_at: str
+
+
+class EvaluationDatasetRecord(BaseModel):
+    id: str
+    name: str
+    description: str = ""
+    case_count: int = 0
+    created_at: str
+    updated_at: str
+    cases: list[EvaluationCaseRecord] = Field(default_factory=list)
+
+
+class EvaluationRunRequest(BaseModel):
+    workflow_id: str = Field(min_length=1)
+
+
+class EvaluationCaseResult(BaseModel):
+    case_id: str
+    input_text: str
+    expected_keywords: list[str] = Field(default_factory=list)
+    output: str
+    passed: bool
+    missing_keywords: list[str] = Field(default_factory=list)
+    status: str
+    duration_ms: int = 0
+    run_id: str | None = None
+    error: str | None = None
+
+
+class EvaluationRunRecord(BaseModel):
+    id: str
+    dataset_id: str
+    dataset_name: str
+    workflow_id: str
+    workflow_name: str
+    status: str
+    total_cases: int
+    passed_cases: int
+    failed_cases: int
+    pass_rate: float
+    average_duration_ms: int = 0
+    created_by: str
+    created_at: str
+    results: list[EvaluationCaseResult] = Field(default_factory=list)
+
+
 class AuditLogRecord(BaseModel):
     id: str
     workspace_id: str
