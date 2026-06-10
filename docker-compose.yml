@@ -14,18 +14,6 @@ services:
       retries: 5
     restart: unless-stopped
 
-  redis:
-    image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes"]
-    volumes:
-      - redis-data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
   kafka:
     image: bitnami/kafka:4.0
     environment:
@@ -44,6 +32,8 @@ services:
       interval: 10s
       timeout: 10s
       retries: 10
+    volumes:
+      - kafka-data:/bitnami/kafka
     restart: unless-stopped
 
   api:
@@ -53,8 +43,6 @@ services:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://127.0.0.1:8000}
     depends_on:
       db:
-        condition: service_healthy
-      redis:
         condition: service_healthy
       kafka:
         condition: service_healthy
@@ -82,8 +70,7 @@ services:
       MODEL_CONFIG_SECRET: ${MODEL_CONFIG_SECRET:-workflow-studio-local-model-config-secret}
       SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-168}
       WORKSPACE_INVITATION_TTL_HOURS: ${WORKSPACE_INVITATION_TTL_HOURS:-168}
-      RUN_JOB_QUEUE_BACKEND: ${RUN_JOB_QUEUE_BACKEND:-kafka}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      RUN_JOB_QUEUE_BACKEND: kafka
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
       KAFKA_RUN_JOB_TOPIC: ${KAFKA_RUN_JOB_TOPIC:-workflow-studio-run-jobs}
       KAFKA_CONSUMER_GROUP: ${KAFKA_CONSUMER_GROUP:-workflow-studio-workers}
@@ -103,8 +90,6 @@ services:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://127.0.0.1:8000}
     depends_on:
       db:
-        condition: service_healthy
-      redis:
         condition: service_healthy
       kafka:
         condition: service_healthy
@@ -132,8 +117,7 @@ services:
       MODEL_CONFIG_SECRET: ${MODEL_CONFIG_SECRET:-workflow-studio-local-model-config-secret}
       SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-168}
       WORKSPACE_INVITATION_TTL_HOURS: ${WORKSPACE_INVITATION_TTL_HOURS:-168}
-      RUN_JOB_QUEUE_BACKEND: ${RUN_JOB_QUEUE_BACKEND:-kafka}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      RUN_JOB_QUEUE_BACKEND: kafka
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
       KAFKA_RUN_JOB_TOPIC: ${KAFKA_RUN_JOB_TOPIC:-workflow-studio-run-jobs}
       KAFKA_CONSUMER_GROUP: ${KAFKA_CONSUMER_GROUP:-workflow-studio-workers}
@@ -144,4 +128,4 @@ services:
 
 volumes:
   postgres-data:
-  redis-data:
+  kafka-data:

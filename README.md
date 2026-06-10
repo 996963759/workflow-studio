@@ -6,8 +6,8 @@
 
 ## 5 分钟体验路线
 
-1. 执行 `.\scripts\start-dev.ps1` 启动前端和后端。
-2. 打开 `http://127.0.0.1:5173`，注册一个本地账号并登录。
+1. 执行 `docker compose up --build` 启动 PostgreSQL、Kafka、后端 API 和 Worker。
+2. 打开 `http://127.0.0.1:8000`，注册一个本地账号并登录。
 3. 从左侧“工作流模板”创建“客服知识库问答”或“文案生成并转语音”。
 4. 点击“同步到后端”，再点击“同步运行”或“异步入队”。
 5. 在右侧查看逐节点运行日志、运行历史、版本审计和系统概览。
@@ -18,7 +18,7 @@
 - 可视化编排：基于 React Flow 实现节点拖拽、连线、变量传递、条件分支和运行日志。
 - AI 应用能力：支持 DeepSeek、阿里云百炼 TTS/图片生成、PaiSmart 外部 RAG 和本地知识库检索。
 - 后端工程化：FastAPI、SQLAlchemy、Alembic、Bearer Token、多用户隔离、团队空间和 owner/editor/viewer 权限。
-- 稳定运行：支持同步运行、异步队列、失败重试、Kafka/Redis/数据库队列、运行历史和成本估算。
+- 稳定运行：支持同步运行、Kafka 异步队列、失败重试、运行历史和成本估算。
 - 版本治理：支持工作流保存、发布态、历史版本、版本恢复、版本对比和审计日志。
 - 可交付性：包含 unittest、Playwright E2E、Docker Compose、部署说明、API 文档和演示脚本。
 
@@ -28,7 +28,7 @@
 | --- | --- |
 | 前端 | React 19, TypeScript, Vite, React Flow, lucide-react |
 | 后端 | Python, FastAPI, Pydantic, SQLAlchemy, Alembic |
-| 数据与队列 | SQLite, PostgreSQL, Redis, Kafka |
+| 数据与队列 | SQLite, PostgreSQL, Kafka |
 | AI 能力 | DeepSeek/OpenAI 兼容接口, 阿里云百炼/DashScope, PaiSmart RAG |
 | 工程化 | Docker Compose, unittest, Playwright E2E, ESLint |
 
@@ -41,7 +41,7 @@ flowchart LR
   API --> Auth[认证 / 团队空间 / 权限]
   API --> Store[(SQLite / PostgreSQL)]
   API --> Runner[工作流执行器]
-  Runner --> Queue[Thread / Redis / Kafka 队列]
+  Runner --> Queue[Kafka 异步队列]
   Queue --> Worker[异步 Worker]
   Runner --> LLM[DeepSeek / OpenAI]
   Runner --> DashScope[阿里云百炼 TTS / 图片生成]
@@ -97,7 +97,19 @@ flowchart LR
 
 ## 快速启动
 
-推荐新手直接运行：
+推荐新手直接使用 Docker Compose，Kafka、PostgreSQL、API 和 Worker 会一起启动：
+
+```powershell
+docker compose up --build
+```
+
+启动后访问：
+
+```text
+http://127.0.0.1:8000
+```
+
+如果你已经在本机启动了 Kafka，也可以使用本地开发脚本：
 
 ```powershell
 .\scripts\start-dev.ps1
@@ -109,7 +121,7 @@ flowchart LR
 powershell -ExecutionPolicy Bypass -File .\scripts\start-dev.ps1
 ```
 
-脚本会检查依赖，启动后端和前端。启动后访问：
+脚本会检查依赖，并要求 `127.0.0.1:9092` 有可连接的 Kafka。启动后访问：
 
 ```text
 http://127.0.0.1:5173
@@ -131,7 +143,7 @@ npm.cmd run dev
 - `DEEPSEEK_API_KEY` / `OPENAI_API_KEY`：启用大模型节点。
 - `DASHSCOPE_API_KEY`：启用阿里云百炼 TTS 和图片生成节点。
 - `DATABASE_URL`：切换到 PostgreSQL 等数据库。
-- `RUN_JOB_QUEUE_BACKEND`：异步队列模式，可选 `thread` / `database` / `redis` / `kafka`。
+- `RUN_JOB_QUEUE_BACKEND`：正式异步队列默认 `kafka`；自动化测试会临时覆盖为 `thread`。
 - `MODEL_CONFIG_SECRET`：保护团队空间级模型 API Key。
 
 更多配置见 [用户教程](docs/user-guide.md#模型配置) 和 `.env.example`。
@@ -142,7 +154,7 @@ npm.cmd run dev
 docker compose up --build
 ```
 
-容器会启动 PostgreSQL、Redis、Kafka、FastAPI API 和独立 Worker。API 会自动执行 Alembic 迁移，异步任务会先落库再把 `job_id` 发布到 Kafka；如果 Worker 或服务重启，未完成任务会自动重新入队。Redis 仍保留为可选队列后端。
+容器会启动 PostgreSQL、Kafka、FastAPI API 和独立 Worker。API 会自动执行 Alembic 迁移，异步任务会先落库再把 `job_id` 发布到 Kafka；如果 Worker 或服务重启，未完成任务会自动重新入队。
 
 访问：
 
@@ -170,7 +182,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\test-all.ps1
 
 ## 当前边界
 
-这是本地单机版 / 私有化版工作流平台雏形。当前前端运行逻辑已支持变量传递和模拟执行；后端已提供 FastAPI、SQLite/PostgreSQL 工作流 CRUD、工作流结构校验、同步/异步运行、运行历史接口、本地向量知识库检索、DeepSeek / OpenAI 大模型节点最小真实调用、阿里云 TTS / 图片生成多模态节点、本机 HTTP 工具调用、本地账号隔离、团队空间和角色权限。Docker Compose 已提供 PostgreSQL、Redis 和独立 Worker 的生产化雏形；真实 embedding/pgvector 和外网工具白名单管理仍未实现。
+这是本地单机版 / 私有化版工作流平台雏形。当前前端运行逻辑已支持变量传递和模拟执行；后端已提供 FastAPI、SQLite/PostgreSQL 工作流 CRUD、工作流结构校验、同步/异步运行、运行历史接口、本地向量知识库检索、DeepSeek / OpenAI 大模型节点最小真实调用、阿里云 TTS / 图片生成多模态节点、本机 HTTP 工具调用、本地账号隔离、团队空间和角色权限。Docker Compose 已提供 PostgreSQL、Kafka 和独立 Worker 的生产化雏形；真实 embedding/pgvector 和外网工具白名单管理仍未实现。
 
 ## 需求与计划
 

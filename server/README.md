@@ -1,6 +1,6 @@
 # 织流 AI / WeaveFlow AI API
 
-FastAPI backend for 织流 AI / WeaveFlow AI. The backend stores users, sessions, workspaces, workflows, run history, async jobs and knowledge indexes through SQLAlchemy. Local development defaults to SQLite; Docker Compose uses PostgreSQL, Redis and a separate Worker process. It validates workflow structure, records workflow runs, searches per-workspace Markdown/TXT knowledge documents, can call DeepSeek or OpenAI for LLM nodes, can call Alibaba Cloud Model Studio / DashScope for TTS and image generation nodes, and can execute localhost HTTP tool nodes.
+FastAPI backend for 织流 AI / WeaveFlow AI. The backend stores users, sessions, workspaces, workflows, run history, async jobs and knowledge indexes through SQLAlchemy. Local development defaults to SQLite; Docker Compose uses PostgreSQL, Kafka and a separate Worker process. It validates workflow structure, records workflow runs, searches per-workspace Markdown/TXT knowledge documents, can call DeepSeek or OpenAI for LLM nodes, can call Alibaba Cloud Model Studio / DashScope for TTS and image generation nodes, and can execute localhost HTTP tool nodes.
 
 ## Setup
 
@@ -11,27 +11,31 @@ server\.venv\Scripts\python.exe -m pip install -r server/requirements.txt
 
 ## Run
 
-From the repo root, recommended:
+From the repo root, recommended for the full Kafka stack:
+
+```powershell
+docker compose up --build
+```
+
+If you already have Kafka running on `127.0.0.1:9092`, you can use the local development script:
 
 ```powershell
 .\scripts\start-dev.ps1
 ```
 
-If PowerShell blocks script execution:
+Manual backend run with the default Kafka queue backend requires Kafka to be reachable and a worker process to be running:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\start-dev.ps1
-```
-
-Manual backend run:
-
-```powershell
+$env:RUN_JOB_QUEUE_BACKEND="kafka"
+$env:KAFKA_BOOTSTRAP_SERVERS="127.0.0.1:9092"
 server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 --port 8000
 ```
 
-Manual worker run when `RUN_JOB_QUEUE_BACKEND=database`, `redis`, or `kafka`:
+Manual worker run:
 
 ```powershell
+$env:RUN_JOB_QUEUE_BACKEND="kafka"
+$env:KAFKA_BOOTSTRAP_SERVERS="127.0.0.1:9092"
 server\.venv\Scripts\python.exe -m server.src.worker
 ```
 
@@ -68,8 +72,7 @@ Additional environment variables:
 
 - `WORKFLOW_STUDIO_DB`: SQLite database path
 - `DATABASE_URL`: full SQLAlchemy database URL; overrides `WORKFLOW_STUDIO_DB`
-- `RUN_JOB_QUEUE_BACKEND`: `thread`, `database`, `redis`, or `kafka`
-- `REDIS_URL`: Redis URL used by the `redis` queue backend
+- `RUN_JOB_QUEUE_BACKEND`: default `kafka`; automated tests override it to `thread`
 - `KAFKA_BOOTSTRAP_SERVERS`: Kafka bootstrap servers used by the `kafka` queue backend
 - `KAFKA_RUN_JOB_TOPIC`: Kafka topic for run job IDs
 - `KAFKA_CONSUMER_GROUP`: Kafka worker consumer group

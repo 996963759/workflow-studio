@@ -32,6 +32,7 @@ function Wait-HttpReady {
 
 try {
   Set-Location $Root
+  $env:RUN_JOB_QUEUE_BACKEND = "thread"
 
   if (-not (Test-Path $Python)) {
     Write-Host "Creating backend virtual environment..."

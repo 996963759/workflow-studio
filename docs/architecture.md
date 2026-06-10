@@ -12,8 +12,8 @@ flowchart LR
   Store --> DB[(SQLite / PostgreSQL)]
   Store --> Versions[工作流版本快照]
   Store --> Audit[审计日志]
-  API --> Jobs[异步运行队列]
-  Jobs --> Redis[(Redis 可选)]
+  API --> Jobs[Kafka 异步运行队列]
+  Jobs --> Kafka[(Kafka)]
   Jobs --> Worker[独立 Worker]
   Worker --> Runner[工作流执行器]
   API --> Runner
@@ -47,7 +47,7 @@ flowchart LR
 - 工作流创建和更新会自动生成版本快照，也支持手动保存版本和恢复指定版本。
 - 审计日志记录工作流、团队成员、模型配置和运行入队等关键操作，按团队空间查询。
 - 团队空间可以保存 DeepSeek 模型配置；API Key 后端保护存储，前端只显示掩码，工作流运行时优先使用空间配置。
-- 异步运行队列支持四种模式：`thread` 用于本地开发，`database` 用于无消息队列的持久轮询，`redis` 用于轻量队列，`kafka` 用于 Docker Compose 默认部署。
+- 正式异步运行统一使用 Kafka。任务会先写入 `run_jobs` 表，再把 `job_id` 发布到 Kafka；自动化测试会临时使用 `thread`，避免测试环境依赖 Kafka。
 - 队列任务会先写入 `run_jobs` 表。Worker 启动时会把未完成的 running 任务重新入队，避免服务重启后卡死。
 - 知识库使用 Markdown/TXT 文件保存原文，同时在数据库中保存哈希向量索引，检索时混合关键词分和余弦相似度。
 - 知识检索节点也可以选择 PaiSmart 外部 RAG，后端通过 `/api/v1/search/hybrid` 拉取检索片段；失败时回退本地知识库。
@@ -59,14 +59,14 @@ sequenceDiagram
   participant UI as 前端
   participant API as FastAPI
   participant DB as SQLite/PostgreSQL
-  participant Queue as Kafka/Redis/DB 队列
+  participant Queue as Kafka 队列
   participant Worker as Worker
   participant Runner as 执行器
   UI->>API: POST /api/workflows/{id}/run-jobs
   API->>DB: 写入 queued 任务
   API->>Queue: 发布 job_id
   API-->>UI: 返回 job_id
-  Worker->>Queue: 消费 job_id 或轮询 queued 任务
+  Worker->>Queue: 消费 job_id
   Worker->>DB: claim queued -> running
   Worker->>Runner: 后台执行任务
   Runner->>DB: 保存运行历史并更新任务状态
@@ -102,4 +102,4 @@ sequenceDiagram
 
 - 当前本地默认使用 SQLite；Docker Compose 生产化配置默认使用 PostgreSQL。
 - 当前向量索引是本地哈希向量，优点是零额外依赖；生产可升级到真实 embedding + pgvector/Milvus。
-- 当前 Redis 队列是轻量生产化雏形；更大规模可以继续升级到 Celery/RQ 并增加任务优先级、重试退避和死信队列。
+- 当前正式异步链路统一走 Kafka；更大规模可以继续增加任务优先级、重试退避、死信队列和消费监控。

@@ -7,13 +7,13 @@
 ## 准备
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\start-dev.ps1
+docker compose up --build
 ```
 
 打开：
 
 ```text
-http://127.0.0.1:5173
+http://127.0.0.1:8000
 ```
 
 ## 快速演示路线
@@ -60,5 +60,5 @@ http://127.0.0.1:5173
 - 为什么引入 SQLAlchemy 和 Alembic。
 - 知识库当前使用本地 Markdown/TXT 原文 + SQLite 哈希向量索引，检索时混合关键词和相似度。
 - 为什么模型 Key 采用团队空间级配置，并且后端只返回“已配置 / 未配置”状态。
-- 异步队列为什么同时支持 thread、Redis 和 Kafka 三种后端。
+- 异步任务为什么统一走 Kafka，以及为什么测试环境临时使用 thread。
 - GitHub Actions 如何自动验证前端构建和后端测试。

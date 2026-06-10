@@ -27,7 +27,7 @@
 ## 生产化建议
 
 - 生产环境使用 PostgreSQL，并设置高强度 `POSTGRES_PASSWORD` 和 `MODEL_CONFIG_SECRET`。
-- 生产异步任务使用 Kafka 或 Redis + 独立 Worker，并为消息队列/PostgreSQL 设置持久卷、备份和监控。
+- 生产异步任务统一使用 Kafka + 独立 Worker，并为消息队列/PostgreSQL 设置持久卷、备份和监控。
 - 增加 token 刷新和批量撤销策略。
 - 增加管理员后台。
 - 部署时使用 HTTPS 和反向代理。

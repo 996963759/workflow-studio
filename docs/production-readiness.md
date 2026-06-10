@@ -6,7 +6,7 @@
 
 - 后端：FastAPI + SQLAlchemy + Alembic
 - 数据库：PostgreSQL
-- 异步队列：Kafka，轻量部署也可以用 Redis
+- 异步队列：Kafka + 独立 Worker
 - 前端：React + Vite
 - 部署：Docker Compose
 
@@ -107,7 +107,7 @@ http://127.0.0.1:8000/api/health
 .\scripts\start-dev.ps1
 ```
 
-这种方式默认使用 SQLite 和线程队列，启动简单，适合改前端、调节点、演示基础功能。
+这种方式默认使用 SQLite，并会按 `RUN_JOB_QUEUE_BACKEND=kafka` 启动独立 Worker；如果只是跑自动化测试，测试脚本会临时覆盖为 `thread`。
 
 ## 成熟项目还应继续补齐
 

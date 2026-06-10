@@ -1,9 +1,12 @@
 import logging
+import os
 import tempfile
 import time
 import unittest
 from pathlib import Path
 from uuid import uuid4
+
+os.environ.setdefault("RUN_JOB_QUEUE_BACKEND", "thread")
 
 from fastapi.testclient import TestClient
 
@@ -65,7 +68,7 @@ class ApiTestCase(unittest.TestCase):
         self.previous_search_paismart = runner.search_paismart
         api.store = WorkflowStore(test_db, session_factory=session_factory, engine=engine)
         set_knowledge_session_factory(api.store.SessionLocal)
-        api.job_queue = RunJobQueue(api.store)
+        api.job_queue = RunJobQueue(api.store, backend="thread")
         api.auth_service = AuthService(api.store)
         set_auth_service(api.auth_service)
         self.client = TestClient(api.app)
@@ -76,7 +79,7 @@ class ApiTestCase(unittest.TestCase):
         self.engine.dispose()
         api.store = self.previous_store
         set_knowledge_session_factory(api.store.SessionLocal)
-        api.job_queue = RunJobQueue(api.store)
+        api.job_queue = RunJobQueue(api.store, backend="thread")
         api.auth_service = self.previous_auth_service
         set_auth_service(self.previous_auth_service)
         runner.search_paismart = self.previous_search_paismart
@@ -615,13 +618,13 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(run.status_code, 200)
         self.assertEqual(run.json()["input_text"], "异步运行")
 
-    def test_database_worker_claims_queued_job(self) -> None:
+    def test_test_worker_claims_queued_job(self) -> None:
         created = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers).json()
         user = self.client.get("/api/auth/me", headers=self.auth_headers).json()
         workspace = self.client.get("/api/workspaces", headers=self.auth_headers).json()[0]
-        queue = RunJobQueue(api.store, backend="database")
+        queue = RunJobQueue(api.store, backend="thread")
 
-        job = queue.enqueue(user["id"], workspace["id"], created["id"], "数据库队列运行")
+        job = api.store.create_run_job(user["id"], workspace["id"], created["id"], "测试队列运行")
         self.assertEqual(job.status, "queued")
 
         self.assertTrue(queue.run_next_queued_job())
@@ -661,10 +664,8 @@ class ApiTestCase(unittest.TestCase):
                 self.messages.append((topic, value))
                 return FakeFuture()
 
-        api.job_queue = RunJobQueue(api.store, backend="database")
-        api.job_queue.backend = "kafka"
         producer = FakeProducer()
-        api.job_queue.kafka_producer = producer
+        api.job_queue = RunJobQueue(api.store, backend="kafka", kafka_producer=producer)
 
         retried = self.client.post(f"/api/run-jobs/{job.id}/retry", headers=self.auth_headers)
 
@@ -726,10 +727,8 @@ class ApiTestCase(unittest.TestCase):
             def commit(self):
                 self.committed = True
 
-        queue = RunJobQueue(api.store, backend="database")
-        queue.backend = "kafka"
         producer = FakeProducer()
-        queue.kafka_producer = producer
+        queue = RunJobQueue(api.store, backend="kafka", kafka_producer=producer)
         job = queue.enqueue(user["id"], workspace["id"], created["id"], "Kafka 队列运行")
 
         self.assertEqual(producer.messages, [(queue.kafka_topic, job.id)])

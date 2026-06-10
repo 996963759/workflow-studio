@@ -7,13 +7,13 @@ README 中可以嵌入一段 20 到 40 秒的演示 GIF 或短视频，用来证
 1. 启动项目：
 
 ```powershell
-.\scripts\start-dev.ps1
+docker compose up --build
 ```
 
 2. 打开：
 
 ```text
-http://127.0.0.1:5173
+http://127.0.0.1:8000
 ```
 
 3. 录制以下操作：
@@ -54,4 +54,3 @@ GIF：
 ```
 
 MP4 不能像图片一样稳定内嵌到 Markdown，建议上传到 GitHub Release、issue 或外部对象存储后再放链接。
-

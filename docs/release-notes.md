@@ -20,7 +20,7 @@
 - 系统概览接口和管理中心系统页
 - 系统概览展示运行成功率、平均耗时、平均节点数、估算成本和最近失败运行
 - 系统页展示安全设置摘要，不暴露密钥内容
-- 异步运行队列，支持任务取消、失败重试、终态任务清理、本地线程、数据库轮询、Redis + Worker 和 Kafka + Worker 部署
+- 异步运行队列，支持任务取消、失败重试、终态任务清理和 Kafka + Worker 部署
 - 运行日志展示节点级输入输出、来源、错误原因、耗时和尝试次数
 - 运行历史和系统概览展示估算成本单位、计费节点数和 provider 成本构成
 - 轻量评测系统，支持评测集、样例、关键词判定、批量运行、通过率和评测历史
@@ -29,7 +29,7 @@
 - 工作流版本对比，支持查看两个快照之间的节点、连线和基础信息变化
 - SQLAlchemy ORM
 - Alembic 数据库迁移
-- Docker Compose，包含 PostgreSQL、Redis、Kafka、API 和 Worker
+- Docker Compose，包含 PostgreSQL、Kafka、API 和 Worker
 - unittest + smoke test + Playwright E2E
 
 ## 下一步建议

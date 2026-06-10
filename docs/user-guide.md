@@ -4,19 +4,25 @@
 
 ## 本地启动
 
-推荐直接运行：
+推荐直接使用 Docker Compose，PostgreSQL、Kafka、FastAPI API 和 Worker 会一起启动：
+
+```powershell
+docker compose up --build
+```
+
+启动后访问：
+
+```text
+http://127.0.0.1:8000
+```
+
+如果你已经在本机启动了 Kafka，也可以使用本地开发脚本：
 
 ```powershell
 .\scripts\start-dev.ps1
 ```
 
-如果 PowerShell 提示禁止运行脚本，使用：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\start-dev.ps1
-```
-
-脚本会检查依赖并启动后端和前端。启动后访问：
+脚本会检查依赖，并要求 `127.0.0.1:9092` 有可连接的 Kafka。启动后访问：
 
 ```text
 http://127.0.0.1:5173
@@ -35,6 +41,14 @@ npm.cmd run dev
 python -m venv server/.venv
 server\.venv\Scripts\python.exe -m pip install -r server/requirements.txt
 server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 --port 8000
+```
+
+手动启动后端时也需要先启动 Kafka，并单独运行 Worker：
+
+```powershell
+$env:RUN_JOB_QUEUE_BACKEND="kafka"
+$env:KAFKA_BOOTSTRAP_SERVERS="127.0.0.1:9092"
+server\.venv\Scripts\python.exe -m server.src.worker
 ```
 
 后端健康检查：
@@ -171,7 +185,7 @@ localhost
 docker compose up --build
 ```
 
-容器会启动 PostgreSQL、Redis、Kafka、FastAPI API 和独立 Worker。API 会自动执行 Alembic 迁移，异步任务会先落库再把 `job_id` 发布到 Kafka；如果 Worker 或服务重启，未完成任务会自动重新入队。
+容器会启动 PostgreSQL、Kafka、FastAPI API 和独立 Worker。API 会自动执行 Alembic 迁移，异步任务会先落库再把 `job_id` 发布到 Kafka；如果 Worker 或服务重启，未完成任务会自动重新入队。
 
 查看服务状态：
 
@@ -251,4 +265,4 @@ powershell -ExecutionPolicy Bypass -File .\scripts\doctor.ps1
 
 ## 当前边界
 
-这是本地单机版 / 私有化版工作流平台雏形。当前前端运行逻辑已支持变量传递和模拟执行；后端已提供 FastAPI、SQLite/PostgreSQL 工作流 CRUD、工作流结构校验、同步/异步运行、运行历史接口、本地向量知识库检索、DeepSeek / OpenAI 大模型节点最小真实调用、阿里云 TTS / 图片生成多模态节点、本机 HTTP 工具调用、本地账号隔离、团队空间和角色权限。Docker Compose 已提供 PostgreSQL、Redis 和独立 Worker 的生产化雏形；真实 embedding/pgvector 和外网工具白名单管理仍未实现。
+这是本地单机版 / 私有化版工作流平台雏形。当前前端运行逻辑已支持变量传递和模拟执行；后端已提供 FastAPI、SQLite/PostgreSQL 工作流 CRUD、工作流结构校验、同步/异步运行、运行历史接口、本地向量知识库检索、DeepSeek / OpenAI 大模型节点最小真实调用、阿里云 TTS / 图片生成多模态节点、本机 HTTP 工具调用、本地账号隔离、团队空间和角色权限。Docker Compose 已提供 PostgreSQL、Kafka 和独立 Worker 的生产化雏形；真实 embedding/pgvector 和外网工具白名单管理仍未实现。
