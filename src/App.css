@@ -2230,6 +2230,64 @@ textarea:focus {
   color: #9a3412;
 }
 
+.image-output {
+  border: 1px solid #fed7aa;
+  border-radius: 7px;
+  background: #fff7ed;
+  padding: 7px;
+}
+
+.image-output-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.image-output figure {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+
+.image-output img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border: 1px solid #fdba74;
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.image-output figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.image-output figcaption a,
+.image-output figcaption button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #fdba74;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #9a3412;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 7px;
+  text-decoration: none;
+}
+
+.image-output figcaption a:hover,
+.image-output figcaption button:hover {
+  border-color: #ea580c;
+  background: #ffedd5;
+}
+
 .run-error-detail {
   border: 1px solid #fecaca;
   border-radius: 7px;

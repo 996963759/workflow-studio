@@ -52,12 +52,16 @@ type RunHistoryPanelProps = {
   formatProviderBreakdown: (breakdown: Record<string, number> | undefined) => string
 }
 
-const extractFirstUrl = (value: string) => value.match(/https?:\/\/[^\s)）"'，。]+/)?.[0]
+const extractUrls = (value: string) => Array.from(value.matchAll(/https?:\/\/[^\s)）"'，。]+/g)).map((match) => match[0])
+
+const extractFirstUrl = (value: string) => extractUrls(value)[0]
 
 const isAudioStep = (step: RunStep) => step.provider?.includes('TTS') || step.output.includes('音频地址')
 
 const isSimulatedAudioStep = (step: RunStep) =>
   step.output.includes('模拟音频') || step.output.includes('模拟生成音频') || step.error?.includes('AliyunProviderError')
+
+const isImageUrl = (value: string) => /\.(png|jpe?g|webp|gif)(\?|$)/i.test(value)
 
 export function RunHistoryPanel({
   runHistory,
@@ -172,6 +176,7 @@ export function RunHistoryPanel({
               const stepId = step.nodeId ?? step.node_id ?? step.title
               const outputUrl = extractFirstUrl(step.output)
               const audioUrl = outputUrl && isAudioStep(step) ? outputUrl : ''
+              const imageUrls = [...new Set(extractUrls(step.output).filter(isImageUrl))]
               const simulatedAudio = !audioUrl && isSimulatedAudioStep(step)
               return (
                 <article key={stepId}>
@@ -228,6 +233,31 @@ export function RunHistoryPanel({
                           <dt>音频播放</dt>
                           <dd>
                             这次没有生成真实音频文件。当前节点使用了模拟音频或调用失败回退，重新运行成功后这里会显示播放器和打开按钮。
+                          </dd>
+                        </div>
+                      )}
+                      {imageUrls.length > 0 && (
+                        <div className="image-output">
+                          <dt>图片预览</dt>
+                          <dd>
+                            <div className="image-output-grid">
+                              {imageUrls.map((imageUrl, imageIndex) => (
+                                <figure key={imageUrl}>
+                                  <a href={imageUrl} target="_blank" rel="noreferrer">
+                                    <img src={imageUrl} alt={`生成图片 ${imageIndex + 1}`} loading="lazy" />
+                                  </a>
+                                  <figcaption>
+                                    <a href={imageUrl} target="_blank" rel="noreferrer">
+                                      打开图片
+                                    </a>
+                                    <button type="button" onClick={() => onCopyText('图片链接', imageUrl)}>
+                                      <Copy size={12} />
+                                      复制链接
+                                    </button>
+                                  </figcaption>
+                                </figure>
+                              ))}
+                            </div>
                           </dd>
                         </div>
                       )}
