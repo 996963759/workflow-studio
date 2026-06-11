@@ -1,14 +1,12 @@
 import json
-import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from .config import DATABASE_PATH, DATABASE_URL, WORKSPACE_INVITATION_TTL_HOURS
+from .config import DATABASE_URL, WORKSPACE_INVITATION_TTL_HOURS
 from .db import SessionLocal, create_session_factory, engine as default_engine
 from .models import (
     ModelConfigPayload,
@@ -192,31 +190,17 @@ def summarize_run_cost(steps: list[dict]) -> dict[str, object]:
     }
 
 
-def _sqlite_path_from_url(database_url: str) -> Path | None:
-    if not database_url.startswith("sqlite:///"):
-        return None
-    return Path(database_url.removeprefix("sqlite:///"))
-
-
 class WorkflowStore:
     def __init__(
         self,
-        db_path: Path | None = DATABASE_PATH,
         session_factory: sessionmaker[Session] | None = None,
         engine: Engine | None = None,
     ) -> None:
         if session_factory:
-            self.db_path = db_path
             self.engine = engine
             self.SessionLocal = session_factory
         else:
-            self.db_path = db_path
-            if db_path:
-                db_path.parent.mkdir(parents=True, exist_ok=True)
-                database_url = f"sqlite:///{db_path.as_posix()}"
-            else:
-                database_url = DATABASE_URL
-            self.engine, self.SessionLocal = create_session_factory(database_url)
+            self.engine, self.SessionLocal = create_session_factory(DATABASE_URL)
         self._init_db()
 
     def _connect(self) -> Session:
@@ -225,76 +209,6 @@ class WorkflowStore:
     def _init_db(self) -> None:
         if self.engine:
             Base.metadata.create_all(self.engine)
-            sqlite_path = _sqlite_path_from_url(str(self.engine.url))
-            if sqlite_path:
-                self._migrate_sqlite_columns(sqlite_path)
-
-    def _migrate_sqlite_columns(self, db_path: Path) -> None:
-        with sqlite3.connect(db_path) as connection:
-            workflow_columns = {
-                row[1]
-                for row in connection.execute("PRAGMA table_info(workflows)").fetchall()
-            }
-            if "archived" not in workflow_columns:
-                connection.execute("ALTER TABLE workflows ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
-            if "user_id" not in workflow_columns:
-                connection.execute("ALTER TABLE workflows ADD COLUMN user_id TEXT")
-            if "workspace_id" not in workflow_columns:
-                connection.execute("ALTER TABLE workflows ADD COLUMN workspace_id TEXT")
-            if "publish_status" not in workflow_columns:
-                connection.execute("ALTER TABLE workflows ADD COLUMN publish_status TEXT NOT NULL DEFAULT 'draft'")
-            if "published_version_id" not in workflow_columns:
-                connection.execute("ALTER TABLE workflows ADD COLUMN published_version_id TEXT")
-            if "published_at" not in workflow_columns:
-                connection.execute("ALTER TABLE workflows ADD COLUMN published_at TEXT")
-            workflow_version_columns = {
-                row[1]
-                for row in connection.execute("PRAGMA table_info(workflow_versions)").fetchall()
-            }
-            if workflow_version_columns and "is_published" not in workflow_version_columns:
-                connection.execute("ALTER TABLE workflow_versions ADD COLUMN is_published INTEGER NOT NULL DEFAULT 0")
-            run_columns = {
-                row[1]
-                for row in connection.execute("PRAGMA table_info(runs)").fetchall()
-            }
-            if "user_id" not in run_columns:
-                connection.execute("ALTER TABLE runs ADD COLUMN user_id TEXT")
-            if "workspace_id" not in run_columns:
-                connection.execute("ALTER TABLE runs ADD COLUMN workspace_id TEXT")
-            session_columns = {
-                row[1]
-                for row in connection.execute("PRAGMA table_info(sessions)").fetchall()
-            }
-            if "expires_at" not in session_columns:
-                connection.execute(
-                    "ALTER TABLE sessions ADD COLUMN expires_at TEXT NOT NULL DEFAULT '9999-12-31T23:59:59+00:00'"
-                )
-            invitation_columns = {
-                row[1]
-                for row in connection.execute("PRAGMA table_info(workspace_invitations)").fetchall()
-            }
-            if invitation_columns and "expires_at" not in invitation_columns:
-                connection.execute(
-                    "ALTER TABLE workspace_invitations ADD COLUMN expires_at TEXT NOT NULL DEFAULT '9999-12-31T23:59:59+00:00'"
-                )
-            dataset_columns = {
-                row[1]
-                for row in connection.execute("PRAGMA table_info(evaluation_datasets)").fetchall()
-            }
-            if dataset_columns and "updated_at" not in dataset_columns:
-                connection.execute("ALTER TABLE evaluation_datasets ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
-            case_columns = {
-                row[1]
-                for row in connection.execute("PRAGMA table_info(evaluation_cases)").fetchall()
-            }
-            if case_columns and "updated_at" not in case_columns:
-                connection.execute("ALTER TABLE evaluation_cases ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
-            run_columns = {
-                row[1]
-                for row in connection.execute("PRAGMA table_info(evaluation_runs)").fetchall()
-            }
-            if run_columns and "average_duration_ms" not in run_columns:
-                connection.execute("ALTER TABLE evaluation_runs ADD COLUMN average_duration_ms INTEGER NOT NULL DEFAULT 0")
 
     def assign_unowned_records(self, user_id: str) -> None:
         workspace_id = self.ensure_default_workspace(user_id)
@@ -1771,4 +1685,4 @@ class WorkflowStore:
         )
 
 
-default_store = WorkflowStore(session_factory=SessionLocal, db_path=DATABASE_PATH, engine=default_engine)
+default_store = WorkflowStore(session_factory=SessionLocal, engine=default_engine)

@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 try:
     from kafka import KafkaConsumer, KafkaProducer
     from kafka.errors import KafkaError
-except ImportError:  # pragma: no cover - local SQLite tests do not need Kafka.
+except ImportError:  # pragma: no cover - thread-backed tests do not need Kafka.
     KafkaConsumer = None  # type: ignore[assignment]
     KafkaProducer = None  # type: ignore[assignment]
 

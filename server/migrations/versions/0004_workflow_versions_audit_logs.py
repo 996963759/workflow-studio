@@ -10,7 +10,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0004_workflow_versions_audit_logs"
+revision: str = "0004_versions_audit"
 down_revision: Union[str, Sequence[str], None] = "0003_workspace_model_configs"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

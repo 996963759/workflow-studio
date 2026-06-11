@@ -151,7 +151,7 @@ server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 
 server/data/knowledge/
 ```
 
-上传后会写入 SQLite 本地向量索引，检索时混合关键词命中和哈希向量相似度，不需要额外安装向量数据库。项目内置示例文档：
+上传后会写入 PostgreSQL 哈希向量索引，检索时混合关键词命中和哈希向量相似度，不需要额外安装向量数据库。项目内置示例文档：
 
 ```text
 server/data/knowledge/customer-support.md
@@ -265,4 +265,4 @@ powershell -ExecutionPolicy Bypass -File .\scripts\doctor.ps1
 
 ## 当前边界
 
-这是本地单机版 / 私有化版工作流平台雏形。当前前端运行逻辑已支持变量传递和模拟执行；后端已提供 FastAPI、SQLite/PostgreSQL 工作流 CRUD、工作流结构校验、同步/异步运行、运行历史接口、本地向量知识库检索、DeepSeek / OpenAI 大模型节点最小真实调用、阿里云 TTS / 图片生成多模态节点、本机 HTTP 工具调用、本地账号隔离、团队空间和角色权限。Docker Compose 已提供 PostgreSQL、Kafka 和独立 Worker 的生产化雏形；真实 embedding/pgvector 和外网工具白名单管理仍未实现。
+这是本地单机版 / 私有化版工作流平台雏形。当前前端运行逻辑已支持变量传递和模拟执行；后端已提供 FastAPI、PostgreSQL 工作流 CRUD、工作流结构校验、同步/异步运行、运行历史接口、本地向量知识库检索、DeepSeek / OpenAI 大模型节点最小真实调用、阿里云 TTS / 图片生成多模态节点、本机 HTTP 工具调用、本地账号隔离、团队空间和角色权限。Docker Compose 已提供 PostgreSQL、Kafka 和独立 Worker 的生产化雏形；真实 embedding/pgvector 和外网工具白名单管理仍未实现。

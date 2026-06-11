@@ -2,6 +2,7 @@ param(
   [int]$BackendPort = 8000,
   [int]$FrontendPort = 5173,
   [string]$QueueBackend = "kafka",
+  [string]$DatabaseUrl = "postgresql+psycopg://workflow_studio:workflow_studio_dev_password@127.0.0.1:5432/workflow_studio",
   [string]$KafkaBootstrapServers = "127.0.0.1:9092",
   [switch]$SkipInstall
 )
@@ -54,6 +55,19 @@ function Wait-HttpReady {
 Set-Location $Root
 
 $env:RUN_JOB_QUEUE_BACKEND = $QueueBackend
+$env:DATABASE_URL = $DatabaseUrl
+if ($DatabaseUrl -notlike "postgresql*") {
+  throw "DATABASE_URL must point to PostgreSQL. Start PostgreSQL first, or use docker compose up --build for the full stack."
+}
+$databaseHost = "127.0.0.1"
+$databasePort = 5432
+if ($DatabaseUrl -match "@([^/:]+):([0-9]+)/") {
+  $databaseHost = $Matches[1]
+  $databasePort = [int]$Matches[2]
+}
+if (-not (Test-TcpEndpoint $databaseHost $databasePort)) {
+  throw "PostgreSQL is not reachable at ${databaseHost}:${databasePort}. Start PostgreSQL first, or use docker compose up --build for the full stack."
+}
 if ($QueueBackend -notin @("kafka", "thread")) {
   throw "RUN_JOB_QUEUE_BACKEND must be kafka. Use thread only for automated tests."
 }

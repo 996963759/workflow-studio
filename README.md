@@ -28,7 +28,7 @@
 | --- | --- |
 | 前端 | React 19, TypeScript, Vite, React Flow, lucide-react |
 | 后端 | Python, FastAPI, Pydantic, SQLAlchemy, Alembic |
-| 数据与队列 | SQLite, PostgreSQL, Kafka |
+| 数据与队列 | PostgreSQL, Kafka |
 | AI 能力 | DeepSeek/OpenAI 兼容接口, 阿里云百炼/DashScope, PaiSmart RAG |
 | 工程化 | Docker Compose, unittest, Playwright E2E, ESLint |
 
@@ -39,7 +39,7 @@ flowchart LR
   User[用户] --> Web[React + React Flow 前端]
   Web --> API[FastAPI API]
   API --> Auth[认证 / 团队空间 / 权限]
-  API --> Store[(SQLite / PostgreSQL)]
+  API --> Store[(PostgreSQL)]
   API --> Runner[工作流执行器]
   Runner --> Queue[Kafka 异步队列]
   Queue --> Worker[异步 Worker]
@@ -142,7 +142,7 @@ npm.cmd run dev
 
 - `DEEPSEEK_API_KEY` / `OPENAI_API_KEY`：启用大模型节点。
 - `DASHSCOPE_API_KEY`：启用阿里云百炼 TTS 和图片生成节点。
-- `DATABASE_URL`：切换到 PostgreSQL 等数据库。
+- `DATABASE_URL`：PostgreSQL 连接串。
 - `RUN_JOB_QUEUE_BACKEND`：正式异步队列默认 `kafka`；自动化测试会临时覆盖为 `thread`。
 - `MODEL_CONFIG_SECRET`：保护团队空间级模型 API Key。
 
@@ -182,7 +182,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\test-all.ps1
 
 ## 当前边界
 
-这是本地单机版 / 私有化版工作流平台雏形。当前前端运行逻辑已支持变量传递和模拟执行；后端已提供 FastAPI、SQLite/PostgreSQL 工作流 CRUD、工作流结构校验、同步/异步运行、运行历史接口、本地向量知识库检索、DeepSeek / OpenAI 大模型节点最小真实调用、阿里云 TTS / 图片生成多模态节点、本机 HTTP 工具调用、本地账号隔离、团队空间和角色权限。Docker Compose 已提供 PostgreSQL、Kafka 和独立 Worker 的生产化雏形；真实 embedding/pgvector 和外网工具白名单管理仍未实现。
+这是本地单机版 / 私有化版工作流平台雏形。当前前端运行逻辑已支持变量传递和模拟执行；后端已提供 FastAPI、PostgreSQL 工作流 CRUD、工作流结构校验、同步/异步运行、运行历史接口、本地向量知识库检索、DeepSeek / OpenAI 大模型节点最小真实调用、阿里云 TTS / 图片生成多模态节点、本机 HTTP 工具调用、本地账号隔离、团队空间和角色权限。Docker Compose 已提供 PostgreSQL、Kafka 和独立 Worker 的生产化雏形；真实 embedding/pgvector 和外网工具白名单管理仍未实现。
 
 ## 需求与计划
 

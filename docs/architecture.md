@@ -9,7 +9,7 @@ flowchart LR
   UI --> API[FastAPI API]
   API --> Auth[认证与权限]
   API --> Store[SQLAlchemy Store]
-  Store --> DB[(SQLite / PostgreSQL)]
+  Store --> DB[(PostgreSQL)]
   Store --> Versions[工作流版本快照]
   Store --> Audit[审计日志]
   API --> Jobs[Kafka 异步运行队列]
@@ -58,7 +58,7 @@ flowchart LR
 sequenceDiagram
   participant UI as 前端
   participant API as FastAPI
-  participant DB as SQLite/PostgreSQL
+  participant DB as PostgreSQL
   participant Queue as Kafka 队列
   participant Worker as Worker
   participant Runner as 执行器
@@ -80,7 +80,7 @@ sequenceDiagram
 sequenceDiagram
   participant UI as 前端
   participant API as FastAPI
-  participant DB as SQLite/PostgreSQL
+  participant DB as PostgreSQL
   participant Runner as 执行器
   UI->>API: POST /api/workflows/{id}/runs
   API->>DB: 按团队空间读取工作流
@@ -100,6 +100,6 @@ sequenceDiagram
 
 ## 设计取舍
 
-- 当前本地默认使用 SQLite；Docker Compose 生产化配置默认使用 PostgreSQL。
+- 当前开发、测试和 Docker Compose 部署统一使用 PostgreSQL。
 - 当前向量索引是本地哈希向量，优点是零额外依赖；生产可升级到真实 embedding + pgvector/Milvus。
 - 当前正式异步链路统一走 Kafka；更大规模可以继续增加任务优先级、重试退避、死信队列和消费监控。

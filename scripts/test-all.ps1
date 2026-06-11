@@ -1,5 +1,6 @@
 param(
   [int]$SmokePort = 8001,
+  [string]$DatabaseUrl = "postgresql+psycopg://workflow_studio:workflow_studio_dev_password@127.0.0.1:5432/workflow_studio_test",
   [switch]$SkipInstall
 )
 
@@ -32,7 +33,21 @@ function Wait-HttpReady {
 
 try {
   Set-Location $Root
+  $env:DATABASE_URL = $DatabaseUrl
+  $env:TEST_DATABASE_URL = $DatabaseUrl
   $env:RUN_JOB_QUEUE_BACKEND = "thread"
+  if ($DatabaseUrl -notlike "postgresql*") {
+    throw "TEST_DATABASE_URL must point to PostgreSQL."
+  }
+  $databaseHost = "127.0.0.1"
+  $databasePort = 5432
+  if ($DatabaseUrl -match "@([^/:]+):([0-9]+)/") {
+    $databaseHost = $Matches[1]
+    $databasePort = [int]$Matches[2]
+  }
+  if (-not (Test-NetConnection -ComputerName $databaseHost -Port $databasePort -InformationLevel Quiet)) {
+    throw "PostgreSQL is not reachable at ${databaseHost}:${databasePort}. Start PostgreSQL or run docker compose up db first."
+  }
 
   if (-not (Test-Path $Python)) {
     Write-Host "Creating backend virtual environment..."

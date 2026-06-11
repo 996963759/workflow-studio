@@ -1,6 +1,6 @@
 # 织流 AI / WeaveFlow AI API
 
-FastAPI backend for 织流 AI / WeaveFlow AI. The backend stores users, sessions, workspaces, workflows, run history, async jobs and knowledge indexes through SQLAlchemy. Local development defaults to SQLite; Docker Compose uses PostgreSQL, Kafka and a separate Worker process. It validates workflow structure, records workflow runs, searches per-workspace Markdown/TXT knowledge documents, can call DeepSeek or OpenAI for LLM nodes, can call Alibaba Cloud Model Studio / DashScope for TTS and image generation nodes, and can execute localhost HTTP tool nodes.
+FastAPI backend for 织流 AI / WeaveFlow AI. The backend stores users, sessions, workspaces, workflows, run history, async jobs and knowledge indexes through SQLAlchemy and PostgreSQL. Docker Compose starts PostgreSQL, Kafka and a separate Worker process. It validates workflow structure, records workflow runs, searches per-workspace Markdown/TXT knowledge documents, can call DeepSeek or OpenAI for LLM nodes, can call Alibaba Cloud Model Studio / DashScope for TTS and image generation nodes, and can execute localhost HTTP tool nodes.
 
 ## Setup
 
@@ -70,8 +70,8 @@ server\.venv\Scripts\python.exe -m uvicorn server.src.main:app --host 127.0.0.1 
 
 Additional environment variables:
 
-- `WORKFLOW_STUDIO_DB`: SQLite database path
-- `DATABASE_URL`: full SQLAlchemy database URL; overrides `WORKFLOW_STUDIO_DB`
+- `DATABASE_URL`: PostgreSQL SQLAlchemy database URL
+- `TEST_DATABASE_URL`: PostgreSQL SQLAlchemy database URL used by automated tests
 - `RUN_JOB_QUEUE_BACKEND`: default `kafka`; automated tests override it to `thread`
 - `KAFKA_BOOTSTRAP_SERVERS`: Kafka bootstrap servers used by the `kafka` queue backend
 - `KAFKA_RUN_JOB_TOPIC`: Kafka topic for run job IDs
@@ -161,13 +161,7 @@ Warnings:
 
 ## Storage
 
-The SQLite database is created at:
-
-```text
-server/data/workflow_studio.db
-```
-
-The database file is ignored by Git.
+Runtime data is stored in PostgreSQL. Local knowledge files still live under `server/data/knowledge/`.
 
 Saved workflow records include `name`, `version`, `nodes`, `edges`, `archived`, `publish_status`, `published_version_id`, `published_at`, and `updated_at`.
 

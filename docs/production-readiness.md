@@ -1,6 +1,6 @@
 # 成熟化部署说明
 
-这份说明用于把本地演示项目推进到更接近真实项目的运行方式。新手开发时仍然可以继续用 SQLite；需要做团队协作、长期保存数据或更接近生产环境时，建议使用 PostgreSQL。
+这份说明用于把本地演示项目推进到更接近真实项目的运行方式。项目开发、测试和 Docker Compose 部署统一使用 PostgreSQL，避免本地 SQLite 与正式数据库行为不一致。
 
 ## 推荐技术组合
 
@@ -12,12 +12,7 @@
 
 ## 数据库选择
 
-当前项目支持两种数据库：
-
-- SQLite：默认本地开发模式，数据库文件在 `server/data/workflow_studio.db`
-- PostgreSQL：推荐的成熟化模式，Docker Compose 已内置 `db` 服务
-
-生产化部署建议使用 PostgreSQL，原因是它更适合多用户、权限、审计日志、运行历史、JSON 数据和后续 `pgvector` 向量检索。
+当前项目统一使用 PostgreSQL。原因是它更适合多用户、权限、审计日志、运行历史、JSON 数据和后续 `pgvector` 向量检索，也能让开发、测试和部署环境保持一致。
 
 ## 环境变量
 
@@ -97,17 +92,17 @@ http://127.0.0.1:8000/api/health
 }
 ```
 
-如果看到 `database` 是 `sqlite`，说明当前后端还在使用本地 SQLite。
+如果 `database` 不是 `postgresql`，说明当前后端连接到了错误的数据库。
 
 ## 本地开发模式
 
-本地新手开发仍然推荐：
+本地开发推荐：
 
 ```powershell
 .\scripts\start-dev.ps1
 ```
 
-这种方式默认使用 SQLite，并会按 `RUN_JOB_QUEUE_BACKEND=kafka` 启动独立 Worker；如果只是跑自动化测试，测试脚本会临时覆盖为 `thread`。
+这种方式要求本机已经有 PostgreSQL 和 Kafka；如果希望一次性启动完整依赖，推荐使用 `docker compose up --build`。自动化测试会使用 PostgreSQL 测试库，并把队列临时覆盖为 `thread`。
 
 ## 成熟项目还应继续补齐
 

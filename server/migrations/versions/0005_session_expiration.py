@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 
 revision: str = "0005_session_expiration"
-down_revision: Union[str, Sequence[str], None] = "0004_workflow_versions_audit_logs"
+down_revision: Union[str, Sequence[str], None] = "0004_versions_audit"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

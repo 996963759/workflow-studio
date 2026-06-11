@@ -33,6 +33,24 @@ jobs:
   backend:
     name: Backend
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: workflow_studio_test
+          POSTGRES_USER: workflow_studio
+          POSTGRES_PASSWORD: workflow_studio_dev_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U workflow_studio -d workflow_studio_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+psycopg://workflow_studio:workflow_studio_dev_password@127.0.0.1:5432/workflow_studio_test
+      TEST_DATABASE_URL: postgresql+psycopg://workflow_studio:workflow_studio_dev_password@127.0.0.1:5432/workflow_studio_test
+      RUN_JOB_QUEUE_BACKEND: thread
 
     steps:
       - name: Checkout

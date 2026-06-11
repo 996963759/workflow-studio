@@ -4233,6 +4233,7 @@ function App() {
   }
 
   const runWorkflow = async () => {
+    setAdminView('ops')
     const issues = await validateActiveWorkflow()
     if (showBlockingIssues(issues, '运行')) return
 

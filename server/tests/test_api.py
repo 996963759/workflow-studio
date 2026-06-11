@@ -1,11 +1,14 @@
 import logging
 import os
-import tempfile
 import time
 import unittest
-from pathlib import Path
 from uuid import uuid4
 
+TEST_DATABASE_URL = os.getenv(
+    "TEST_DATABASE_URL",
+    "postgresql+psycopg://workflow_studio:workflow_studio_dev_password@127.0.0.1:5432/workflow_studio_test",
+)
+os.environ.setdefault("DATABASE_URL", TEST_DATABASE_URL)
 os.environ.setdefault("RUN_JOB_QUEUE_BACKEND", "thread")
 
 from fastapi.testclient import TestClient
@@ -13,7 +16,7 @@ from fastapi.testclient import TestClient
 from server.src.auth import AuthService, set_auth_service
 from server.src import main as api
 from server.src import runner
-from server.src.orm import DbSession, DbWorkspaceInvitation
+from server.src.orm import Base, DbSession, DbWorkspaceInvitation
 from server.src.providers import aliyun
 from server.src.db import create_session_factory
 from server.src.jobs import RunJobQueue, RunJobWorker
@@ -59,14 +62,14 @@ class ApiTestCase(unittest.TestCase):
         logging.disable(logging.NOTSET)
 
     def setUp(self) -> None:
-        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.previous_store = api.store
         self.previous_auth_service = api.auth_service
-        test_db = Path(self.temp_dir.name) / "test.db"
-        engine, session_factory = create_session_factory(f"sqlite:///{test_db.as_posix()}")
+        engine, session_factory = create_session_factory(TEST_DATABASE_URL)
         self.engine = engine
+        Base.metadata.drop_all(self.engine)
+        Base.metadata.create_all(self.engine)
         self.previous_search_paismart = runner.search_paismart
-        api.store = WorkflowStore(test_db, session_factory=session_factory, engine=engine)
+        api.store = WorkflowStore(session_factory=session_factory, engine=engine)
         set_knowledge_session_factory(api.store.SessionLocal)
         api.job_queue = RunJobQueue(api.store, backend="thread")
         api.auth_service = AuthService(api.store)
@@ -76,6 +79,7 @@ class ApiTestCase(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.client.close()
+        Base.metadata.drop_all(self.engine)
         self.engine.dispose()
         api.store = self.previous_store
         set_knowledge_session_factory(api.store.SessionLocal)
@@ -83,7 +87,6 @@ class ApiTestCase(unittest.TestCase):
         api.auth_service = self.previous_auth_service
         set_auth_service(self.previous_auth_service)
         runner.search_paismart = self.previous_search_paismart
-        self.temp_dir.cleanup()
 
     def create_auth_headers(self, username: str | None = None) -> dict[str, str]:
         response = self.client.post(
@@ -98,7 +101,7 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertEqual(body["status"], "ok")
-        self.assertEqual(body["database"], "sqlite")
+        self.assertEqual(body["database"], "postgresql")
         self.assertEqual(body["queue_backend"], "thread")
 
     def test_admin_overview_reports_workspace_status(self) -> None:
@@ -106,7 +109,7 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertEqual(body["status"], "ok")
-        self.assertEqual(body["database"], "sqlite")
+        self.assertEqual(body["database"], "postgresql")
         self.assertEqual(body["queue_backend"], "thread")
         self.assertEqual(body["workspace"]["role"], "owner")
         self.assertGreaterEqual(body["counts"]["members"], 1)

@@ -58,7 +58,7 @@ http://127.0.0.1:8000
 - 本地草稿和后端持久化如何处理冲突。
 - 如何用 Bearer Token 做用户隔离。
 - 为什么引入 SQLAlchemy 和 Alembic。
-- 知识库当前使用本地 Markdown/TXT 原文 + SQLite 哈希向量索引，检索时混合关键词和相似度。
+- 知识库当前使用本地 Markdown/TXT 原文 + PostgreSQL 哈希向量索引，检索时混合关键词和相似度。
 - 为什么模型 Key 采用团队空间级配置，并且后端只返回“已配置 / 未配置”状态。
 - 异步任务为什么统一走 Kafka，以及为什么测试环境临时使用 thread。
 - GitHub Actions 如何自动验证前端构建和后端测试。

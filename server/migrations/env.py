@@ -30,8 +30,7 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     from sqlalchemy import create_engine
 
-    connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
-    engine = create_engine(DATABASE_URL, connect_args=connect_args)
+    engine = create_engine(DATABASE_URL)
 
     with engine.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)
@@ -44,4 +43,3 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     run_migrations_online()
-
