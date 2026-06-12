@@ -1,6 +1,6 @@
 # 织流 AI / WeaveFlow AI API
 
-FastAPI backend for 织流 AI / WeaveFlow AI. The backend stores users, sessions, workspaces, workflows, run history, async jobs and knowledge indexes through SQLAlchemy and PostgreSQL. Docker Compose starts PostgreSQL, Kafka and a separate Worker process. It validates workflow structure, records workflow runs, searches per-workspace Markdown/TXT knowledge documents, can call DeepSeek or OpenAI for LLM nodes, can call Alibaba Cloud Model Studio / DashScope for TTS and image generation nodes, and can execute localhost HTTP tool nodes.
+FastAPI backend for 织流 AI / WeaveFlow AI. The backend stores users, sessions, workspaces, workflows, run history, async jobs and knowledge indexes through SQLAlchemy and PostgreSQL. Docker Compose starts PostgreSQL, Kafka, Redis and a separate Worker process. It validates workflow structure, records workflow runs, searches per-workspace Markdown/TXT knowledge documents, can call DeepSeek or OpenAI for LLM nodes, can call Alibaba Cloud Model Studio / DashScope for TTS and image generation nodes, and can execute localhost HTTP tool nodes.
 
 ## Setup
 
@@ -72,6 +72,8 @@ Additional environment variables:
 
 - `DATABASE_URL`: PostgreSQL SQLAlchemy database URL
 - `TEST_DATABASE_URL`: PostgreSQL SQLAlchemy database URL used by automated tests
+- `REDIS_URL`: optional Redis URL for short-lived API response caches; leave empty to disable
+- `ADMIN_OVERVIEW_CACHE_TTL_SECONDS`: TTL for `/api/admin/overview` cache, default `20`
 - `RUN_JOB_QUEUE_BACKEND`: default `kafka`; automated tests override it to `thread`
 - `KAFKA_BOOTSTRAP_SERVERS`: Kafka bootstrap servers used by the `kafka` queue backend
 - `KAFKA_RUN_JOB_TOPIC`: Kafka topic for run job IDs
@@ -162,6 +164,8 @@ Warnings:
 ## Storage
 
 Runtime data is stored in PostgreSQL. Local knowledge files still live under `server/data/knowledge/`.
+
+Redis is optional and used only as a short-lived read-through cache. `/api/admin/overview` caches the assembled workspace overview per user and workspace, and falls back to PostgreSQL if Redis is unavailable.
 
 Saved workflow records include `name`, `version`, `nodes`, `edges`, `archived`, `publish_status`, `published_version_id`, `published_at`, and `updated_at`.
 

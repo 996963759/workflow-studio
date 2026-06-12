@@ -1447,6 +1447,7 @@ class WorkflowStore:
         )
         with self._connect() as session:
             session.add(dataset)
+            session.flush()
             for case_payload in payload.cases:
                 session.add(self._new_evaluation_case(dataset.id, workspace_id, case_payload, now))
             session.commit()

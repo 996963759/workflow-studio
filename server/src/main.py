@@ -4,8 +4,10 @@ import time
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
 
 from .config import (
+    ADMIN_OVERVIEW_CACHE_TTL_SECONDS,
     APP_ENV,
     CORS_ORIGINS,
     DIST_DIR,
@@ -16,6 +18,7 @@ from .config import (
     WORKSPACE_INVITATION_TTL_HOURS,
 )
 from .auth import AuthService, current_token, login, register, require_auth, set_auth_service
+from .cache import default_cache
 from .models import (
     AdminOverviewRecord,
     AuthPayload,
@@ -78,6 +81,7 @@ set_auth_service(auth_service)
 default_user_id = auth_service.ensure_default_user()
 store.assign_unowned_records(default_user_id)
 job_queue = RunJobQueue(store)
+cache = default_cache
 
 app.add_middleware(
     CORSMiddleware,
@@ -167,6 +171,18 @@ def ensure_supported_model_provider(provider: str) -> None:
 @app.get("/api/admin/overview", response_model=AdminOverviewRecord)
 def admin_overview(context: WorkspaceContext = Depends(require_workspace_role("viewer"))) -> AdminOverviewRecord:
     user, workspace_id = context
+    cache_key = f"admin-overview:{workspace_id}:{user.id}"
+    try:
+        cached = cache.get_json(cache_key)
+    except Exception:  # noqa: BLE001 - cache must never break the API response.
+        logger.warning("admin overview cache read failed key=%s", cache_key, exc_info=True)
+        cached = None
+    if cached is not None:
+        try:
+            return AdminOverviewRecord.model_validate(cached)
+        except ValidationError:
+            logger.warning("ignored invalid admin overview cache key=%s", cache_key, exc_info=True)
+
     workspace = store.get_workspace_record(workspace_id, user.id)
     counts = store.get_workspace_overview_counts(workspace_id, user.id)
     if workspace is None or counts is None:
@@ -177,7 +193,7 @@ def admin_overview(context: WorkspaceContext = Depends(require_workspace_role("v
     audit_logs = store.list_audit_logs(workspace_id, user.id, limit=5) or []
     run_jobs = store.list_run_jobs(user.id, workspace_id=workspace_id)[:5]
     database = store.engine.url.get_backend_name() if store.engine else "unknown"
-    return AdminOverviewRecord(
+    overview = AdminOverviewRecord(
         status="ok",
         database=database,
         queue_backend=job_queue.backend,
@@ -199,6 +215,11 @@ def admin_overview(context: WorkspaceContext = Depends(require_workspace_role("v
         recent_audit_logs=audit_logs,
         recent_run_jobs=run_jobs,
     )
+    try:
+        cache.set_json(cache_key, overview.model_dump(mode="json"), ADMIN_OVERVIEW_CACHE_TTL_SECONDS)
+    except Exception:  # noqa: BLE001 - cache must never break the API response.
+        logger.warning("admin overview cache write failed key=%s", cache_key, exc_info=True)
+    return overview
 
 
 @app.get("/api/workspaces", response_model=list[WorkspaceRecord])

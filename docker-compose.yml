@@ -42,6 +42,17 @@ services:
       - kafka-data:/bitnami/kafka
     restart: unless-stopped
 
+  redis:
+    image: redis:8-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -52,6 +63,8 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
       - "8000:8000"
     environment:
@@ -59,6 +72,9 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://workflow_studio:workflow_studio_dev_password@db:5432/workflow_studio}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://127.0.0.1:5173,http://localhost:5173}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_SOCKET_TIMEOUT_SECONDS: ${REDIS_SOCKET_TIMEOUT_SECONDS:-0.2}
+      ADMIN_OVERVIEW_CACHE_TTL_SECONDS: ${ADMIN_OVERVIEW_CACHE_TTL_SECONDS:-20}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-flash}
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
@@ -99,6 +115,8 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       api:
         condition: service_healthy
     command: ["python", "-m", "server.src.worker"]
@@ -106,6 +124,9 @@ services:
       APP_ENV: production
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://workflow_studio:workflow_studio_dev_password@db:5432/workflow_studio}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_SOCKET_TIMEOUT_SECONDS: ${REDIS_SOCKET_TIMEOUT_SECONDS:-0.2}
+      ADMIN_OVERVIEW_CACHE_TTL_SECONDS: ${ADMIN_OVERVIEW_CACHE_TTL_SECONDS:-20}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-flash}
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}

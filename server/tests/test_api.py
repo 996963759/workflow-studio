@@ -52,6 +52,37 @@ def invalid_workflow() -> dict:
     return workflow
 
 
+class NullCache:
+    def get_json(self, key: str):
+        return None
+
+    def set_json(self, key: str, value, ttl_seconds: int) -> None:
+        return None
+
+
+class MemoryCache(NullCache):
+    def __init__(self) -> None:
+        self.values = {}
+        self.read_count = 0
+        self.write_count = 0
+
+    def get_json(self, key: str):
+        self.read_count += 1
+        return self.values.get(key)
+
+    def set_json(self, key: str, value, ttl_seconds: int) -> None:
+        self.write_count += 1
+        self.values[key] = value
+
+
+class FailingCache(NullCache):
+    def get_json(self, key: str):
+        raise RuntimeError("cache unavailable")
+
+    def set_json(self, key: str, value, ttl_seconds: int) -> None:
+        raise RuntimeError("cache unavailable")
+
+
 class ApiTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -64,6 +95,7 @@ class ApiTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.previous_store = api.store
         self.previous_auth_service = api.auth_service
+        self.previous_cache = api.cache
         engine, session_factory = create_session_factory(TEST_DATABASE_URL)
         self.engine = engine
         Base.metadata.drop_all(self.engine)
@@ -74,6 +106,7 @@ class ApiTestCase(unittest.TestCase):
         api.job_queue = RunJobQueue(api.store, backend="thread")
         api.auth_service = AuthService(api.store)
         set_auth_service(api.auth_service)
+        api.cache = NullCache()
         self.client = TestClient(api.app)
         self.auth_headers = self.create_auth_headers()
 
@@ -86,6 +119,7 @@ class ApiTestCase(unittest.TestCase):
         api.job_queue = RunJobQueue(api.store, backend="thread")
         api.auth_service = self.previous_auth_service
         set_auth_service(self.previous_auth_service)
+        api.cache = self.previous_cache
         runner.search_paismart = self.previous_search_paismart
 
     def create_auth_headers(self, username: str | None = None) -> dict[str, str]:
@@ -120,6 +154,33 @@ class ApiTestCase(unittest.TestCase):
         self.assertIn("run_metrics", body)
         self.assertEqual(body["run_metrics"]["total_runs"], 0)
         self.assertIn("recent_audit_logs", body)
+
+    def test_admin_overview_uses_short_lived_cache(self) -> None:
+        cache = MemoryCache()
+        api.cache = cache
+
+        first_response = self.client.get("/api/admin/overview", headers=self.auth_headers)
+        self.assertEqual(first_response.status_code, 200)
+        first_body = first_response.json()
+
+        user = self.client.get("/api/auth/me", headers=self.auth_headers).json()
+        workspace = self.client.get("/api/workspaces", headers=self.auth_headers).json()[0]
+        api.store.create_run(None, user["id"], "缓存后新增运行", "ok", RunResponse(status="ok", steps=[]), workspace["id"])
+
+        second_response = self.client.get("/api/admin/overview", headers=self.auth_headers)
+
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(second_response.json()["run_metrics"]["total_runs"], first_body["run_metrics"]["total_runs"])
+        self.assertEqual(cache.read_count, 2)
+        self.assertEqual(cache.write_count, 1)
+
+    def test_admin_overview_falls_back_when_cache_fails(self) -> None:
+        api.cache = FailingCache()
+
+        response = self.client.get("/api/admin/overview", headers=self.auth_headers)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ok")
 
     def test_admin_overview_reports_run_metrics(self) -> None:
         ok_response = RunResponse(

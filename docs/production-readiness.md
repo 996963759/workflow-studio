@@ -6,6 +6,7 @@
 
 - 后端：FastAPI + SQLAlchemy + Alembic
 - 数据库：PostgreSQL
+- 读取缓存：Redis（短 TTL，可降级）
 - 异步队列：Kafka + 独立 Worker
 - 前端：React + Vite
 - 部署：Docker Compose
@@ -26,6 +27,8 @@ Copy-Item .env.example .env
 
 ```text
 DATABASE_URL=postgresql+psycopg://workflow_studio:workflow_studio_dev_password@db:5432/workflow_studio
+REDIS_URL=redis://redis:6379/0
+ADMIN_OVERVIEW_CACHE_TTL_SECONDS=20
 POSTGRES_DB=workflow_studio
 POSTGRES_USER=workflow_studio
 POSTGRES_PASSWORD=请改成高强度密码

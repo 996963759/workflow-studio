@@ -22,6 +22,9 @@ CORS_ORIGINS = [
 DATABASE_URL = get_env("DATABASE_URL", DEFAULT_DATABASE_URL)
 if not DATABASE_URL.startswith("postgresql"):
     raise ValueError("DATABASE_URL must point to PostgreSQL.")
+REDIS_URL = os.getenv("REDIS_URL", "")
+REDIS_SOCKET_TIMEOUT_SECONDS = float(get_env("REDIS_SOCKET_TIMEOUT_SECONDS", "0.2"))
+ADMIN_OVERVIEW_CACHE_TTL_SECONDS = int(get_env("ADMIN_OVERVIEW_CACHE_TTL_SECONDS", "20"))
 EXTERNAL_RAG_ENABLED = get_env("EXTERNAL_RAG_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
 PAISMART_BASE_URL = get_env("PAISMART_BASE_URL", "http://127.0.0.1:8080")
 PAISMART_TOKEN = os.getenv("PAISMART_TOKEN", "")
