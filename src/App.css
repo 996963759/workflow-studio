@@ -302,6 +302,7 @@
 .example-picker button:hover,
 .workflow-list button:hover,
 .workflow-actions button:hover,
+.workflow-bulk-actions button:hover,
 .mini-action:hover,
 .toolbar .ghost:hover,
 .icon-button:hover {
@@ -310,7 +311,8 @@
 }
 
 .mini-action,
-.workflow-actions button {
+.workflow-actions button,
+.workflow-bulk-actions button {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -325,7 +327,8 @@
 }
 
 .mini-action:disabled,
-.workflow-actions button:disabled {
+.workflow-actions button:disabled,
+.workflow-bulk-actions button:disabled {
   cursor: not-allowed;
   opacity: 0.58;
 }
@@ -369,6 +372,60 @@
 }
 
 .archive-toggle input {
+  width: 14px;
+  height: 14px;
+  accent-color: #193f34;
+}
+
+.workflow-bulk-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 8px;
+}
+
+.workflow-bulk-actions span {
+  flex: 1 1 92px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.workflow-bulk-actions span.blocked {
+  color: #b91c1c;
+}
+
+.workflow-bulk-actions button {
+  padding: 5px 7px;
+}
+
+.workflow-bulk-actions button.danger {
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.workflow-list-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: stretch;
+  gap: 6px;
+}
+
+.workflow-list-row.selected button {
+  border-color: #2563eb;
+}
+
+.workflow-select {
+  display: grid;
+  place-items: center;
+  border: 1px solid #d8ded4;
+  border-radius: 7px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.workflow-select input {
   width: 14px;
   height: 14px;
   accent-color: #193f34;
@@ -611,11 +668,17 @@
 .topbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 16px;
   padding: 16px 20px;
   border-bottom: 1px solid #dfe4db;
   background: rgba(250, 251, 247, 0.9);
+}
+
+.topbar > div:first-child {
+  flex: 1 1 260px;
+  min-width: 0;
 }
 
 .topbar p {
@@ -636,6 +699,7 @@
   font-weight: 700;
   line-height: 1.2;
   padding: 2px 0;
+  min-width: 0;
 }
 
 .workflow-name-input:focus {
@@ -674,12 +738,17 @@
 .toolbar {
   display: flex;
   align-items: center;
+  flex: 1 1 420px;
+  flex-wrap: wrap;
   gap: 8px;
+  justify-content: flex-end;
+  min-width: 0;
 }
 
 .toolbar button {
   display: inline-flex;
   align-items: center;
+  flex: 0 0 auto;
   gap: 7px;
   height: 36px;
   padding: 0 12px;
@@ -1899,6 +1968,7 @@ textarea:focus {
 
 .runner-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 7px;
   margin-bottom: 12px;
 }
@@ -2090,6 +2160,81 @@ textarea:focus {
 .run-summary button:hover {
   border-color: #9aa68f;
   background: #f7f8f3;
+}
+
+.final-run-output {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  background: #f0fdf4;
+  padding: 10px;
+}
+
+.final-run-output-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.final-run-output-header > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.final-run-output-header span {
+  color: #15803d;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.final-run-output-header strong {
+  color: #111827;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.final-run-output-header button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #86efac;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #166534;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 5px 7px;
+}
+
+.final-run-output-header button:hover {
+  border-color: #22c55e;
+  background: #dcfce7;
+}
+
+.final-run-output pre {
+  overflow: auto;
+  max-height: 360px;
+  margin: 0;
+  border: 1px solid #dcfce7;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #17221e;
+  font: 12px/1.55 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 9px;
+}
+
+.final-run-output small {
+  color: #15803d;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .run-log article,

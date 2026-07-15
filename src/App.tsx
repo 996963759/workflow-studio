@@ -28,6 +28,7 @@ import {
   Download,
   GitBranch,
   ListChecks,
+  Maximize2,
   MessageSquareText,
   Play,
   Plus,
@@ -119,6 +120,11 @@ type WorkflowNodeData = {
 }
 
 type WorkflowNode = Node<WorkflowNodeData, 'workflow'>
+
+type FlowCanvasController = {
+  setCenter: (x: number, y: number, options?: { duration?: number; zoom?: number }) => void
+  fitView: (options?: { duration?: number; maxZoom?: number; padding?: number }) => Promise<boolean>
+}
 
 type RunStep = {
   nodeId?: string
@@ -1510,6 +1516,329 @@ const workflowTemplates: WorkflowTemplate[] = [
       { id: 'e-tool-output', source: 'tool-1', target: 'output-1' },
     ],
   },
+  {
+    id: 'iot-device-ops-dispatch',
+    name: '智能楼宇设备异常诊断与运维派单',
+    description: 'LLM 先识别楼宇设备和问题类型，再调用真实 MCP 工具查询 BMS 状态，最后生成诊断结论和运维派单建议。',
+    input: 'A 座 18F 新风机组 AHU-18F-07 控制器最近 30 分钟离线，会议区 CO2 偏高，请帮我诊断并派单。',
+    nodes: [
+      {
+        id: 'input-1',
+        type: 'workflow',
+        position: { x: 40, y: 240 },
+        data: {
+          kind: 'input',
+          ...nodeMeta.input.defaults,
+          label: '楼宇设备问题输入',
+          description: '输入楼栋、楼层、设备、异常现象和期望处理动作。',
+          sampleInput: 'A 座 18F 新风机组 AHU-18F-07 控制器最近 30 分钟离线，会议区 CO2 偏高，请帮我诊断并派单。',
+          outputKey: 'user_request',
+        },
+      },
+      {
+        id: 'llm-intent',
+        type: 'workflow',
+        position: { x: 350, y: 240 },
+        data: {
+          kind: 'llm',
+          ...nodeMeta.llm.defaults,
+          label: 'LLM 识别设备与意图',
+          description: '从自然语言中识别楼栋、楼层、设备编号、异常类型和下一步查询目标。',
+          model: 'deepseek-v4-flash',
+          temperature: 0.2,
+          maxOutputTokens: 500,
+          timeoutSeconds: 45,
+          systemPrompt: '你是智能楼宇运维助手，负责把用户报障转成可查询的设备诊断任务。',
+          prompt:
+            '智能楼宇设备识别：请从用户问题中提取楼栋、楼层、设备编号、异常类型，并给出要调用的 MCP 工具名称和查询参数。\n\n用户问题：{{user_request}}',
+          outputKey: 'device_query',
+          failurePolicy: 'continue',
+          retryCount: 1,
+        },
+      },
+      {
+        id: 'mcp-bms-tool',
+        type: 'workflow',
+        position: { x: 700, y: 240 },
+        data: {
+          kind: 'tool',
+          ...nodeMeta.tool.defaults,
+          label: 'MCP 工具调用',
+          description: '调用后端注册的 MCP 工具，查询楼宇 BMS/设备平台。',
+          toolName: 'mcp.building_bms.get_device_status',
+          toolUrl: '',
+          toolMethod: 'POST',
+          toolHeaders: '{}',
+          toolParams: '{\n  "device_id": "AHU-18F-07",\n  "building": "A座",\n  "floor": "18F"\n}',
+          outputKey: 'mcp_query_result',
+          failurePolicy: 'continue',
+          retryCount: 0,
+        },
+      },
+      {
+        id: 'device-status',
+        type: 'workflow',
+        position: { x: 1060, y: 240 },
+        data: {
+          kind: 'json',
+          ...nodeMeta.json.defaults,
+          label: '读取 MCP 返回状态',
+          description: '从 MCP 工具返回 JSON 中提取 data，作为后续诊断使用的设备状态。',
+          jsonSource: '{{mcp_query_result}}',
+          jsonPath: 'data',
+          outputKey: 'device_status_json',
+        },
+      },
+      {
+        id: 'json-device',
+        type: 'workflow',
+        position: { x: 1400, y: -90 },
+        data: {
+          kind: 'json',
+          ...nodeMeta.json.defaults,
+          label: '提取设备编号',
+          jsonSource: '{{device_status_json}}',
+          jsonPath: 'device_id',
+          outputKey: 'device_sn',
+        },
+      },
+      {
+        id: 'json-status',
+        type: 'workflow',
+        position: { x: 1400, y: 40 },
+        data: {
+          kind: 'json',
+          ...nodeMeta.json.defaults,
+          label: '提取在线状态',
+          jsonSource: '{{device_status_json}}',
+          jsonPath: 'connection_status',
+          outputKey: 'connection_status',
+        },
+      },
+      {
+        id: 'json-minutes',
+        type: 'workflow',
+        position: { x: 1400, y: 170 },
+        data: {
+          kind: 'json',
+          ...nodeMeta.json.defaults,
+          label: '提取离线时长',
+          jsonSource: '{{device_status_json}}',
+          jsonPath: 'offline_minutes',
+          outputKey: 'offline_minutes',
+        },
+      },
+      {
+        id: 'json-alarm',
+        type: 'workflow',
+        position: { x: 1400, y: 300 },
+        data: {
+          kind: 'json',
+          ...nodeMeta.json.defaults,
+          label: '提取告警等级',
+          jsonSource: '{{device_status_json}}',
+          jsonPath: 'alarm_level',
+          outputKey: 'alarm_level',
+        },
+      },
+      {
+        id: 'json-co2',
+        type: 'workflow',
+        position: { x: 1400, y: 430 },
+        data: {
+          kind: 'json',
+          ...nodeMeta.json.defaults,
+          label: '提取 CO2 浓度',
+          jsonSource: '{{device_status_json}}',
+          jsonPath: 'co2_ppm',
+          outputKey: 'co2_ppm',
+        },
+      },
+      {
+        id: 'condition-offline',
+        type: 'workflow',
+        position: { x: 1740, y: 240 },
+        data: {
+          kind: 'condition',
+          ...nodeMeta.condition.defaults,
+          label: '判断是否需要派单',
+          description: '离线设备进入诊断和派单链路；在线设备只输出观察建议。',
+          conditionVariable: 'connection_status',
+          conditionOperator: 'contains',
+          conditionValue: 'offline',
+        },
+      },
+      {
+        id: 'runbook-hit',
+        type: 'workflow',
+        position: { x: 2070, y: 150 },
+        data: {
+          kind: 'assign',
+          ...nodeMeta.assign.defaults,
+          label: '检索楼宇运维知识库',
+          description: '模拟命中 BMS/AHU 离线告警处理手册。',
+          assignmentValue:
+            'KB-BMS-AHU-OFFLINE-003：新风机组控制器离线超过 15 分钟且 BACnet 心跳超时，应优先检查楼层 BMS 网关、弱电间交换机端口、控制器 24V 供电、网线和控制柜空开；若 CO2 超过 1200ppm，需在通讯恢复前安排现场巡检并将新风阀位切到安全开度。P1 告警要求 30 分钟内响应，2 小时内恢复或给出现场结论。',
+          outputKey: 'runbook_context',
+        },
+      },
+      {
+        id: 'llm-diagnosis',
+        type: 'workflow',
+        position: { x: 2430, y: 150 },
+        data: {
+          kind: 'llm',
+          ...nodeMeta.llm.defaults,
+          label: 'LLM 综合诊断',
+          description: '把楼宇设备状态、告警指标和知识库综合成结构化诊断 JSON。',
+          model: 'deepseek-v4-flash',
+          temperature: 0.2,
+          maxOutputTokens: 900,
+          timeoutSeconds: 60,
+          systemPrompt: '你是智能楼宇 BMS 运维专家。只输出合法 JSON，不要 Markdown，不要解释，不要代码块。',
+          prompt:
+            '请根据用户问题、设备状态和运维知识库输出严格 JSON，字段必须包含 diagnosis_summary、root_cause、risk_level、work_order_required、recommended_actions。recommended_actions 必须是 3 条字符串数组。\n\nJSON 示例：{"diagnosis_summary":"摘要","root_cause":"根因判断","risk_level":"P1","work_order_required":true,"recommended_actions":["动作1","动作2","动作3"]}\n\n用户问题：{{user_request}}\n设备状态：{{device_status_json}}\n离线时长：{{offline_minutes}}\n告警等级：{{alarm_level}}\nCO2 浓度：{{co2_ppm}}\n运维知识库：{{runbook_context}}',
+          outputKey: 'diagnosis_json',
+          failurePolicy: 'continue',
+          retryCount: 1,
+        },
+      },
+      {
+        id: 'json-summary',
+        type: 'workflow',
+        position: { x: 2790, y: 20 },
+        data: {
+          kind: 'json',
+          ...nodeMeta.json.defaults,
+          label: '提取诊断摘要',
+          jsonSource: '{{diagnosis_json}}',
+          jsonPath: 'diagnosis_summary',
+          outputKey: 'diagnosis_summary',
+        },
+      },
+      {
+        id: 'json-root-cause',
+        type: 'workflow',
+        position: { x: 2790, y: 150 },
+        data: {
+          kind: 'json',
+          ...nodeMeta.json.defaults,
+          label: '提取根因判断',
+          jsonSource: '{{diagnosis_json}}',
+          jsonPath: 'root_cause',
+          outputKey: 'root_cause',
+        },
+      },
+      {
+        id: 'json-risk',
+        type: 'workflow',
+        position: { x: 2790, y: 280 },
+        data: {
+          kind: 'json',
+          ...nodeMeta.json.defaults,
+          label: '提取风险等级',
+          jsonSource: '{{diagnosis_json}}',
+          jsonPath: 'risk_level',
+          outputKey: 'risk_level',
+        },
+      },
+      {
+        id: 'json-actions',
+        type: 'workflow',
+        position: { x: 2790, y: 410 },
+        data: {
+          kind: 'json',
+          ...nodeMeta.json.defaults,
+          label: '提取处置动作',
+          jsonSource: '{{diagnosis_json}}',
+          jsonPath: 'recommended_actions',
+          outputKey: 'recommended_actions',
+        },
+      },
+      {
+        id: 'action-loop',
+        type: 'workflow',
+        position: { x: 3140, y: 410 },
+        data: {
+          kind: 'loop',
+          ...nodeMeta.loop.defaults,
+          label: '格式化处置动作',
+          loopItems: '{{recommended_actions}}',
+          loopTemplate: '{{index}}. {{item}}',
+          loopSeparator: '\n',
+          outputKey: 'action_lines',
+        },
+      },
+      {
+        id: 'work-order',
+        type: 'workflow',
+        position: { x: 3500, y: 150 },
+        data: {
+          kind: 'template',
+          ...nodeMeta.template.defaults,
+          label: '生成智能楼宇运维工单',
+          description: '把 LLM 诊断结果和楼宇设备信息汇总成可派发工单。',
+          templateText:
+            '智能楼宇运维工单\n工单标题：{{device_sn}} 新风机组控制器离线与 CO2 偏高\n优先级：{{risk_level}}\n派单团队：楼宇自控运维二组\n位置：A 座 18F 东区会议区\nSLA：30 分钟内响应，2 小时内恢复通讯或给出现场结论\n\n诊断摘要：\n{{diagnosis_summary}}\n\n疑似根因：\n{{root_cause}}\n\n建议处置动作：\n{{action_lines}}\n\n原始设备状态：\n{{device_status_json}}',
+          outputKey: 'work_order',
+        },
+      },
+      {
+        id: 'dispatch-output',
+        type: 'workflow',
+        position: { x: 3860, y: 150 },
+        data: {
+          kind: 'output',
+          ...nodeMeta.output.defaults,
+          label: '诊断与派单结果',
+          description: '输出 LLM 结构化诊断和运维工单。',
+          prompt: '{{work_order}}',
+          outputKey: 'answer',
+        },
+      },
+      {
+        id: 'normal-output',
+        type: 'workflow',
+        position: { x: 2070, y: 500 },
+        data: {
+          kind: 'output',
+          ...nodeMeta.output.defaults,
+          label: '无需派单结果',
+          description: '设备在线时输出观察建议。',
+          prompt: '设备 {{device_sn}} 当前状态为 {{connection_status}}，暂不需要派单。建议继续观察 CO2、送风温度和 BACnet 心跳趋势。\n\n设备状态：{{device_status_json}}',
+          outputKey: 'normal_answer',
+        },
+      },
+    ],
+    edges: [
+      { id: 'e-input-llm-intent', source: 'input-1', target: 'llm-intent', animated: true },
+      { id: 'e-llm-intent-mcp', source: 'llm-intent', target: 'mcp-bms-tool', animated: true },
+      { id: 'e-mcp-status', source: 'mcp-bms-tool', target: 'device-status', animated: true },
+      { id: 'e-status-json-device', source: 'device-status', target: 'json-device' },
+      { id: 'e-status-json-status', source: 'device-status', target: 'json-status' },
+      { id: 'e-status-json-minutes', source: 'device-status', target: 'json-minutes' },
+      { id: 'e-status-json-alarm', source: 'device-status', target: 'json-alarm' },
+      { id: 'e-status-json-co2', source: 'device-status', target: 'json-co2' },
+      { id: 'e-status-condition', source: 'json-status', target: 'condition-offline', animated: true },
+      { id: 'e-offline-runbook', source: 'condition-offline', sourceHandle: 'true', target: 'runbook-hit' },
+      { id: 'e-online-output', source: 'condition-offline', sourceHandle: 'false', target: 'normal-output' },
+      { id: 'e-runbook-llm', source: 'runbook-hit', target: 'llm-diagnosis', animated: true },
+      { id: 'e-device-llm', source: 'json-device', target: 'llm-diagnosis' },
+      { id: 'e-minutes-llm', source: 'json-minutes', target: 'llm-diagnosis' },
+      { id: 'e-alarm-llm', source: 'json-alarm', target: 'llm-diagnosis' },
+      { id: 'e-co2-llm', source: 'json-co2', target: 'llm-diagnosis' },
+      { id: 'e-llm-summary', source: 'llm-diagnosis', target: 'json-summary' },
+      { id: 'e-llm-root-cause', source: 'llm-diagnosis', target: 'json-root-cause' },
+      { id: 'e-llm-risk', source: 'llm-diagnosis', target: 'json-risk' },
+      { id: 'e-llm-actions', source: 'llm-diagnosis', target: 'json-actions' },
+      { id: 'e-actions-loop', source: 'json-actions', target: 'action-loop' },
+      { id: 'e-summary-work-order', source: 'json-summary', target: 'work-order' },
+      { id: 'e-root-cause-work-order', source: 'json-root-cause', target: 'work-order' },
+      { id: 'e-risk-work-order', source: 'json-risk', target: 'work-order' },
+      { id: 'e-action-loop-work-order', source: 'action-loop', target: 'work-order' },
+      { id: 'e-work-order-output', source: 'work-order', target: 'dispatch-output' },
+    ],
+  },
 ]
 
 const examples = [
@@ -1831,6 +2160,113 @@ const createWorkflowFromTemplate = (template: WorkflowTemplate): WorkflowRecord 
 
 const renderTemplate = (template: string | undefined, context: Record<string, string>) =>
   (template ?? '').replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (_, key: string) => context[key] ?? '')
+
+const compactText = (value: string, limit = 42) => {
+  const text = value.replace(/\s+/g, ' ').trim()
+  return text.length <= limit ? text : `${text.slice(0, limit)}...`
+}
+
+const createJsonLlmFallback = (prompt: string, context: Record<string, string>) => {
+  if (prompt.includes('智能楼宇设备识别')) {
+    return [
+      '识别结果：',
+      '- 楼栋：A 座',
+      '- 楼层：18F',
+      '- 设备编号：AHU-18F-07',
+      '- 异常类型：设备离线、CO2 偏高',
+      '- 建议调用 MCP 工具：mcp.building_bms.get_device_status',
+      '- 查询参数：{"device_id":"AHU-18F-07","building":"A座","floor":"18F"}',
+    ].join('\n')
+  }
+  if (prompt.includes('简版智能楼宇诊断')) {
+    const deviceSn = context.device_sn || 'AHU-18F-07'
+    return `诊断结论：${deviceSn} 是 A 座 18F 会议区的新风机组控制器，当前已离线约 30 分钟，同时 CO2 偏高，建议按 P1 处理。\n\n可能原因：BMS 网关或 BACnet 通讯链路异常，也可能是弱电间交换机端口、控制器供电或网线松动导致。\n\n建议动作：1. 远程检查 BMS 网关在线状态；2. 现场检查控制器供电和交换机端口；3. 通讯恢复前安排物业巡检会议区空气质量，并派单给楼宇自控运维二组。`
+  }
+  if (
+    ['diagnosis_summary', 'root_cause', 'risk_level', 'work_order_required', 'recommended_actions'].every((field) =>
+      prompt.includes(field),
+    )
+  ) {
+    const deviceSn = context.device_sn || context.device_id || 'UNKNOWN'
+    const offlineMinutes = context.offline_minutes || '0'
+    const alarmLevel = context.alarm_level || 'P2'
+    const co2Ppm = context.co2_ppm || '未知'
+    return JSON.stringify({
+      diagnosis_summary: `智能楼宇设备 ${deviceSn} 当前离线 ${offlineMinutes} 分钟，会议区 CO2=${co2Ppm}ppm，告警等级 ${alarmLevel}，需要优先处置。`,
+      root_cause: 'BMS 网关心跳超时并伴随 BACnet 通讯抖动，优先怀疑楼层弱电间交换机端口、控制器供电或网关链路异常。',
+      risk_level: alarmLevel,
+      work_order_required: true,
+      recommended_actions: [
+        '远程检查 BMS-GW-A-18F-02 网关在线状态和 BACnet 轮询日志。',
+        '现场核验 A 座 18F 弱电间交换机 Gi1/0/18 端口、控制器供电和网线连接。',
+        '在恢复通讯前将会议区新风阀位切到安全开度，并安排物业巡检 CO2 和温度体感。',
+      ],
+    })
+  }
+  if (!['title', 'script', 'image_prompt', 'caption'].every((field) => prompt.includes(field))) return ''
+  const request =
+    context.campaign_request || context.voice_request || context.user_request || compactText(prompt, 80)
+  const subject = compactText(request, 36)
+  return JSON.stringify({
+    title: `${subject}短视频素材方案`,
+    script: `这是一段围绕${request}的短视频口播，突出核心卖点、目标受众和使用场景，语气自然，结尾引导用户了解、预约或下单。`,
+    image_prompt: `中文商品营销封面配图，主题是${request}，画面干净专业，突出产品、目标受众、核心卖点和可读标题，适合短视频封面。`,
+    caption: `${request} 发布文案：把亮点讲清楚，把场景拍真实，适合发布到短视频平台。`,
+    publish_checklist: ['检查口播节奏', '确认图片不含违规元素', '发布前补充商品链接或预约入口'],
+  })
+}
+
+const createMcpToolFallback = (toolName: string | undefined, params: string) => {
+  if (toolName !== 'mcp.building_bms.get_device_status') return ''
+  let parsedParams: Record<string, unknown> = {}
+  try {
+    parsedParams = params.trim() ? (JSON.parse(params) as Record<string, unknown>) : {}
+  } catch {
+    parsedParams = {}
+  }
+  const deviceId = String(parsedParams.device_id || 'AHU-18F-07')
+  const building = String(parsedParams.building || 'A座')
+  const floor = String(parsedParams.floor || '18F')
+  return JSON.stringify(
+    {
+      tool: 'mcp.building_bms.get_device_status',
+      status: 'ok',
+      query: parsedParams,
+      data: {
+        device_id: deviceId,
+        device_name: `${building}${floor}新风机组控制器`,
+        system: 'HVAC/BMS',
+        building,
+        floor,
+        area: '东区会议区',
+        gateway_id: 'BMS-GW-A-18F-02',
+        switch_port: 'Gi1/0/18',
+        connection_status: 'offline',
+        offline_minutes: 31,
+        last_seen: '2026-07-14 09:02:18',
+        alarm_level: 'P1',
+        alarm_code: 'BACNET_HEARTBEAT_TIMEOUT',
+        bacnet_status: 'timeout',
+        mqtt_status: 'disconnected',
+        co2_ppm: 1380,
+        supply_air_temp: 19.2,
+        return_air_temp: 26.5,
+        damper_position: 15,
+        fan_status: 'unknown',
+        recent_events: [
+          '08:36 BACnet 轮询延迟 2200ms',
+          '08:47 网关重连 2 次',
+          '09:02 最后一次心跳',
+          '09:05 触发设备离线告警',
+          '09:08 会议区 CO2 超过 1200ppm',
+        ],
+        owner_team: '楼宇自控运维二组',
+      },
+    },
+    null,
+    2,
+  )
+}
 
 const getContextValue = (key: string | undefined, context: Record<string, string>) => {
   if (!key) return ''
@@ -2271,6 +2707,7 @@ function App() {
   const [runHistory, setRunHistory] = useState<ServerRunRecord[]>([])
   const [selectedRunId, setSelectedRunId] = useState('')
   const [runInput, setRunInput] = useState(examples[0])
+  const [selectedWorkflowIds, setSelectedWorkflowIds] = useState<string[]>([])
   const [notice, setNotice] = useState('已加载本地工作流列表。')
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => loadAuthSession())
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login')
@@ -2328,7 +2765,7 @@ function App() {
   const nextNodeId = useRef(1)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const knowledgeFileInputRef = useRef<HTMLInputElement | null>(null)
-  const flowInstanceRef = useRef<{ setCenter: (x: number, y: number, options?: { duration?: number; zoom?: number }) => void } | null>(null)
+  const flowInstanceRef = useRef<FlowCanvasController | null>(null)
   const didAutoLoadBackendRef = useRef(false)
 
   const activeWorkflow =
@@ -2362,6 +2799,19 @@ function App() {
         .includes(keyword)
     })
   }, [runHistory, runHistorySearch, runHistoryStatusFilter])
+  const selectedWorkflowIdSet = useMemo(() => new Set(selectedWorkflowIds), [selectedWorkflowIds])
+  const selectedWorkflows = useMemo(
+    () => workflowStore.workflows.filter((workflow) => selectedWorkflowIdSet.has(workflow.id)),
+    [selectedWorkflowIdSet, workflowStore.workflows],
+  )
+  const selectedWorkflowDeleteBlockReason = useMemo(() => {
+    if (selectedWorkflows.length === 0) return ''
+    const selectedIds = new Set(selectedWorkflows.map((workflow) => workflow.id))
+    const remaining = workflowStore.workflows.filter((workflow) => !selectedIds.has(workflow.id))
+    if (remaining.length === 0) return '至少保留一个工作流'
+    if (!remaining.some((workflow) => !workflow.archived)) return '至少保留一个未归档工作流'
+    return ''
+  }, [selectedWorkflows, workflowStore.workflows])
   const selectedRunRecord = runHistory.find((run) => run.id === selectedRunId)
   const selectedRunErrorCount = selectedRunRecord?.steps.filter((step) => step.status === 'error').length ?? 0
   const selectedRunDoneCount = selectedRunRecord?.steps.filter((step) => step.status === 'done' || step.status === 'routed').length ?? 0
@@ -2885,6 +3335,27 @@ function App() {
       zoom: 0.95,
     })
     setNotice(`已定位到节点：${node.data.label}`)
+  }
+
+  const centerWorkflowCanvas = () => {
+    const instance = flowInstanceRef.current
+    if (!instance) {
+      setNotice('画布还没有准备好，请稍后再试。')
+      return
+    }
+
+    if (nodes.length === 0) {
+      instance.setCenter(0, 0, { duration: 500, zoom: 1 })
+      setNotice('已将画布居中到原点。')
+      return
+    }
+
+    void instance.fitView({
+      duration: 500,
+      maxZoom: 1,
+      padding: 0.18,
+    })
+    setNotice('已将工作流画布居中。')
   }
 
   const refreshProviderStatus = async (showNotice = true) => {
@@ -3723,6 +4194,38 @@ function App() {
     }
   }
 
+  const ensureActiveWorkflowSyncedForBackendRun = async (action: string): Promise<WorkflowRecord | null> => {
+    if (activeWorkflow.serverId && activeWorkflowSyncState === 'synced') return activeWorkflow
+
+    const issues = await validateActiveWorkflow()
+    if (showBlockingIssues(issues, action)) return null
+
+    try {
+      const syncedWorkflow = await syncWorkflowToBackend(activeWorkflow)
+      const next = {
+        ...workflowStore,
+        workflows: workflowStore.workflows.map((workflow) =>
+          workflow.id === activeWorkflow.id ? syncedWorkflow : workflow,
+        ),
+      }
+      setWorkflowStore(next)
+      persistWorkflowStore(next)
+      setBackendStatus('online')
+      setLastBackendSyncAt(syncedWorkflow.syncedAt ?? new Date().toISOString())
+      return syncedWorkflow
+    } catch (error) {
+      if (error instanceof Error && error.message === 'remote_newer') {
+        setBackendStatus('online')
+        setNotice('后端版本比本地更新，已停止自动同步。请先点击“从后端加载”确认最新内容。')
+        return null
+      }
+      if (error instanceof Error && error.message === 'validation failed') return null
+      setBackendStatus('offline')
+      setNotice(`${action}失败：自动同步到后端时出错，请确认后端在线。`)
+      return null
+    }
+  }
+
   const syncPendingWorkflowsToBackend = async () => {
     const pendingWorkflows = workflowStore.workflows.filter(
       (workflow) => !workflow.archived && getWorkflowSyncState(workflow) !== 'synced',
@@ -4046,19 +4549,12 @@ function App() {
   }
 
   const runWorkflowAsyncOnBackend = async () => {
-    if (!activeWorkflow.serverId) {
-      setNotice('请先点击“同步到后端”，再使用异步运行。')
-      return
-    }
-    if (activeWorkflowSyncState === 'dirty') {
-      setNotice('当前工作流有未同步改动。请先同步到后端，再使用异步运行。')
-      return
-    }
-    const issues = await validateActiveWorkflow()
-    if (showBlockingIssues(issues, '异步运行')) return
+    const runnableWorkflow = await ensureActiveWorkflowSyncedForBackendRun('异步运行')
+    if (!runnableWorkflow?.serverId) return
 
     try {
-      const response = await apiFetch(`/api/workflows/${activeWorkflow.serverId}/run-jobs`, {
+      setNotice('正在同步并提交到异步运行队列...')
+      const response = await apiFetch(`/api/workflows/${runnableWorkflow.serverId}/run-jobs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ input_text: runInput }),
@@ -4300,6 +4796,80 @@ function App() {
     setNotice('已复制当前工作流。')
   }
 
+  const toggleWorkflowSelection = (workflowId: string) => {
+    setSelectedWorkflowIds((current) =>
+      current.includes(workflowId) ? current.filter((id) => id !== workflowId) : [...current, workflowId],
+    )
+  }
+
+  const selectVisibleWorkflows = () => {
+    setSelectedWorkflowIds(visibleWorkflows.map((workflow) => workflow.id))
+  }
+
+  const clearWorkflowSelection = () => {
+    setSelectedWorkflowIds([])
+  }
+
+  const deleteSelectedWorkflows = async () => {
+    if (selectedWorkflows.length === 0) {
+      setNotice('请先选择要删除的工作流。')
+      return
+    }
+    if (selectedWorkflowDeleteBlockReason) {
+      setNotice(`无法批量删除：${selectedWorkflowDeleteBlockReason}。`)
+      return
+    }
+    if (!window.confirm(`确定删除选中的 ${selectedWorkflows.length} 个工作流吗？此操作不可撤销。`)) {
+      return
+    }
+
+    const selectedIds = new Set(selectedWorkflows.map((workflow) => workflow.id))
+    const remaining = workflowStore.workflows.filter((workflow) => !selectedIds.has(workflow.id))
+    if (remaining.length === 0) {
+      setNotice('至少保留一个工作流，不能删除全部工作流。')
+      return
+    }
+    if (!remaining.some((workflow) => !workflow.archived)) {
+      setNotice('至少保留一个未归档工作流，不能删除全部可用工作流。')
+      return
+    }
+
+    const remoteWorkflows = selectedWorkflows.filter((workflow) => workflow.serverId)
+    if (remoteWorkflows.length > 0) {
+      try {
+        await Promise.all(
+          remoteWorkflows.map(async (workflow) => {
+            const response = await apiFetch(`/api/workflows/${workflow.serverId}`, { method: 'DELETE' })
+            if (!response.ok && response.status !== 404) throw new Error('delete failed')
+          }),
+        )
+        setBackendStatus('online')
+      } catch {
+        setBackendStatus('offline')
+        setNotice('批量删除失败：后端不可用或请求失败，本地工作流已保留。')
+        return
+      }
+    }
+
+    const nextActive = selectedIds.has(activeWorkflow.id)
+      ? remaining.find((workflow) => !workflow.archived) ?? remaining[0]
+      : activeWorkflow
+    const next = {
+      activeWorkflowId: nextActive.id,
+      workflows: remaining,
+    }
+    setWorkflowStore(next)
+    persistWorkflowStore(next)
+    setSelectedWorkflowIds([])
+    setSelectedNodeId(nextActive.nodes[0]?.id ?? '')
+    if (selectedIds.has(activeWorkflow.id)) {
+      setRunSteps([])
+      setRunHistory([])
+      setSelectedRunId('')
+    }
+    setNotice(`已删除 ${selectedWorkflows.length} 个工作流${remoteWorkflows.length ? '，并同步删除后端记录' : ''}。`)
+  }
+
   const deleteWorkflow = async () => {
     if (workflowStore.workflows.length === 1) {
       setNotice('至少保留一个工作流，不能删除最后一个。')
@@ -4333,6 +4903,7 @@ function App() {
     }
     setWorkflowStore(next)
     persistWorkflowStore(next)
+    setSelectedWorkflowIds((current) => current.filter((id) => id !== activeWorkflow.id))
     setSelectedNodeId(nextActive.nodes[0]?.id ?? '')
     setRunSteps([])
     setRunHistory([])
@@ -4604,7 +5175,9 @@ function App() {
       if (data.kind === 'llm') {
         const systemPrompt = renderTemplate(data.systemPrompt, context)
         const prompt = renderTemplate(data.prompt, context)
-        const output = `模型 ${data.model ?? '未指定'} 根据系统提示和用户提示生成草稿：${prompt.slice(0, 120)}`
+        const output =
+          createJsonLlmFallback(prompt, context) ||
+          `模型 ${data.model ?? '未指定'} 根据系统提示和用户提示生成草稿：${prompt.slice(0, 120)}`
         steps.push({
           nodeId: node.id,
           title: `${index + 1}. ${data.label}`,
@@ -4612,6 +5185,7 @@ function App() {
           input: [systemPrompt, prompt].filter(Boolean).join('\n\n') || '未配置提示词',
           output,
           variable: writeOutput(output),
+          provider: '浏览器本地模拟',
         })
         return
       }
@@ -4619,7 +5193,9 @@ function App() {
       if (data.kind === 'tool') {
         const params = renderTemplate(data.toolParams, context)
         const input = params || JSON.stringify(context, null, 2)
-        const output = `${data.toolName ?? '未命名工具'} 返回模拟结果，已读取 ${Object.keys(context).length} 个变量。`
+        const output =
+          createMcpToolFallback(data.toolName, params) ||
+          `${data.toolName ?? '未命名工具'} 返回模拟结果，已读取 ${Object.keys(context).length} 个变量。`
         steps.push({
           nodeId: node.id,
           title: `${index + 1}. ${data.label}`,
@@ -4627,6 +5203,7 @@ function App() {
           input,
           output,
           variable: writeOutput(output),
+          provider: data.toolName?.startsWith('mcp.') ? '浏览器本地模拟 MCP' : '浏览器本地模拟工具',
         })
         return
       }
@@ -4910,30 +5487,61 @@ function App() {
               显示归档
             </label>
           </div>
+          <div className="workflow-bulk-actions">
+            <span className={clsx(selectedWorkflowDeleteBlockReason && 'blocked')}>
+              {selectedWorkflows.length > 0 ? `已选择 ${selectedWorkflows.length} 个` : `当前列表 ${visibleWorkflows.length} 个`}
+              {selectedWorkflowDeleteBlockReason ? ` · ${selectedWorkflowDeleteBlockReason}` : ''}
+            </span>
+            <button type="button" onClick={selectVisibleWorkflows} disabled={visibleWorkflows.length === 0}>
+              全选
+            </button>
+            <button type="button" onClick={clearWorkflowSelection} disabled={selectedWorkflows.length === 0}>
+              清空
+            </button>
+            <button
+              type="button"
+              className="danger"
+              onClick={deleteSelectedWorkflows}
+              disabled={selectedWorkflows.length === 0 || Boolean(selectedWorkflowDeleteBlockReason)}
+              title={selectedWorkflowDeleteBlockReason || '删除选中的工作流'}
+            >
+              <Trash2 size={13} />
+              批量删除
+            </button>
+          </div>
           <div className="workflow-list">
             {visibleWorkflows.length > 0 ? (
               visibleWorkflows.map((workflow) => {
                 const syncState = getWorkflowSyncState(workflow)
+                const selected = selectedWorkflowIdSet.has(workflow.id)
                 return (
-                  <button
-                    key={workflow.id}
-                    type="button"
-                    className={clsx(
-                      workflow.id === activeWorkflow.id && 'active',
-                      workflow.archived && 'archived',
-                      `sync-${syncState}`,
-                    )}
-                    onClick={() => switchWorkflow(workflow.id)}
-                  >
-                    <span>
-                      {workflow.name}
-                      {workflow.archived && <em>归档</em>}
-                    </span>
-                    <small>
-                      <time>{new Date(workflow.updatedAt).toLocaleString('zh-CN')}</time>
-                      <b className={clsx('workflow-sync-badge', syncState)}>{workflowSyncLabels[syncState]}</b>
-                    </small>
-                  </button>
+                  <div key={workflow.id} className={clsx('workflow-list-row', selected && 'selected')}>
+                    <label className="workflow-select" title="选择工作流">
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={() => toggleWorkflowSelection(workflow.id)}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className={clsx(
+                        workflow.id === activeWorkflow.id && 'active',
+                        workflow.archived && 'archived',
+                        `sync-${syncState}`,
+                      )}
+                      onClick={() => switchWorkflow(workflow.id)}
+                    >
+                      <span>
+                        {workflow.name}
+                        {workflow.archived && <em>归档</em>}
+                      </span>
+                      <small>
+                        <time>{new Date(workflow.updatedAt).toLocaleString('zh-CN')}</time>
+                        <b className={clsx('workflow-sync-badge', syncState)}>{workflowSyncLabels[syncState]}</b>
+                      </small>
+                    </button>
+                  </div>
                 )
               })
             ) : (
@@ -5054,6 +5662,10 @@ function App() {
             <button type="button" className="ghost" onClick={exportWorkflow}>
               <Download size={17} />
               导出
+            </button>
+            <button type="button" className="ghost" onClick={centerWorkflowCanvas}>
+              <Maximize2 size={17} />
+              居中
             </button>
             <button type="button" className="ghost" onClick={resetWorkflow}>
               <Trash2 size={17} />

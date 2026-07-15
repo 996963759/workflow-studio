@@ -138,6 +138,38 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(body["database"], "postgresql")
         self.assertEqual(body["queue_backend"], "thread")
 
+    def test_mock_building_bms_mcp_tool(self) -> None:
+        response = self.client.post(
+            "/mcp/building-bms/get-device-status",
+            json={"device_id": "AHU-18F-07", "building": "A座", "floor": "18F"},
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["tool"], "mcp.building_bms.get_device_status")
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["data"]["device_id"], "AHU-18F-07")
+        self.assertEqual(body["data"]["connection_status"], "offline")
+
+    def test_mcp_tool_list_and_named_call(self) -> None:
+        list_response = self.client.get("/mcp/tools")
+        self.assertEqual(list_response.status_code, 200)
+        tool_names = [tool["name"] for tool in list_response.json()["tools"]]
+        self.assertIn("mcp.building_bms.get_device_status", tool_names)
+
+        call_response = self.client.post(
+            "/mcp/tools/mcp/building_bms/get_device_status/call",
+            json={"device_id": "AHU-18F-07", "building": "A座", "floor": "18F"},
+        )
+        self.assertEqual(call_response.status_code, 200)
+        body = call_response.json()
+        self.assertEqual(body["tool"], "mcp.building_bms.get_device_status")
+        self.assertEqual(body["data"]["alarm_level"], "P1")
+
+    def test_container_api_fallback_url_rewrites_localhost_tool_url(self) -> None:
+        rewritten = runner.container_api_fallback_url("http://127.0.0.1:8000/mcp/building-bms/get-device-status")
+        self.assertEqual(rewritten, "http://api:8000/mcp/building-bms/get-device-status")
+        self.assertIsNone(runner.container_api_fallback_url("http://127.0.0.1:5173/mcp/building-bms/get-device-status"))
+
     def test_admin_overview_reports_workspace_status(self) -> None:
         response = self.client.get("/api/admin/overview", headers=self.auth_headers)
         self.assertEqual(response.status_code, 200)
@@ -367,6 +399,98 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(steps[1]["kind"], "tool")
         self.assertEqual(steps[1]["attempt_count"], 3)
         self.assertGreaterEqual(steps[1]["duration_ms"], 0)
+
+    def test_mcp_tool_node_result_feeds_json_node(self) -> None:
+        workflow = {
+            **valid_workflow(),
+            "nodes": [
+                {
+                    "id": "input-1",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"kind": "input", "label": "用户输入", "outputKey": "user_request"},
+                },
+                {
+                    "id": "mcp-1",
+                    "position": {"x": 240, "y": 0},
+                    "data": {
+                        "kind": "tool",
+                        "label": "MCP 查询",
+                        "toolName": "mcp.building_bms.get_device_status",
+                        "toolUrl": "",
+                        "toolMethod": "POST",
+                        "toolHeaders": "{}",
+                        "toolParams": '{"device_id":"AHU-18F-07","building":"A座","floor":"18F"}',
+                        "outputKey": "mcp_result",
+                    },
+                },
+                {
+                    "id": "json-1",
+                    "position": {"x": 480, "y": 0},
+                    "data": {
+                        "kind": "json",
+                        "label": "读取状态",
+                        "jsonSource": "{{mcp_result}}",
+                        "jsonPath": "data.connection_status",
+                        "outputKey": "connection_status",
+                    },
+                },
+                {
+                    "id": "output-1",
+                    "position": {"x": 720, "y": 0},
+                    "data": {
+                        "kind": "output",
+                        "label": "最终输出",
+                        "prompt": "{{connection_status}}",
+                        "outputKey": "answer",
+                    },
+                },
+            ],
+            "edges": [
+                {"id": "e1", "source": "input-1", "target": "mcp-1"},
+                {"id": "e2", "source": "mcp-1", "target": "json-1"},
+                {"id": "e3", "source": "json-1", "target": "output-1"},
+            ],
+        }
+
+        response = self.client.post(
+            "/api/runs",
+            json={"workflow": workflow, "input_text": "查询楼宇设备"},
+            headers=self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        steps = response.json()["steps"]
+        self.assertEqual(steps[1]["status"], "done")
+        self.assertEqual(steps[1]["provider"], "MCP 工具")
+        self.assertIn('"tool": "mcp.building_bms.get_device_status"', steps[1]["output"])
+        self.assertEqual(steps[2]["output"], "offline")
+        self.assertEqual(steps[3]["output"], "offline")
+
+    def test_mcp_tool_node_tolerates_unescaped_llm_context_in_params(self) -> None:
+        output, step_input, error = runner.run_mcp_tool_node(
+            {
+                "toolName": "mcp.building_bms.get_device_status",
+                "toolParams": (
+                    '{\n'
+                    '  "device_id": "AHU-18F-07",\n'
+                    '  "building": "A-Zone",\n'
+                    '  "floor": "18F",\n'
+                    '  "source": "{{device_query}}"\n'
+                    '}'
+                ),
+            },
+            {
+                "device_query": (
+                    "Intent result:\n"
+                    '- query params: {"device_id":"AHU-18F-07","building":"A-Zone","floor":"18F"}'
+                )
+            },
+        )
+
+        self.assertIsNone(error)
+        self.assertIn('"tool": "mcp.building_bms.get_device_status"', output)
+        self.assertIn('"device_id": "AHU-18F-07"', output)
+        self.assertIn('"source"', step_input)
 
     def test_workflow_crud_persists_archive_state(self) -> None:
         create_response = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers)
@@ -1136,6 +1260,76 @@ class ApiTestCase(unittest.TestCase):
         self.assertIn("阿里云 TTS 未配置 Key", steps[1]["output"])
         self.assertEqual(steps[2]["provider"], "模拟输出")
         self.assertIn("阿里云图片生成未配置 Key", steps[2]["output"])
+
+    def test_json_llm_template_falls_back_to_parseable_json_without_key(self) -> None:
+        previous_deepseek = os.environ.pop("DEEPSEEK_API_KEY", None)
+        previous_openai = os.environ.pop("OPENAI_API_KEY", None)
+        workflow = {
+            **valid_workflow(),
+            "nodes": [
+                {
+                    "id": "input-1",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"kind": "input", "label": "素材需求", "outputKey": "campaign_request"},
+                },
+                {
+                    "id": "llm-1",
+                    "position": {"x": 260, "y": 0},
+                    "data": {
+                        "kind": "llm",
+                        "label": "生成素材 JSON",
+                        "model": "deepseek-v4-flash",
+                        "prompt": (
+                            "根据需求输出严格 JSON，字段必须包含 title、script、image_prompt、caption、publish_checklist。"
+                            "需求：{{campaign_request}}"
+                        ),
+                        "outputKey": "content_json",
+                    },
+                },
+                {
+                    "id": "json-script",
+                    "position": {"x": 520, "y": 0},
+                    "data": {
+                        "kind": "json",
+                        "label": "提取口播",
+                        "jsonSource": "{{content_json}}",
+                        "jsonPath": "script",
+                        "outputKey": "script",
+                    },
+                },
+                {
+                    "id": "output-1",
+                    "position": {"x": 780, "y": 0},
+                    "data": {"kind": "output", "label": "最终输出", "prompt": "{{script}}", "outputKey": "answer"},
+                },
+            ],
+            "edges": [
+                {"id": "e1", "source": "input-1", "target": "llm-1"},
+                {"id": "e2", "source": "llm-1", "target": "json-script"},
+                {"id": "e3", "source": "json-script", "target": "output-1"},
+            ],
+        }
+        try:
+            run = self.client.post(
+                "/api/runs",
+                json={
+                    "workflow": workflow,
+                    "input_text": "为咖啡店新品燕麦拿铁生成一套短视频素材，面向上班族。",
+                },
+                headers=self.auth_headers,
+            )
+        finally:
+            if previous_deepseek is not None:
+                os.environ["DEEPSEEK_API_KEY"] = previous_deepseek
+            if previous_openai is not None:
+                os.environ["OPENAI_API_KEY"] = previous_openai
+
+        self.assertEqual(run.status_code, 200)
+        body = run.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["steps"][1]["provider"], "模拟输出")
+        self.assertEqual(body["steps"][2]["status"], "done")
+        self.assertIn("燕麦拿铁", body["steps"][3]["output"])
 
     def test_orchestration_nodes_transform_and_aggregate_context(self) -> None:
         workflow = {

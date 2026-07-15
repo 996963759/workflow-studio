@@ -63,6 +63,33 @@ const isSimulatedAudioStep = (step: RunStep) =>
 
 const isImageUrl = (value: string) => /\.(png|jpe?g|webp|gif)(\?|$)/i.test(value)
 
+const isFinalOutputStep = (step: RunStep) => {
+  if (step.status !== 'done') return false
+  const variable = step.variable ?? ''
+  return (
+    step.kind === 'output' ||
+    /\{\{\s*(answer|final_answer|result|output)\s*\}\}/i.test(variable) ||
+    /最终|回答|结果|派单|工单|输出/.test(step.title)
+  )
+}
+
+const formatDuration = (durationMs: number | undefined) => {
+  if (durationMs === undefined || durationMs === null) return '未记录'
+  return durationMs <= 0 ? '<1ms' : `${durationMs}ms`
+}
+
+const getFinalRunOutput = (steps: RunStep[]) => {
+  const successfulSteps = steps.filter((step) => step.status === 'done' && step.output?.trim())
+  const finalStep = [...successfulSteps].reverse().find(isFinalOutputStep) ?? successfulSteps.at(-1)
+  return finalStep
+    ? {
+        title: finalStep.title.replace(/^\d+\.\s*/, ''),
+        output: finalStep.output,
+        variable: finalStep.variable,
+      }
+    : null
+}
+
 export function RunHistoryPanel({
   runHistory,
   visibleRunHistory,
@@ -82,6 +109,8 @@ export function RunHistoryPanel({
   onCopyText,
   formatProviderBreakdown,
 }: RunHistoryPanelProps) {
+  const finalOutput = getFinalRunOutput(runSteps)
+
   return (
     <>
       <div className="run-history-tools">
@@ -172,6 +201,22 @@ export function RunHistoryPanel({
                 复制整次结果
               </button>
             </div>
+            {finalOutput && (
+              <section className="final-run-output">
+                <div className="final-run-output-header">
+                  <div>
+                    <span>最终结果</span>
+                    <strong>{finalOutput.title}</strong>
+                  </div>
+                  <button type="button" onClick={() => onCopyText('最终结果', finalOutput.output)}>
+                    <Copy size={12} />
+                    复制
+                  </button>
+                </div>
+                <pre>{finalOutput.output}</pre>
+                {finalOutput.variable && <small>写入变量：{finalOutput.variable}</small>}
+              </section>
+            )}
             {runSteps.map((step) => {
               const stepId = step.nodeId ?? step.node_id ?? step.title
               const outputUrl = extractFirstUrl(step.output)
@@ -185,7 +230,8 @@ export function RunHistoryPanel({
                     <strong>{step.title}</strong>
                     <div className="run-step-meta">
                       {step.kind && <span>{step.kind}</span>}
-                      <span>耗时 {step.duration_ms ?? 0}ms</span>
+                      {step.provider && <span>来源 {step.provider}</span>}
+                      <span>耗时 {formatDuration(step.duration_ms)}</span>
                       <span>尝试 {step.attempt_count ?? 1} 次</span>
                     </div>
                     <dl>

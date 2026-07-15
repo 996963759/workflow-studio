@@ -1,16 +1,18 @@
 import os
 import json
+import re
 import time
 from collections import defaultdict, deque
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 from urllib.request import Request, urlopen
 
 from openai import OpenAI, OpenAIError
 
 from .external_rag import search_paismart
 from .knowledge import search_knowledge
+from .mcp_tools import call_mcp_tool, format_mcp_result, is_mcp_tool_name
 from .models import RunResponse, RunStep, WorkflowPayload
 from .providers.aliyun import (
     AliyunProviderError,
@@ -22,7 +24,7 @@ from .providers.aliyun import (
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
 DEFAULT_OPENAI_MODEL = "gpt-5.4-mini"
-ALLOWED_TOOL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+ALLOWED_TOOL_HOSTS = {"127.0.0.1", "localhost", "::1", "api"}
 TOOL_TIMEOUT_SECONDS = 10
 DEFAULT_TEMPERATURE = 0.4
 DEFAULT_MAX_OUTPUT_TOKENS = 1200
@@ -163,6 +165,75 @@ def format_llm_options(data: dict[str, Any]) -> str:
     return f"参数：temperature={temperature:g}, max_output_tokens={max_output_tokens}, timeout={timeout_seconds:g}s"
 
 
+def compact_text(value: str, limit: int = 42) -> str:
+    text = " ".join(value.split())
+    return text if len(text) <= limit else f"{text[:limit]}..."
+
+
+def json_llm_fallback(prompt: str, context: dict[str, str]) -> str | None:
+    if "智能楼宇设备识别" in prompt:
+        return "\n".join(
+            [
+                "识别结果：",
+                "- 楼栋：A 座",
+                "- 楼层：18F",
+                "- 设备编号：AHU-18F-07",
+                "- 异常类型：设备离线、CO2 偏高",
+                "- 建议调用 MCP 工具：mcp.building_bms.get_device_status",
+                '- 查询参数：{"device_id":"AHU-18F-07","building":"A座","floor":"18F"}',
+            ]
+        )
+    if "简版智能楼宇诊断" in prompt:
+        device_sn = context.get("device_sn") or "AHU-18F-07"
+        return (
+            f"诊断结论：{device_sn} 是 A 座 18F 会议区的新风机组控制器，当前已离线约 30 分钟，同时 CO2 偏高，建议按 P1 处理。\n\n"
+            "可能原因：BMS 网关或 BACnet 通讯链路异常，也可能是弱电间交换机端口、控制器供电或网线松动导致。\n\n"
+            "建议动作：1. 远程检查 BMS 网关在线状态；2. 现场检查控制器供电和交换机端口；"
+            "3. 通讯恢复前安排物业巡检会议区空气质量，并派单给楼宇自控运维二组。"
+        )
+    if all(
+        field in prompt
+        for field in ["diagnosis_summary", "root_cause", "risk_level", "work_order_required", "recommended_actions"]
+    ):
+        device_sn = context.get("device_sn") or context.get("device_id") or "UNKNOWN"
+        offline_minutes = context.get("offline_minutes") or "0"
+        alarm_level = context.get("alarm_level") or "P2"
+        co2_ppm = context.get("co2_ppm") or "未知"
+        return json.dumps(
+            {
+                "diagnosis_summary": f"智能楼宇设备 {device_sn} 当前离线 {offline_minutes} 分钟，会议区 CO2={co2_ppm}ppm，告警等级 {alarm_level}，需要优先处置。",
+                "root_cause": "BMS 网关心跳超时并伴随 BACnet 通讯抖动，优先怀疑楼层弱电间交换机端口、控制器供电或网关链路异常。",
+                "risk_level": alarm_level,
+                "work_order_required": True,
+                "recommended_actions": [
+                    "远程检查 BMS-GW-A-18F-02 网关在线状态和 BACnet 轮询日志。",
+                    "现场核验 A 座 18F 弱电间交换机 Gi1/0/18 端口、控制器供电和网线连接。",
+                    "在恢复通讯前将会议区新风阀位切到安全开度，并安排物业巡检 CO2 和温度体感。",
+                ],
+            },
+            ensure_ascii=False,
+        )
+    if not all(field in prompt for field in ["title", "script", "image_prompt", "caption"]):
+        return None
+    request = (
+        context.get("campaign_request")
+        or context.get("voice_request")
+        or context.get("user_request")
+        or compact_text(prompt, 80)
+    )
+    subject = compact_text(request, 36)
+    return json.dumps(
+        {
+            "title": f"{subject}短视频素材方案",
+            "script": f"这是一段围绕{request}的短视频口播，突出核心卖点、目标受众和使用场景，语气自然，结尾引导用户了解、预约或下单。",
+            "image_prompt": f"中文商品营销封面配图，主题是{request}，画面干净专业，突出产品、目标受众、核心卖点和可读标题，适合短视频封面。",
+            "caption": f"{request} 发布文案：把亮点讲清楚，把场景拍真实，适合发布到短视频平台。",
+            "publish_checklist": ["检查口播节奏", "确认图片不含违规元素", "发布前补充商品链接或预约入口"],
+        },
+        ensure_ascii=False,
+    )
+
+
 def retry_count(data: dict[str, Any]) -> int:
     try:
         value = int(data.get("retryCount") or 0)
@@ -294,6 +365,20 @@ def is_allowed_tool_url(url: str) -> bool:
     return parsed.scheme in {"http", "https"} and parsed.hostname in ALLOWED_TOOL_HOSTS
 
 
+def container_api_fallback_url(url: str) -> str | None:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    if parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+        return None
+    if parsed.port not in {8000, None}:
+        return None
+    netloc = "api:8000" if not parsed.username else ""
+    if not netloc:
+        return None
+    return urlunparse(parsed._replace(netloc=netloc))
+
+
 def run_http_tool_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, str, str | None]:
     tool_url = render_template(data.get("toolUrl"), context).strip()
     method = str(data.get("toolMethod") or "GET").upper()
@@ -308,7 +393,7 @@ def run_http_tool_node(data: dict[str, Any], context: dict[str, str]) -> tuple[s
         raise ValueError(f"Unsupported HTTP method: {method}")
 
     if not is_allowed_tool_url(tool_url):
-        raise ValueError("Tool URL is blocked. Only localhost and 127.0.0.1 are allowed by default.")
+        raise ValueError("Tool URL is blocked. Only localhost, 127.0.0.1, ::1 and compose service api are allowed by default.")
 
     headers = {str(key): str(value) for key, value in parse_json_object(headers_text).items()}
     data_bytes = None
@@ -336,7 +421,51 @@ def run_http_tool_node(data: dict[str, Any], context: dict[str, str]) -> tuple[s
         output = f"HTTP {error.code} {error.reason}\n{response_body}"
         return output.strip(), step_input, summarize_error(error)
     except URLError as error:
+        fallback_url = container_api_fallback_url(tool_url)
+        if fallback_url and is_allowed_tool_url(fallback_url):
+            fallback_request = Request(fallback_url, data=data_bytes, headers=headers, method=method)
+            fallback_step_input = f"{step_input}\n容器内重试：{method} {fallback_url}"
+            try:
+                with urlopen(fallback_request, timeout=TOOL_TIMEOUT_SECONDS) as response:
+                    response_body = response.read().decode("utf-8", errors="replace")
+                    output = f"HTTP {response.status} {response.reason}\n{response_body}"
+                    return output.strip(), fallback_step_input, None
+            except HTTPError as fallback_error:
+                response_body = fallback_error.read().decode("utf-8", errors="replace")
+                output = f"HTTP {fallback_error.code} {fallback_error.reason}\n{response_body}"
+                return output.strip(), fallback_step_input, summarize_error(fallback_error)
+            except URLError:
+                pass
         raise RuntimeError(str(error.reason)) from error
+
+
+def run_mcp_tool_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, str, str | None]:
+    tool_name = str(data.get("toolName") or "").strip()
+    body_text = render_template(data.get("toolParams"), context)
+    try:
+        arguments = parse_json_object(body_text)
+    except (json.JSONDecodeError, ValueError):
+        if tool_name != "mcp.building_bms.get_device_status":
+            raise
+        arguments = {
+            "device_id": extract_json_string_field(body_text, "device_id") or "AHU-18F-07",
+            "building": extract_json_string_field(body_text, "building") or "A座",
+            "floor": extract_json_string_field(body_text, "floor") or "18F",
+            "source": context.get("device_query", ""),
+        }
+    result = call_mcp_tool(tool_name, arguments)
+    step_input = "\n".join(
+        [
+            f"Tool: {tool_name}",
+            f"Arguments: {json.dumps(arguments, ensure_ascii=False)}",
+        ]
+    )
+    return format_mcp_result(result), step_input, None
+
+
+def extract_json_string_field(value: str, field: str) -> str | None:
+    match = re.search(rf'"{re.escape(field)}"\s*:\s*"([^"]*)"', value)
+    return match.group(1) if match else None
 
 
 def select_deepseek_model(configured_model: Any) -> str:
@@ -431,7 +560,7 @@ def run_llm_node(
         except (OpenAIError, RuntimeError) as error:
             model = select_deepseek_model(workspace_deepseek.get("model"))
             reason = summarize_error(error)
-            output = f"DeepSeek 工作区配置 {model} 调用失败，已回退模拟草稿：{prompt[:120]}"
+            output = json_llm_fallback(prompt, context) or f"DeepSeek 工作区配置 {model} 调用失败，已回退模拟草稿：{prompt[:120]}"
             return output, step_input, "模拟输出", reason
 
     if os.getenv("DEEPSEEK_API_KEY"):
@@ -441,7 +570,7 @@ def run_llm_node(
         except (OpenAIError, RuntimeError) as error:
             model = select_deepseek_model(data.get("model"))
             reason = summarize_error(error)
-            output = f"DeepSeek {model} 调用失败，已回退模拟草稿：{prompt[:120]}"
+            output = json_llm_fallback(prompt, context) or f"DeepSeek {model} 调用失败，已回退模拟草稿：{prompt[:120]}"
             return output, step_input, "模拟输出", reason
 
     if os.getenv("OPENAI_API_KEY"):
@@ -451,11 +580,11 @@ def run_llm_node(
         except (OpenAIError, RuntimeError) as error:
             model = str(data.get("model") or DEFAULT_OPENAI_MODEL)
             reason = summarize_error(error)
-            output = f"OpenAI {model} 调用失败，已回退模拟草稿：{prompt[:120]}"
+            output = json_llm_fallback(prompt, context) or f"OpenAI {model} 调用失败，已回退模拟草稿：{prompt[:120]}"
             return output, step_input, "模拟输出", reason
 
     model = str(data.get("model") or DEFAULT_OPENAI_MODEL)
-    output = f"模型 {model} 使用 {format_llm_options(data)} 生成模拟草稿：{prompt[:120]}"
+    output = json_llm_fallback(prompt, context) or f"模型 {model} 使用 {format_llm_options(data)} 生成模拟草稿：{prompt[:120]}"
     return output, step_input, "模拟输出", None
 
 
@@ -637,8 +766,11 @@ def simulate_run(
         elif kind == "image":
             output, step_input, provider, error = run_image_node(data, context, model_configs.get("aliyun") if model_configs else None)
         elif kind == "tool":
-            provider = "HTTP 工具" if data.get("toolUrl") else "模拟输出"
+            tool_name = str(data.get("toolName") or "").strip()
+            provider = "MCP 工具" if is_mcp_tool_name(tool_name) else ("HTTP 工具" if data.get("toolUrl") else "模拟输出")
             def run_tool_once() -> tuple[str, str, str | None]:
+                if is_mcp_tool_name(tool_name):
+                    return run_mcp_tool_node(data, context)
                 result = run_http_tool_node(data, context)
                 if result[2]:
                     raise RuntimeError(result[2])

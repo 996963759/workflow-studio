@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 
 from .models import WorkflowIssue, WorkflowPayload, WorkflowValidationResult
 
-ALLOWED_TOOL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+ALLOWED_TOOL_HOSTS = {"127.0.0.1", "localhost", "::1", "api"}
 FAILURE_POLICIES = {"stop", "continue", "skip_downstream"}
 
 
@@ -263,7 +263,7 @@ def validate_workflow(payload: WorkflowPayload) -> WorkflowValidationResult:
                         id=f"tool-url-{current_id}",
                         level="error",
                         node_id=current_id,
-                        message=f"工具节点「{node_label(node)}」只允许请求 localhost、127.0.0.1 或 ::1。",
+                        message=f"工具节点「{node_label(node)}」只允许请求 localhost、127.0.0.1、::1 或 compose 服务 api。",
                     )
                 )
 

@@ -66,6 +66,7 @@ from .knowledge import (
     set_knowledge_session_factory,
 )
 from .logging_config import configure_logging
+from .mcp_tools import MCPToolNotFoundError, call_mcp_tool, list_mcp_tools
 from .runner import get_provider_status, simulate_run
 from .storage import default_store
 from .validation import validate_workflow
@@ -111,6 +112,27 @@ async def log_requests(request: Request, call_next):
 def health() -> dict[str, str]:
     database = store.engine.url.get_backend_name() if store.engine else "unknown"
     return {"status": "ok", "database": database, "queue_backend": job_queue.backend}
+
+
+@app.post("/mcp/building-bms/get-device-status")
+async def mock_building_bms_device_status(request: Request) -> dict[str, object]:
+    payload = await request.json()
+    return call_mcp_tool("mcp.building_bms.get_device_status", payload)
+
+
+@app.get("/mcp/tools")
+def list_mock_mcp_tools() -> dict[str, object]:
+    return {"tools": list_mcp_tools()}
+
+
+@app.post("/mcp/tools/{tool_name:path}/call")
+async def call_mock_mcp_tool(tool_name: str, request: Request) -> dict[str, object]:
+    payload = await request.json()
+    normalized_tool_name = tool_name.replace("/", ".")
+    try:
+        return call_mcp_tool(normalized_tool_name, payload)
+    except MCPToolNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @app.get("/api/provider-status")
