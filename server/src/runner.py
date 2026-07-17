@@ -3,13 +3,14 @@ import json
 import re
 import time
 from collections import defaultdict, deque
-from typing import Any
+from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse, urlunparse
 from urllib.request import Request, urlopen
 
 from openai import OpenAI, OpenAIError
 
+from .config import RUN_EXECUTION_MODE
 from .external_rag import search_paismart
 from .knowledge import search_knowledge
 from .mcp_tools import call_mcp_tool, format_mcp_result, is_mcp_tool_name
@@ -30,6 +31,22 @@ DEFAULT_TEMPERATURE = 0.4
 DEFAULT_MAX_OUTPUT_TOKENS = 1200
 DEFAULT_LLM_TIMEOUT_SECONDS = 45
 FAILURE_POLICIES = {"stop", "continue", "skip_downstream"}
+EXECUTION_MODES = {"demo", "development", "production"}
+SENSITIVE_FIELD_NAMES = {
+    "api_key",
+    "apikey",
+    "authorization",
+    "password",
+    "refresh_token",
+    "secret",
+    "token",
+    "x-api-key",
+}
+
+
+def normalize_execution_mode(value: str | None) -> str:
+    mode = str(value or RUN_EXECUTION_MODE).lower()
+    return mode if mode in EXECUTION_MODES else "development"
 
 
 def render_template(template: str | None, context: dict[str, str]) -> str:
@@ -103,6 +120,8 @@ def get_reachable_node_ids(start_ids: list[str], edges: list[dict[str, Any]]) ->
 
 def get_provider_status() -> dict[str, str | bool]:
     return {
+        "execution_mode": RUN_EXECUTION_MODE,
+        "simulated_output_allowed": RUN_EXECUTION_MODE != "production",
         "deepseek_configured": bool(os.getenv("DEEPSEEK_API_KEY")),
         "deepseek_model": os.getenv("DEEPSEEK_MODEL") or DEFAULT_DEEPSEEK_MODEL,
         "deepseek_base_url": os.getenv("DEEPSEEK_BASE_URL") or DEEPSEEK_BASE_URL,
@@ -260,10 +279,38 @@ def run_with_retries(action: Any, attempts: int) -> tuple[Any, int, Exception | 
 def parse_json_object(value: str, fallback: dict[str, Any] | None = None) -> dict[str, Any]:
     if not value.strip():
         return fallback or {}
-    parsed = json.loads(value)
+    parsed = json.loads(extract_json_document(value))
     if not isinstance(parsed, dict):
         raise ValueError("JSON value must be an object")
     return parsed
+
+
+def extract_json_document(value: str) -> str:
+    text = value.strip()
+    if not text:
+        return text
+    try:
+        json.loads(text)
+        return text
+    except json.JSONDecodeError:
+        pass
+
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE | re.DOTALL).strip()
+        try:
+            json.loads(text)
+            return text
+        except json.JSONDecodeError:
+            pass
+
+    starts = [index for index in (text.find("{"), text.find("[")) if index >= 0]
+    if not starts:
+        return value
+    start = min(starts)
+    end = max(text.rfind("}"), text.rfind("]"))
+    if end <= start:
+        return value
+    return text[start : end + 1]
 
 
 def format_workflow_value(value: Any) -> str:
@@ -271,7 +318,7 @@ def format_workflow_value(value: Any) -> str:
 
 
 def parse_json_path_value(source: str, path: str) -> Any:
-    parsed = json.loads(source)
+    parsed = json.loads(extract_json_document(source))
     normalized_path = path.strip()
     if not normalized_path:
         return parsed
@@ -379,7 +426,11 @@ def container_api_fallback_url(url: str) -> str | None:
     return urlunparse(parsed._replace(netloc=netloc))
 
 
-def run_http_tool_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, str, str | None]:
+def run_http_tool_node(
+    data: dict[str, Any],
+    context: dict[str, str],
+    execution_headers: dict[str, str] | None = None,
+) -> tuple[str, str, str | None]:
     tool_url = render_template(data.get("toolUrl"), context).strip()
     method = str(data.get("toolMethod") or "GET").upper()
     headers_text = render_template(data.get("toolHeaders"), context)
@@ -396,6 +447,8 @@ def run_http_tool_node(data: dict[str, Any], context: dict[str, str]) -> tuple[s
         raise ValueError("Tool URL is blocked. Only localhost, 127.0.0.1, ::1 and compose service api are allowed by default.")
 
     headers = {str(key): str(value) for key, value in parse_json_object(headers_text).items()}
+    for name, value in (execution_headers or {}).items():
+        headers.setdefault(name, value)
     data_bytes = None
     if method not in {"GET", "DELETE"} and body_text.strip():
         parse_json_object(body_text)
@@ -439,9 +492,14 @@ def run_http_tool_node(data: dict[str, Any], context: dict[str, str]) -> tuple[s
         raise RuntimeError(str(error.reason)) from error
 
 
-def run_mcp_tool_node(data: dict[str, Any], context: dict[str, str]) -> tuple[str, str, str | None]:
+def run_mcp_tool_node(
+    data: dict[str, Any],
+    context: dict[str, str],
+    execution_headers: dict[str, str] | None = None,
+) -> tuple[str, str, str | None]:
     tool_name = str(data.get("toolName") or "").strip()
     body_text = render_template(data.get("toolParams"), context)
+    headers_text = render_template(data.get("toolHeaders"), context)
     try:
         arguments = parse_json_object(body_text)
     except (json.JSONDecodeError, ValueError):
@@ -453,14 +511,32 @@ def run_mcp_tool_node(data: dict[str, Any], context: dict[str, str]) -> tuple[st
             "floor": extract_json_string_field(body_text, "floor") or "18F",
             "source": context.get("device_query", ""),
         }
-    result = call_mcp_tool(tool_name, arguments)
+    headers = parse_json_object(headers_text)
+    for name, value in (execution_headers or {}).items():
+        headers.setdefault(name, value)
+    result = call_mcp_tool(tool_name, arguments, headers)
+    safe_headers = redact_sensitive_values(headers)
+    safe_arguments = redact_sensitive_values(arguments)
     step_input = "\n".join(
         [
             f"Tool: {tool_name}",
-            f"Arguments: {json.dumps(arguments, ensure_ascii=False)}",
+            f"Arguments: {json.dumps(safe_arguments, ensure_ascii=False)}",
+            f"Context headers: {json.dumps(safe_headers, ensure_ascii=False)}",
         ]
     )
-    return format_mcp_result(result), step_input, None
+    error = "MCP tool returned an error response" if result.get("status") == "error" else None
+    return format_mcp_result(result), step_input, error
+
+
+def redact_sensitive_values(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): "***" if str(key).lower() in SENSITIVE_FIELD_NAMES else redact_sensitive_values(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_sensitive_values(item) for item in value]
+    return value
 
 
 def extract_json_string_field(value: str, field: str) -> str | None:
@@ -681,12 +757,18 @@ def simulate_run(
     user_id: str | None = None,
     workspace_id: str | None = None,
     model_configs: dict[str, dict[str, str | bool]] | None = None,
+    execution_mode: str | None = None,
+    progress_callback: Callable[[RunResponse], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+    run_id: str | None = None,
+    initial_steps: list[RunStep] | None = None,
 ) -> RunResponse:
+    mode = normalize_execution_mode(execution_mode)
     run_started_at = time.perf_counter()
     context: dict[str, str] = {}
     nodes = create_execution_order(workflow.nodes, workflow.edges)
     if nodes is None:
-        return RunResponse(
+        response = RunResponse(
             status="error",
             steps=[
                 RunStep(
@@ -700,24 +782,90 @@ def simulate_run(
                     duration_ms=elapsed_ms(run_started_at),
                 )
             ],
-    )
-    steps: list[RunStep] = []
+            execution_mode=mode,
+        )
+        if progress_callback:
+            progress_callback(response)
+        return response
+
+    resumable_statuses = {"done", "routed", "degraded", "skipped", "error"}
+    steps = [step.model_copy(deep=True) for step in (initial_steps or []) if step.status in resumable_statuses]
+    step_indexes = {step.node_id: index for index, step in enumerate(steps)}
+
+    def publish(status: str) -> RunResponse:
+        response = RunResponse(status=status, steps=[step.model_copy(deep=True) for step in steps], execution_mode=mode)
+        if progress_callback:
+            progress_callback(response)
+        return response
+
+    def save_step(step: RunStep) -> None:
+        existing_index = step_indexes.get(step.node_id)
+        if existing_index is None:
+            step_indexes[step.node_id] = len(steps)
+            steps.append(step)
+        else:
+            steps[existing_index] = step
+
+    def canceled_response() -> RunResponse:
+        save_step(
+            RunStep(
+                node_id="workflow-canceled",
+                title="运行已取消",
+                status="canceled",
+                input="用户取消请求",
+                output="工作流已在节点边界安全停止。",
+                kind="workflow",
+                error="用户已请求取消运行。",
+                duration_ms=elapsed_ms(run_started_at),
+            )
+        )
+        return publish("canceled")
+
+    def restore_completed_step(node: dict[str, Any], step: RunStep) -> None:
+        data = node.get("data", {})
+        output_key = data.get("outputKey")
+        if output_key and step.status in {"done", "routed", "degraded"}:
+            context[str(output_key)] = step.output
+
+    def update_condition_branch(node: dict[str, Any], skipped: set[str]) -> None:
+        data = node.get("data", {})
+        passed, _ = evaluate_condition(data, context)
+        current = node_id(node)
+        branch_edges = [
+            edge
+            for edge in workflow.edges
+            if str(edge.get("source") or "") == current and edge.get("sourceHandle") in {"true", "false"}
+        ]
+        if branch_edges:
+            inactive_handle = "false" if passed else "true"
+            inactive_targets = [
+                str(edge.get("target") or "")
+                for edge in branch_edges
+                if edge.get("sourceHandle") == inactive_handle
+            ]
+            skipped.update(get_reachable_node_ids(inactive_targets, workflow.edges))
+
     skipped_by_branch: set[str] = set()
+    completed_steps = {step.node_id: step for step in steps}
 
     for index, node in enumerate(nodes, start=1):
-        step_started_at = time.perf_counter()
         current_id = node_id(node)
         data = node.get("data", {})
         kind = data.get("kind")
-        output_key = data.get("outputKey")
         title = f"{index}. {node_label(node)}"
-        provider = None
-        error = None
-        status = "done"
-        attempts = 1
+        previous_step = completed_steps.get(current_id)
+
+        if previous_step:
+            restore_completed_step(node, previous_step)
+            if kind == "condition" and previous_step.status != "error":
+                update_condition_branch(node, skipped_by_branch)
+            continue
+
+        if cancel_check and cancel_check():
+            return canceled_response()
 
         if current_id in skipped_by_branch:
-            steps.append(
+            save_step(
                 RunStep(
                     node_id=current_id or f"node-{index}",
                     title=title,
@@ -725,10 +873,34 @@ def simulate_run(
                     input="条件分支未命中该路径。",
                     output="已跳过该分支节点。",
                     kind=str(kind or "unknown"),
-                    duration_ms=elapsed_ms(step_started_at),
                 )
             )
+            publish("running")
             continue
+
+        step_started_at = time.perf_counter()
+        save_step(
+            RunStep(
+                node_id=current_id or f"node-{index}",
+                title=title,
+                status="running",
+                input="等待节点执行。",
+                output="",
+                kind=str(kind or "unknown"),
+            )
+        )
+        publish("running")
+
+        output_key = data.get("outputKey")
+        provider = None
+        error = None
+        status = "done"
+        attempts = 1
+        execution_headers = {
+            "Idempotency-Key": f"{run_id or 'sync'}:{current_id}",
+            "X-Workflow-Run-Id": run_id or "sync",
+            "X-Workflow-Step-Id": current_id,
+        }
 
         if kind == "input":
             output = input_text or data.get("sampleInput") or ""
@@ -742,10 +914,10 @@ def simulate_run(
         elif kind == "json":
             try:
                 output, step_input = run_json_node(data, context)
-            except (json.JSONDecodeError, ValueError, TypeError, IndexError) as error:
+            except (json.JSONDecodeError, ValueError, TypeError, IndexError) as run_error:
                 output = "JSON 解析失败。"
                 step_input = render_template(data.get("jsonSource"), context) or "未配置 JSON 来源"
-                error = summarize_error(error)
+                error = summarize_error(run_error)
                 status = "error"
         elif kind == "code":
             try:
@@ -762,16 +934,25 @@ def simulate_run(
         elif kind == "llm":
             output, step_input, provider, error = run_llm_node(data, context, model_configs)
         elif kind == "tts":
-            output, step_input, provider, error = run_tts_node(data, context, model_configs.get("aliyun") if model_configs else None)
+            output, step_input, provider, error = run_tts_node(
+                data,
+                context,
+                model_configs.get("aliyun") if model_configs else None,
+            )
         elif kind == "image":
-            output, step_input, provider, error = run_image_node(data, context, model_configs.get("aliyun") if model_configs else None)
+            output, step_input, provider, error = run_image_node(
+                data,
+                context,
+                model_configs.get("aliyun") if model_configs else None,
+            )
         elif kind == "tool":
             tool_name = str(data.get("toolName") or "").strip()
-            provider = "MCP 工具" if is_mcp_tool_name(tool_name) else ("HTTP 工具" if data.get("toolUrl") else "模拟输出")
+            provider = "MCP 工具" if is_mcp_tool_name(tool_name, data.get("toolUrl")) else ("HTTP 工具" if data.get("toolUrl") else "模拟输出")
+
             def run_tool_once() -> tuple[str, str, str | None]:
-                if is_mcp_tool_name(tool_name):
-                    return run_mcp_tool_node(data, context)
-                result = run_http_tool_node(data, context)
+                if is_mcp_tool_name(tool_name, data.get("toolUrl")):
+                    return run_mcp_tool_node(data, context, execution_headers)
+                result = run_http_tool_node(data, context, execution_headers)
                 if result[2]:
                     raise RuntimeError(result[2])
                 return result
@@ -806,20 +987,31 @@ def simulate_run(
                 skipped_by_branch.update(get_reachable_node_ids(inactive_targets, workflow.edges))
                 output = f"{detail} 已进入{'真' if passed else '假'}分支。"
             else:
-                output = "条件通过，继续执行。" if passed else "条件未通过，当前后端模拟仍继续生成后续步骤。"
+                output = "条件通过，继续执行。" if passed else "条件未通过，当前后端仍继续生成后续步骤。"
             step_input = detail
         else:
             template = data.get("prompt")
             output = render_template(template, context) or "没有可输出内容。"
             step_input = template or "未配置输出模板"
 
+        if provider == "模拟输出":
+            fallback_reason = error or "没有配置可用的真实服务凭证。"
+            if mode == "production":
+                status = "error"
+                provider = "生产模式已阻止模拟输出"
+                output = "节点未产生真实结果。"
+                error = f"生产模式禁止模拟或失败回退：{fallback_reason}"
+            elif status != "error":
+                status = "degraded"
+                error = fallback_reason
+
         variable = f"{{{{{output_key}}}}}" if output_key else None
-        if output_key and status != "error":
+        if output_key and status in {"done", "degraded", "routed"}:
             context[str(output_key)] = output
 
-        steps.append(
+        save_step(
             RunStep(
-                node_id=str(node.get("id") or f"node-{index}"),
+                node_id=current_id or f"node-{index}",
                 title=title,
                 status=status,
                 input=step_input,
@@ -832,12 +1024,20 @@ def simulate_run(
                 attempt_count=attempts,
             )
         )
+        publish("running")
 
         if status == "error":
             policy = failure_policy(data)
             if policy == "stop":
-                return RunResponse(status="error", steps=steps)
+                return publish("error")
             if policy == "skip_downstream":
                 skipped_by_branch.update(get_reachable_node_ids([current_id], workflow.edges) - {current_id})
 
-    return RunResponse(status="ok", steps=steps)
+        if cancel_check and cancel_check():
+            return canceled_response()
+
+    if any(step.status == "error" for step in steps):
+        return publish("error")
+    if any(step.status == "degraded" for step in steps):
+        return publish("degraded")
+    return publish("ok")

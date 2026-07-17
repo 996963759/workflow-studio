@@ -12,6 +12,9 @@ def get_env(name: str, default: str) -> str:
 
 
 APP_ENV = get_env("APP_ENV", "development")
+RUN_EXECUTION_MODE = get_env("RUN_EXECUTION_MODE", APP_ENV).lower()
+if RUN_EXECUTION_MODE not in {"demo", "development", "production"}:
+    raise ValueError("RUN_EXECUTION_MODE must be demo, development, or production.")
 LOG_LEVEL = get_env("LOG_LEVEL", "INFO").upper()
 DIST_DIR = ROOT_DIR / "dist"
 CORS_ORIGINS = [

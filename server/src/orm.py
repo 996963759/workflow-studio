@@ -134,7 +134,11 @@ class DbRun(Base):
     input_text: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False)
     steps_json: Mapped[str] = mapped_column(Text, nullable=False)
+    workflow_snapshot_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    workflow_version: Mapped[str | None] = mapped_column(String)
+    execution_mode: Mapped[str] = mapped_column(String, nullable=False, default="development")
     created_at: Mapped[str] = mapped_column(String, nullable=False)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)
 
 
 class DbRunJob(Base):
@@ -146,6 +150,10 @@ class DbRunJob(Base):
     workflow_id: Mapped[str] = mapped_column(String, index=True)
     status: Mapped[str] = mapped_column(String, nullable=False, index=True)
     input_text: Mapped[str] = mapped_column(Text, nullable=False)
+    workflow_snapshot_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    workflow_version: Mapped[str | None] = mapped_column(String)
+    execution_mode: Mapped[str] = mapped_column(String, nullable=False, default="development")
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     run_id: Mapped[str | None] = mapped_column(String, index=True)
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[str] = mapped_column(String, nullable=False)

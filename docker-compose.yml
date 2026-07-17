@@ -69,6 +69,7 @@ services:
       - "8000:8000"
     environment:
       APP_ENV: production
+      RUN_EXECUTION_MODE: ${RUN_EXECUTION_MODE:-development}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://workflow_studio:workflow_studio_dev_password@db:5432/workflow_studio}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://127.0.0.1:5173,http://localhost:5173}
@@ -79,6 +80,15 @@ services:
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-flash}
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      MCP_GATEWAY_URL: ${MCP_GATEWAY_URL:-}
+      MCP_GATEWAY_TIMEOUT_SECONDS: ${MCP_GATEWAY_TIMEOUT_SECONDS:-30}
+      MCP_GATEWAY_AUTHORIZATION: ${MCP_GATEWAY_AUTHORIZATION:-}
+      MCP_GATEWAY_TOKEN: ${MCP_GATEWAY_TOKEN:-}
+      MCP_GATEWAY_API_KEY: ${MCP_GATEWAY_API_KEY:-}
+      MCP_TOOL_TOKEN: ${MCP_TOOL_TOKEN:-}
+      MCP_PROJECT_ID: ${MCP_PROJECT_ID:-}
+      MCP_TENANT_CODE: ${MCP_TENANT_CODE:-}
+      MCP_USER_ID: ${MCP_USER_ID:-}
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
       DASHSCOPE_BASE_URL: ${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com}
       DASHSCOPE_TIMEOUT_SECONDS: ${DASHSCOPE_TIMEOUT_SECONDS:-60}
@@ -122,6 +132,7 @@ services:
     command: ["python", "-m", "server.src.worker"]
     environment:
       APP_ENV: production
+      RUN_EXECUTION_MODE: ${RUN_EXECUTION_MODE:-development}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://workflow_studio:workflow_studio_dev_password@db:5432/workflow_studio}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
@@ -131,6 +142,15 @@ services:
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-flash}
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      MCP_GATEWAY_URL: ${MCP_GATEWAY_URL:-}
+      MCP_GATEWAY_TIMEOUT_SECONDS: ${MCP_GATEWAY_TIMEOUT_SECONDS:-30}
+      MCP_GATEWAY_AUTHORIZATION: ${MCP_GATEWAY_AUTHORIZATION:-}
+      MCP_GATEWAY_TOKEN: ${MCP_GATEWAY_TOKEN:-}
+      MCP_GATEWAY_API_KEY: ${MCP_GATEWAY_API_KEY:-}
+      MCP_TOOL_TOKEN: ${MCP_TOOL_TOKEN:-}
+      MCP_PROJECT_ID: ${MCP_PROJECT_ID:-}
+      MCP_TENANT_CODE: ${MCP_TENANT_CODE:-}
+      MCP_USER_ID: ${MCP_USER_ID:-}
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
       DASHSCOPE_BASE_URL: ${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com}
       DASHSCOPE_TIMEOUT_SECONDS: ${DASHSCOPE_TIMEOUT_SECONDS:-60}

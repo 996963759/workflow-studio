@@ -27,6 +27,7 @@ Copy-Item .env.example .env
 
 ```text
 DATABASE_URL=postgresql+psycopg://workflow_studio:workflow_studio_dev_password@db:5432/workflow_studio
+RUN_EXECUTION_MODE=production
 REDIS_URL=redis://redis:6379/0
 ADMIN_OVERVIEW_CACHE_TTL_SECONDS=20
 POSTGRES_DB=workflow_studio
@@ -42,6 +43,14 @@ KAFKA_CONSUMER_GROUP=workflow-studio-workers
 ```
 
 `MODEL_CONFIG_SECRET` 用来保护团队空间级模型 API Key。只要已经保存过模型 Key，就不要随意修改它，否则旧配置可能无法解密。
+
+`RUN_EXECUTION_MODE` 支持三种模式：
+
+- `demo`：允许模拟输出，但节点和整次运行会明确标记为“降级”。
+- `development`：允许开发阶段回退，同样标记为“降级”，不会显示为成功。
+- `production`：禁止模拟或失败回退；真实模型、TTS、图片或工具服务不可用时节点直接失败。
+
+正式环境必须显式设置为 `production`。Docker Compose 为方便本地演示默认使用 `development`。
 
 ## Docker Compose 启动
 

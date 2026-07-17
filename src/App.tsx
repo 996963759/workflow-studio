@@ -130,7 +130,7 @@ type RunStep = {
   nodeId?: string
   node_id?: string
   title: string
-  status: 'done' | 'routed' | 'waiting' | 'skipped' | 'error'
+  status: 'done' | 'routed' | 'waiting' | 'running' | 'degraded' | 'skipped' | 'error' | 'canceled'
   input: string
   output: string
   kind?: string | null
@@ -163,7 +163,7 @@ type WorkflowRecord = Required<Pick<WorkflowDefinition, 'id' | 'name' | 'version
 type WorkflowSortMode = 'updated' | 'name' | 'sync'
 type WorkflowSyncState = 'local' | 'synced' | 'dirty'
 type WorkflowPublishStatus = 'draft' | 'published' | 'changed'
-type RunHistoryStatusFilter = 'all' | 'ok' | 'error'
+type RunHistoryStatusFilter = 'all' | 'ok' | 'degraded' | 'error'
 type AdminView = 'node' | 'system' | 'team' | 'model' | 'knowledge' | 'eval' | 'ops' | 'json'
 
 type ServerWorkflowRecord = {
@@ -233,6 +233,27 @@ type ServerRunRecord = {
   created_at: string
 }
 
+type WorkflowRouteCandidate = {
+  workflow_id: string
+  workflow_name: string
+  score: number
+}
+
+type WorkflowRouteDecision = {
+  workflow_id: string | null
+  workflow_name: string | null
+  reason: string
+  confidence: number
+  needs_confirmation: boolean
+  provider: string
+  candidates: WorkflowRouteCandidate[]
+}
+
+type WorkflowRouteRunResponse = {
+  route: WorkflowRouteDecision
+  run: ServerRunRecord | null
+}
+
 type RunCostSummary = {
   billable_step_count?: number
   cost_units?: number
@@ -261,7 +282,7 @@ type WorkspaceRecord = {
   id: string
   name: string
   owner_id: string
-  role: 'owner' | 'editor' | 'viewer'
+  role: 'owner' | 'editor' | 'viewer' | 'customer'
   created_at: string
 }
 
@@ -277,7 +298,7 @@ type WorkspaceInvitationRecord = {
   workspace_id: string
   workspace_name?: string | null
   code: string
-  role: 'owner' | 'editor' | 'viewer'
+  role: WorkspaceRecord['role']
   status: 'pending' | 'accepted' | 'revoked' | 'expired'
   created_by: string
   created_by_username?: string | null
@@ -2707,6 +2728,8 @@ function App() {
   const [runHistory, setRunHistory] = useState<ServerRunRecord[]>([])
   const [selectedRunId, setSelectedRunId] = useState('')
   const [runInput, setRunInput] = useState(examples[0])
+  const [workflowRouteDecision, setWorkflowRouteDecision] = useState<WorkflowRouteDecision | null>(null)
+  const [workflowRouteBusy, setWorkflowRouteBusy] = useState<'match' | 'run' | null>(null)
   const [selectedWorkflowIds, setSelectedWorkflowIds] = useState<string[]>([])
   const [notice, setNotice] = useState('已加载本地工作流列表。')
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => loadAuthSession())
@@ -2815,6 +2838,7 @@ function App() {
   const selectedRunRecord = runHistory.find((run) => run.id === selectedRunId)
   const selectedRunErrorCount = selectedRunRecord?.steps.filter((step) => step.status === 'error').length ?? 0
   const selectedRunDoneCount = selectedRunRecord?.steps.filter((step) => step.status === 'done' || step.status === 'routed').length ?? 0
+  const selectedRunDegradedCount = selectedRunRecord?.steps.filter((step) => step.status === 'degraded').length ?? 0
   const selectedRunSkippedCount = selectedRunRecord?.steps.filter((step) => step.status === 'skipped').length ?? 0
   const nodes = activeWorkflow.nodes
   const edges = activeWorkflow.edges
@@ -4738,6 +4762,95 @@ function App() {
     setNotice('已切换工作流。')
   }
 
+  const findWorkflowByRouteId = (workflowId?: string | null) =>
+    workflowStore.workflows.find((workflow) => workflow.serverId === workflowId || workflow.id === workflowId)
+
+  const focusRoutedWorkflow = (workflowId?: string | null) => {
+    const workflow = findWorkflowByRouteId(workflowId)
+    if (workflow && workflow.id !== activeWorkflow.id) {
+      switchWorkflow(workflow.id)
+    }
+    return workflow
+  }
+
+  const matchWorkflowRoute = async () => {
+    const inputText = runInput.trim()
+    if (!inputText) {
+      setNotice('请先填写要匹配的用户问题。')
+      return
+    }
+
+    setWorkflowRouteBusy('match')
+    try {
+      const response = await apiFetch('/api/workflow-router/match', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input_text: inputText }),
+      })
+      if (!response.ok) {
+        throw new Error(await readResponseErrorMessage(response, '智能匹配失败：请确认后端在线且有可用工作流。'))
+      }
+      const decision = (await response.json()) as WorkflowRouteDecision
+      setWorkflowRouteDecision(decision)
+      focusRoutedWorkflow(decision.workflow_id)
+      setBackendStatus('online')
+      setNotice(
+        decision.workflow_name
+          ? `已匹配到「${decision.workflow_name}」，置信度 ${Math.round(decision.confidence * 100)}%。`
+          : '智能匹配需要补充确认。',
+      )
+    } catch (error) {
+      setBackendStatus('offline')
+      setNotice(getErrorMessage(error, '智能匹配失败：请确认后端在线且有可用工作流。'))
+    } finally {
+      setWorkflowRouteBusy(null)
+    }
+  }
+
+  const runWorkflowRoute = async (workflowId?: string) => {
+    const inputText = runInput.trim()
+    if (!inputText) {
+      setNotice('请先填写要运行的用户问题。')
+      return
+    }
+
+    setWorkflowRouteBusy('run')
+    try {
+      const response = await apiFetch('/api/workflow-router/runs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input_text: inputText, workflow_id: workflowId }),
+      })
+      if (!response.ok) {
+        const validation = await readValidationError(response)
+        if (validation) {
+          const issues = [...validation.errors, ...validation.warnings].map(serverIssueToWorkflowIssue)
+          setRemoteValidation({ issues, key: validationKey, status: 'backend' })
+          showBlockingIssues(issues, '智能匹配运行')
+          return
+        }
+        throw new Error(await readResponseErrorMessage(response, '匹配并运行失败：请确认后端在线且当前空间有可用工作流。'))
+      }
+      const result = (await response.json()) as WorkflowRouteRunResponse
+      setWorkflowRouteDecision(result.route)
+      setBackendStatus('online')
+      focusRoutedWorkflow(result.route.workflow_id)
+      if (!result.run) {
+        setNotice('匹配结果需要确认，请从候选工作流中选择一个运行。')
+        return
+      }
+      setRunSteps(result.run.steps)
+      setRunHistory((current) => [result.run!, ...current.filter((item) => item.id !== result.run!.id)])
+      setSelectedRunId(result.run.id)
+      setNotice(`已匹配并运行「${result.route.workflow_name ?? result.run.workflow_name}」。`)
+    } catch (error) {
+      setBackendStatus('offline')
+      setNotice(getErrorMessage(error, '匹配并运行失败：请确认后端在线且当前空间有可用工作流。'))
+    } finally {
+      setWorkflowRouteBusy(null)
+    }
+  }
+
   const createNewWorkflow = () => {
     const nextWorkflow = createWorkflowRecord(`新工作流 ${workflowStore.workflows.length + 1}`)
     const next = {
@@ -5401,6 +5514,16 @@ function App() {
           <p className="workspace-role">
             {activeWorkspace ? `当前角色：${activeWorkspace.role}` : '暂未加载团队空间'}
           </p>
+        </section>
+
+        <section className="panel customer-entry-panel">
+          <div className="panel-title">
+            <MessageSquareText size={16} />
+            <span>客户对话入口</span>
+          </div>
+          <a href="/customer" target="_blank" rel="noreferrer">
+            打开客户对话
+          </a>
         </section>
 
         <section className="panel">
@@ -6471,6 +6594,7 @@ function App() {
                         <option value="viewer">viewer</option>
                         <option value="editor">editor</option>
                         <option value="owner">owner</option>
+                        <option value="customer">customer</option>
                       </select>
                       <button
                         type="button"
@@ -6526,6 +6650,7 @@ function App() {
                   <option value="viewer">viewer 可查看和运行</option>
                   <option value="editor">editor 可编辑</option>
                   <option value="owner">owner 可管理成员</option>
+                  <option value="customer">customer 仅客户对话</option>
                 </select>
                 <button
                   type="button"
@@ -7027,6 +7152,58 @@ function App() {
               onChange={(event) => setRunInput(event.target.value)}
             />
           </label>
+          <div className="workflow-router">
+            <div className="workflow-router-head">
+              <span>
+                <GitBranch size={15} />
+                智能匹配工作流
+              </span>
+              <div>
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={Boolean(workflowRouteBusy)}
+                  onClick={() => void matchWorkflowRoute()}
+                >
+                  {workflowRouteBusy === 'match' ? '匹配中...' : '仅匹配'}
+                </button>
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={Boolean(workflowRouteBusy)}
+                  onClick={() => void runWorkflowRoute()}
+                >
+                  {workflowRouteBusy === 'run' ? '运行中...' : '匹配并运行'}
+                </button>
+              </div>
+            </div>
+            {workflowRouteDecision && (
+              <div className="workflow-route-result">
+                <div>
+                  <strong>{workflowRouteDecision.workflow_name ?? '需要确认工作流'}</strong>
+                  <span>
+                    {Math.round(workflowRouteDecision.confidence * 100)}% · {workflowRouteDecision.provider}
+                  </span>
+                </div>
+                <p>{workflowRouteDecision.reason}</p>
+                {workflowRouteDecision.candidates.length > 0 && (
+                  <div className="workflow-route-candidates">
+                    {workflowRouteDecision.candidates.map((candidate) => (
+                      <button
+                        key={candidate.workflow_id}
+                        type="button"
+                        disabled={Boolean(workflowRouteBusy)}
+                        onClick={() => void runWorkflowRoute(candidate.workflow_id)}
+                      >
+                        <span>{candidate.workflow_name}</span>
+                        <small>{Math.round(candidate.score * 100)}%</small>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
           <div className="runner-actions">
             <button type="button" onClick={runWorkflowOnBackend}>
               同步运行
@@ -7085,6 +7262,7 @@ function App() {
             runHistoryStatusFilter={runHistoryStatusFilter}
             runSteps={runSteps}
             selectedRunDoneCount={selectedRunDoneCount}
+            selectedRunDegradedCount={selectedRunDegradedCount}
             selectedRunSkippedCount={selectedRunSkippedCount}
             selectedRunErrorCount={selectedRunErrorCount}
             onSearchChange={setRunHistorySearch}

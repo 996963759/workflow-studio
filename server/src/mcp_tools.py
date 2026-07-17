@@ -1,5 +1,8 @@
 import json
+import os
 from typing import Any
+
+from .mcp_gateway import call_gateway_tool, list_gateway_tools, mcp_gateway_configured
 
 
 class MCPToolNotFoundError(ValueError):
@@ -70,13 +73,71 @@ def list_mcp_tools() -> list[dict[str, Any]]:
     return list(MCP_TOOL_DEFINITIONS.values())
 
 
-def is_mcp_tool_name(name: Any) -> bool:
-    return str(name or "").strip() in MCP_TOOL_DEFINITIONS
+def list_available_mcp_tools(header_overrides: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    local_tools = [{**item, "source": "local"} for item in list_mcp_tools()]
+    if not mcp_gateway_configured():
+        return local_tools
+    remote_tools = list_gateway_tools(header_overrides)
+    local_names = {item["name"] for item in local_tools}
+    return local_tools + [item for item in remote_tools if item.get("name") not in local_names]
 
 
-def call_mcp_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+def is_mcp_tool_name(name: Any, tool_url: Any = None) -> bool:
+    normalized = str(name or "").strip()
+    if normalized in MCP_TOOL_DEFINITIONS:
+        return True
+    return bool(normalized and not str(tool_url or "").strip() and mcp_gateway_configured())
+
+
+def _env(name: str) -> str:
+    return os.getenv(name, "").strip()
+
+
+def _business_token_from_env() -> str:
+    token = _env("MCP_TOOL_TOKEN")
+    if token:
+        return token if token.lower().startswith("bearer ") else f"Bearer {token}"
+
+    authorization = _env("MCP_GATEWAY_AUTHORIZATION")
+    if authorization:
+        return authorization
+
+    gateway_token = _env("MCP_GATEWAY_TOKEN")
+    if gateway_token:
+        return gateway_token if gateway_token.lower().startswith("bearer ") else f"Bearer {gateway_token}"
+
+    return ""
+
+
+def _with_neuron_task_defaults(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    if not name.startswith("neuron-task-mcp."):
+        return arguments
+
+    updated = dict(arguments)
+    current_token = str(updated.get("token") or "").strip()
+    if current_token in {"", "REPLACE_WITH_USER_TOKEN"}:
+        token = _business_token_from_env()
+        if token:
+            updated["token"] = token
+
+    current_project = str(updated.get("projectId") or updated.get("project_id") or "").strip()
+    if current_project in {"", "REPLACE_WITH_PROJECT_ID"}:
+        project_id = _env("MCP_PROJECT_ID")
+        if project_id:
+            updated["projectId"] = project_id
+
+    return updated
+
+
+def call_mcp_tool(
+    name: str,
+    arguments: dict[str, Any],
+    header_overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     if name == "mcp.building_bms.get_device_status":
         return building_bms_get_device_status(arguments)
+    if mcp_gateway_configured():
+        return call_gateway_tool(name, _with_neuron_task_defaults(name, arguments), header_overrides)
     raise MCPToolNotFoundError(f"Unknown MCP tool: {name}")
 
 

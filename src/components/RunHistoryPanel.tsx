@@ -5,7 +5,7 @@ type RunStep = {
   nodeId?: string
   node_id?: string
   title: string
-  status: 'done' | 'routed' | 'waiting' | 'skipped' | 'error'
+  status: 'done' | 'routed' | 'waiting' | 'running' | 'degraded' | 'skipped' | 'error' | 'canceled'
   input: string
   output: string
   kind?: string | null
@@ -21,6 +21,8 @@ type ServerRunRecord = {
   workflow_name: string
   input_text: string
   status: string
+  execution_mode?: 'demo' | 'development' | 'production'
+  workflow_version?: string | null
   steps: RunStep[]
   cost_summary?: {
     billable_step_count?: number
@@ -30,7 +32,7 @@ type ServerRunRecord = {
   created_at: string
 }
 
-type RunHistoryStatusFilter = 'all' | 'ok' | 'error'
+type RunHistoryStatusFilter = 'all' | 'ok' | 'degraded' | 'error'
 
 type RunHistoryPanelProps = {
   runHistory: ServerRunRecord[]
@@ -41,6 +43,7 @@ type RunHistoryPanelProps = {
   runHistoryStatusFilter: RunHistoryStatusFilter
   runSteps: RunStep[]
   selectedRunDoneCount: number
+  selectedRunDegradedCount: number
   selectedRunSkippedCount: number
   selectedRunErrorCount: number
   onSearchChange: (value: string) => void
@@ -79,7 +82,7 @@ const formatDuration = (durationMs: number | undefined) => {
 }
 
 const getFinalRunOutput = (steps: RunStep[]) => {
-  const successfulSteps = steps.filter((step) => step.status === 'done' && step.output?.trim())
+  const successfulSteps = steps.filter((step) => ['done', 'degraded'].includes(step.status) && step.output?.trim())
   const finalStep = [...successfulSteps].reverse().find(isFinalOutputStep) ?? successfulSteps.at(-1)
   return finalStep
     ? {
@@ -99,6 +102,7 @@ export function RunHistoryPanel({
   runHistoryStatusFilter,
   runSteps,
   selectedRunDoneCount,
+  selectedRunDegradedCount,
   selectedRunSkippedCount,
   selectedRunErrorCount,
   onSearchChange,
@@ -130,6 +134,7 @@ export function RunHistoryPanel({
         >
           <option value="all">全部状态</option>
           <option value="ok">成功</option>
+          <option value="degraded">降级</option>
           <option value="error">失败</option>
         </select>
       </div>
@@ -142,6 +147,7 @@ export function RunHistoryPanel({
         ) : (
           visibleRunHistory.slice(0, 8).map((run) => {
             const hasError = run.status === 'error' || run.steps.some((step) => step.status === 'error')
+            const hasDegraded = run.status === 'degraded' || run.steps.some((step) => step.status === 'degraded')
             const lastStep = [...run.steps].reverse().find((step) => step.status !== 'skipped') ?? run.steps.at(-1)
             return (
               <div key={run.id} className={clsx('run-history-item', run.id === selectedRunId && 'active')}>
@@ -155,8 +161,8 @@ export function RunHistoryPanel({
                   </small>
                   <small>{lastStep ? `结果：${lastStep.output}` : '暂无节点输出'}</small>
                 </button>
-                <span className={clsx('run-status-badge', hasError ? 'error' : 'ok')}>
-                  {hasError ? '失败' : '成功'}
+                <span className={clsx('run-status-badge', hasError ? 'error' : hasDegraded ? 'degraded' : 'ok')}>
+                  {hasError ? '失败' : hasDegraded ? '降级' : '成功'}
                 </span>
                 <button
                   type="button"
@@ -176,7 +182,7 @@ export function RunHistoryPanel({
         {runSteps.length === 0 ? (
           <div className="empty-run">
             <Sparkles size={18} />
-            <span>点击运行后，可以查看每个节点的模拟输出。</span>
+            <span>点击运行后，可以查看每个节点的真实状态和输出。</span>
           </div>
         ) : (
           <>
@@ -185,9 +191,16 @@ export function RunHistoryPanel({
                 <strong>{selectedRunRecord ? selectedRunRecord.workflow_name : '当前运行结果'}</strong>
                 <span>
                   完成 {selectedRunDoneCount || runSteps.filter((step) => step.status === 'done' || step.status === 'routed').length}
+                  个，降级 {selectedRunDegradedCount || runSteps.filter((step) => step.status === 'degraded').length}
                   个，跳过 {selectedRunSkippedCount || runSteps.filter((step) => step.status === 'skipped').length} 个，错误{' '}
                   {selectedRunErrorCount || runSteps.filter((step) => step.status === 'error').length} 个
                 </span>
+                {selectedRunRecord && (
+                  <small>
+                    执行模式 {selectedRunRecord.execution_mode ?? 'development'}
+                    {selectedRunRecord.workflow_version ? ` · 工作流版本 ${selectedRunRecord.workflow_version}` : ''}
+                  </small>
+                )}
                 {selectedRunRecord?.cost_summary && (
                   <small>
                     估算成本 {selectedRunRecord.cost_summary.cost_units ?? 0} · 计费节点{' '}

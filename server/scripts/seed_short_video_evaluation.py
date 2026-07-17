@@ -157,7 +157,8 @@ def workflow_payload() -> WorkflowPayload:
                     "systemPrompt": "你是中文短视频营销策划助手。只输出合法 JSON，不要 Markdown，不要解释，不要代码块。",
                     "prompt": (
                         "根据需求输出严格 JSON，字段必须包含 title、script、image_prompt、caption、publish_checklist。"
-                        "script 控制在 120 个汉字以内，适合直接 TTS 朗读；image_prompt 要适合中文商品营销海报或短视频封面；"
+                        "script 必须是 105 到 115 个汉字的连续口播正文，按正常语速朗读约 18 到 22 秒，适合直接 TTS 朗读；"
+                        "image_prompt 要适合中文商品营销海报或短视频封面；"
                         "publish_checklist 是 3 条字符串数组。\n\n"
                         'JSON 示例：{"title":"标题","script":"口播文案","image_prompt":"图片生成提示词",'
                         '"caption":"发布文案","publish_checklist":["检查口播节奏","确认图片不含违规元素","发布前补充商品链接"]}'

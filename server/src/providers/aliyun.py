@@ -97,7 +97,7 @@ def run_tts(
     speech_rate: float = 1.0,
     runtime_config: dict[str, str | bool] | None = None,
 ) -> tuple[str, str]:
-    rate = int(round(float(speech_rate or 1.0) * 100))
+    rate = max(0.5, min(float(speech_rate or 1.0), 2.0))
     used_model = model or DEFAULT_TTS_MODEL
     payload = {
         "model": used_model,
@@ -105,7 +105,7 @@ def run_tts(
             "text": text,
             "voice": normalize_tts_voice(used_model, voice),
             "format": audio_format or "mp3",
-            "rate": max(50, min(rate, 200)),
+            "rate": rate,
         },
     }
     body = _request_json("/api/v1/services/audio/tts/SpeechSynthesizer", payload, runtime_config=runtime_config)

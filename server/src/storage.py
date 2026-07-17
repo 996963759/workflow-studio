@@ -6,7 +6,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from .config import DATABASE_URL, WORKSPACE_INVITATION_TTL_HOURS
+from .config import DATABASE_URL, RUN_EXECUTION_MODE, WORKSPACE_INVITATION_TTL_HOURS
 from .db import SessionLocal, create_session_factory, engine as default_engine
 from .models import (
     ModelConfigPayload,
@@ -51,7 +51,7 @@ from .orm import (
 from .secret_box import mask_secret, protect_secret, reveal_secret
 
 
-ROLE_ORDER = {"viewer": 1, "editor": 2, "owner": 3}
+ROLE_ORDER = {"customer": 0, "viewer": 1, "editor": 2, "owner": 3}
 
 
 def utc_now() -> str:
@@ -1130,10 +1130,13 @@ class WorkflowStore:
         input_text: str,
         response: RunResponse,
         workspace_id: str | None = None,
+        workflow: WorkflowPayload | None = None,
+        execution_mode: str | None = None,
     ) -> RunRecord:
         workspace_id = workspace_id or self.ensure_default_workspace(user_id)
         run_id = str(uuid.uuid4())
         created_at = utc_now()
+        execution_mode = execution_mode or response.execution_mode or RUN_EXECUTION_MODE
         steps = [step.model_dump() for step in response.steps]
         cost_summary = summarize_run_cost(steps)
         run = DbRun(
@@ -1145,7 +1148,11 @@ class WorkflowStore:
             input_text=input_text,
             status=response.status,
             steps_json=json.dumps(steps, ensure_ascii=False),
+            workflow_snapshot_json=workflow.model_dump_json() if workflow else "{}",
+            workflow_version=workflow.version if workflow else None,
+            execution_mode=execution_mode,
             created_at=created_at,
+            updated_at=created_at,
         )
         with self._connect() as session:
             session.add(run)
@@ -1156,8 +1163,11 @@ class WorkflowStore:
             workflow_name=workflow_name,
             input_text=input_text,
             created_at=created_at,
+            updated_at=created_at,
             status=response.status,
             steps=response.steps,
+            execution_mode=execution_mode,
+            workflow_version=workflow.version if workflow else None,
             cost_summary=cost_summary,
         )
 
@@ -1193,21 +1203,47 @@ class WorkflowStore:
             session.commit()
         return result.rowcount
 
-    def create_run_job(self, user_id: str, workspace_id: str, workflow_id: str, input_text: str) -> RunJobRecord:
+    def create_run_job(
+        self,
+        user_id: str,
+        workspace_id: str,
+        workflow_id: str,
+        input_text: str,
+        execution_mode: str = RUN_EXECUTION_MODE,
+    ) -> RunJobRecord:
         now = utc_now()
-        job = DbRunJob(
-            id=str(uuid.uuid4()),
-            user_id=user_id,
-            workspace_id=workspace_id,
-            workflow_id=workflow_id,
-            status="queued",
-            input_text=input_text,
-            run_id=None,
-            error=None,
-            created_at=now,
-            updated_at=now,
-        )
         with self._connect() as session:
+            workflow = session.scalar(
+                select(DbWorkflow).where(
+                    DbWorkflow.id == workflow_id,
+                    DbWorkflow.workspace_id == workspace_id,
+                )
+            )
+            if not workflow:
+                raise ValueError("Workflow not found")
+            snapshot = {
+                "name": workflow.name,
+                "version": workflow.version,
+                "nodes": json.loads(workflow.nodes_json),
+                "edges": json.loads(workflow.edges_json),
+                "archived": bool(workflow.archived),
+            }
+            job = DbRunJob(
+                id=str(uuid.uuid4()),
+                user_id=user_id,
+                workspace_id=workspace_id,
+                workflow_id=workflow_id,
+                status="queued",
+                input_text=input_text,
+                workflow_snapshot_json=json.dumps(snapshot, ensure_ascii=False),
+                workflow_version=workflow.version,
+                execution_mode=execution_mode,
+                cancel_requested=False,
+                run_id=None,
+                error=None,
+                created_at=now,
+                updated_at=now,
+            )
             session.add(job)
             session.commit()
         return self._job_to_record(job)
@@ -1226,6 +1262,8 @@ class WorkflowStore:
             job.status = status
             job.run_id = run_id
             job.error = error
+            if status in {"succeeded", "degraded", "failed"}:
+                job.cancel_requested = False
             job.updated_at = utc_now()
             session.commit()
 
@@ -1242,15 +1280,21 @@ class WorkflowStore:
                 return None
             job.status = "running"
             job.error = None
+            job.cancel_requested = False
             job.updated_at = utc_now()
             session.commit()
             return self._job_to_record(job)
 
     def requeue_interrupted_run_jobs(self) -> int:
         with self._connect() as session:
+            session.execute(
+                update(DbRunJob)
+                .where(DbRunJob.status == "canceling", DbRunJob.cancel_requested.is_(True))
+                .values(status="canceled", error="服务重启时完成取消。", updated_at=utc_now())
+            )
             result = session.execute(
                 update(DbRunJob)
-                .where(DbRunJob.status == "running", DbRunJob.run_id.is_(None))
+                .where(DbRunJob.status == "running")
                 .values(
                     status="queued",
                     error="服务重启后已自动重新入队。",
@@ -1270,10 +1314,15 @@ class WorkflowStore:
             )
             if not job:
                 return None
-            if job.status != "queued":
-                raise ValueError("Only queued jobs can be canceled")
-            job.status = "canceled"
-            job.error = "用户已取消任务。"
+            if job.status not in {"queued", "running", "canceling"}:
+                raise ValueError("Only queued or running jobs can be canceled")
+            job.cancel_requested = True
+            if job.status == "queued":
+                job.status = "canceled"
+                job.error = "用户已取消任务。"
+            else:
+                job.status = "canceling"
+                job.error = "已请求取消，当前节点结束后停止。"
             job.updated_at = utc_now()
             session.commit()
             return self._job_to_record(job)
@@ -1293,6 +1342,7 @@ class WorkflowStore:
             job.status = "queued"
             job.run_id = None
             job.error = None
+            job.cancel_requested = False
             job.updated_at = utc_now()
             session.commit()
             return self._job_to_record(job)
@@ -1308,7 +1358,7 @@ class WorkflowStore:
         with self._connect() as session:
             statement = delete(DbRunJob).where(
                 DbRunJob.workspace_id == workspace_id,
-                DbRunJob.status.in_(["succeeded", "failed", "canceled"]),
+                DbRunJob.status.in_(["succeeded", "degraded", "failed", "canceled"]),
             )
             if workflow_id:
                 statement = statement.where(DbRunJob.workflow_id == workflow_id)
@@ -1343,6 +1393,16 @@ class WorkflowStore:
             job = session.scalar(select(DbRunJob).where(DbRunJob.id == job_id))
             if not job:
                 return None
+            try:
+                snapshot = json.loads(job.workflow_snapshot_json or "{}")
+                if snapshot.get("nodes") is not None and snapshot.get("edges") is not None:
+                    return WorkflowRecord(
+                        id=workflow_id,
+                        updated_at=job.created_at,
+                        **snapshot,
+                    )
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
             workflow = session.scalar(
                 select(DbWorkflow).where(
                     DbWorkflow.id == workflow_id,
@@ -1350,6 +1410,54 @@ class WorkflowStore:
                 )
             )
         return self._workflow_to_record(workflow) if workflow else None
+
+    def ensure_run_for_job(self, job_id: str, workflow: WorkflowRecord) -> RunRecord:
+        with self._connect() as session:
+            job = session.scalar(select(DbRunJob).where(DbRunJob.id == job_id).with_for_update())
+            if not job:
+                raise RuntimeError("Run job not found")
+            if job.run_id:
+                existing = session.scalar(select(DbRun).where(DbRun.id == job.run_id))
+                if existing:
+                    return self._run_to_record(existing)
+            now = utc_now()
+            run = DbRun(
+                id=str(uuid.uuid4()),
+                user_id=job.user_id,
+                workspace_id=job.workspace_id,
+                workflow_id=workflow.id,
+                workflow_name=workflow.name,
+                input_text=job.input_text,
+                status="running",
+                steps_json="[]",
+                workflow_snapshot_json=job.workflow_snapshot_json,
+                workflow_version=job.workflow_version or workflow.version,
+                execution_mode=job.execution_mode,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(run)
+            job.run_id = run.id
+            job.updated_at = now
+            session.commit()
+            return self._run_to_record(run)
+
+    def update_run_progress(self, run_id: str, response: RunResponse) -> RunRecord | None:
+        with self._connect() as session:
+            run = session.scalar(select(DbRun).where(DbRun.id == run_id))
+            if not run:
+                return None
+            run.status = response.status
+            run.steps_json = json.dumps([step.model_dump() for step in response.steps], ensure_ascii=False)
+            run.execution_mode = response.execution_mode
+            run.updated_at = utc_now()
+            session.commit()
+            return self._run_to_record(run)
+
+    def is_run_job_cancel_requested(self, job_id: str) -> bool:
+        with self._connect() as session:
+            requested = session.scalar(select(DbRunJob.cancel_requested).where(DbRunJob.id == job_id))
+        return bool(requested)
 
     def get_runtime_model_config_for_job(self, job_id: str, provider: str) -> dict[str, str | bool] | None:
         workspace_id = self.get_run_job_workspace_id(job_id)
@@ -1593,7 +1701,10 @@ class WorkflowStore:
             input_text=run.input_text,
             status=run.status,
             steps=json.loads(run.steps_json),
+            execution_mode=getattr(run, "execution_mode", "development") or "development",
             created_at=run.created_at,
+            updated_at=getattr(run, "updated_at", None) or run.created_at,
+            workflow_version=getattr(run, "workflow_version", None),
             cost_summary=summarize_run_cost(json.loads(run.steps_json)),
         )
 
@@ -1605,6 +1716,9 @@ class WorkflowStore:
             input_text=job.input_text,
             run_id=job.run_id,
             error=job.error,
+            execution_mode=getattr(job, "execution_mode", "development") or "development",
+            cancel_requested=bool(getattr(job, "cancel_requested", False)),
+            workflow_version=getattr(job, "workflow_version", None),
             created_at=job.created_at,
             updated_at=job.updated_at,
         )

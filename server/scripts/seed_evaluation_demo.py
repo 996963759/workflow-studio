@@ -274,7 +274,7 @@ def run_evaluation(user_id: str, workspace_id: str, workflow, dataset):
                     real_model_steps += 1
                 if step.error:
                     fallback_errors.append(step.error)
-        run = api.store.create_run(workflow.id, user_id, workflow.name, case.input_text, response, workspace_id)
+        run = api.store.create_run(workflow.id, user_id, workflow.name, case.input_text, response, workspace_id, workflow)
         output = api.final_output_from_response(response)
         passed, missing_keywords = api.evaluate_case_output(output, case.expected_keywords)
         results.append(

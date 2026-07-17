@@ -116,11 +116,11 @@ class WorkspaceMemberRecord(BaseModel):
 
 class WorkspaceMemberPayload(BaseModel):
     username: str = Field(min_length=3, max_length=64)
-    role: str = Field(pattern="^(owner|editor|viewer)$")
+    role: str = Field(pattern="^(owner|editor|viewer|customer)$")
 
 
 class WorkspaceInvitationCreatePayload(BaseModel):
-    role: str = Field(pattern="^(owner|editor|viewer)$")
+    role: str = Field(pattern="^(owner|editor|viewer|customer)$")
 
 
 class WorkspaceInvitationAcceptPayload(BaseModel):
@@ -182,6 +182,30 @@ class WorkflowRunRequest(BaseModel):
     input_text: str = ""
 
 
+class WorkflowRouteRequest(BaseModel):
+    input_text: str = Field(min_length=1, max_length=4000)
+
+
+class WorkflowRouteRunRequest(WorkflowRouteRequest):
+    workflow_id: str | None = None
+
+
+class WorkflowRouteCandidate(BaseModel):
+    workflow_id: str
+    workflow_name: str
+    score: float = Field(ge=0, le=1)
+
+
+class WorkflowRouteDecision(BaseModel):
+    workflow_id: str | None = None
+    workflow_name: str | None = None
+    reason: str
+    confidence: float = Field(ge=0, le=1)
+    needs_confirmation: bool = False
+    provider: str
+    candidates: list[WorkflowRouteCandidate] = Field(default_factory=list)
+
+
 class RunStep(BaseModel):
     node_id: str
     title: str
@@ -199,6 +223,7 @@ class RunStep(BaseModel):
 class RunResponse(BaseModel):
     status: str
     steps: list[RunStep]
+    execution_mode: str = "development"
 
 
 class RunRecord(RunResponse):
@@ -207,7 +232,30 @@ class RunRecord(RunResponse):
     workflow_name: str
     input_text: str
     created_at: str
+    updated_at: str | None = None
+    workflow_version: str | None = None
     cost_summary: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkflowRouteRunResponse(BaseModel):
+    route: WorkflowRouteDecision
+    run: RunRecord | None = None
+
+
+class CustomerChatHistoryMessage(BaseModel):
+    role: str = Field(pattern="^(user|assistant)$")
+    content: str = Field(min_length=1, max_length=20000)
+
+
+class CustomerChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    history: list[CustomerChatHistoryMessage] = Field(default_factory=list, max_length=20)
+
+
+class CustomerChatResponse(BaseModel):
+    status: str = Field(pattern="^(completed|needs_clarification|error)$")
+    reply: str
+    run_id: str | None = None
 
 
 class RunJobRecord(BaseModel):
@@ -217,6 +265,9 @@ class RunJobRecord(BaseModel):
     input_text: str
     run_id: str | None = None
     error: str | None = None
+    execution_mode: str = "development"
+    cancel_requested: bool = False
+    workflow_version: str | None = None
     created_at: str
     updated_at: str
 
@@ -318,7 +369,7 @@ class AdminOverviewRecord(BaseModel):
     workspace: WorkspaceRecord
     counts: dict[str, int]
     settings: dict[str, Any]
-    provider_status: dict[str, str | bool]
+    provider_status: dict[str, Any]
     knowledge_status: dict[str, int | str]
     run_metrics: RunMetricsRecord = Field(default_factory=RunMetricsRecord)
     recent_audit_logs: list[AuditLogRecord] = Field(default_factory=list)

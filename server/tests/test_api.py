@@ -2,6 +2,7 @@ import logging
 import os
 import time
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 TEST_DATABASE_URL = os.getenv(
@@ -16,12 +17,13 @@ from fastapi.testclient import TestClient
 from server.src.auth import AuthService, set_auth_service
 from server.src import main as api
 from server.src import runner
+from server.src import workflow_router
 from server.src.orm import Base, DbSession, DbWorkspaceInvitation
 from server.src.providers import aliyun
 from server.src.db import create_session_factory
 from server.src.jobs import RunJobQueue, RunJobWorker
 from server.src.knowledge import set_knowledge_session_factory
-from server.src.models import RunResponse, RunStep
+from server.src.models import RunResponse, RunStep, WorkflowPayload
 from server.src.storage import WorkflowStore
 
 
@@ -49,6 +51,12 @@ def invalid_workflow() -> dict:
     workflow = valid_workflow()
     workflow["nodes"] = [workflow["nodes"][1]]
     workflow["edges"] = []
+    return workflow
+
+
+def named_workflow(name: str) -> dict:
+    workflow = valid_workflow()
+    workflow["name"] = name
     return workflow
 
 
@@ -137,6 +145,271 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(body["status"], "ok")
         self.assertEqual(body["database"], "postgresql")
         self.assertEqual(body["queue_backend"], "thread")
+
+    def test_workflow_router_matches_smart_building_workflow(self) -> None:
+        building = self.client.post(
+            "/api/workflows",
+            json=named_workflow("智能楼宇设备异常诊断与运维派单"),
+            headers=self.auth_headers,
+        ).json()
+        self.client.post(
+            "/api/workflows",
+            json=named_workflow("短视频口播与配图生成"),
+            headers=self.auth_headers,
+        )
+
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "", "OPENAI_API_KEY": ""}):
+            response = self.client.post(
+                "/api/workflow-router/match",
+                json={"input_text": "A座楼宇设备 AHU-18F-07 离线告警，请诊断并派工单"},
+                headers=self.auth_headers,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["workflow_id"], building["id"])
+        self.assertGreaterEqual(body["confidence"], 0.68)
+        self.assertFalse(body["needs_confirmation"])
+        self.assertIn("规则路由", body["provider"])
+
+    def test_workflow_router_uses_configured_llm_decision(self) -> None:
+        building = self.client.post(
+            "/api/workflows",
+            json=named_workflow("智能楼宇设备异常诊断与运维派单"),
+            headers=self.auth_headers,
+        ).json()
+        self.client.post(
+            "/api/workflows",
+            json=named_workflow("短视频口播与配图生成"),
+            headers=self.auth_headers,
+        )
+        model_output = (
+            '{"workflow_id":"'
+            + building["id"]
+            + '","reason":"设备离线问题应交给楼宇运维流程","confidence":0.93}'
+        )
+
+        with (
+            patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-router-key", "OPENAI_API_KEY": ""}),
+            patch.object(workflow_router, "run_deepseek_node", return_value=(model_output, "deepseek-test")),
+        ):
+            response = self.client.post(
+                "/api/workflow-router/match",
+                json={"input_text": "设备离线了，请帮我处理"},
+                headers=self.auth_headers,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["workflow_id"], building["id"])
+        self.assertEqual(body["provider"], "DeepSeek - deepseek-test")
+        self.assertEqual(body["confidence"], 0.93)
+        self.assertFalse(body["needs_confirmation"])
+
+    def test_workflow_router_runs_high_confidence_match(self) -> None:
+        building = self.client.post(
+            "/api/workflows",
+            json=named_workflow("智能楼宇设备异常诊断与运维派单"),
+            headers=self.auth_headers,
+        ).json()
+        self.client.post(
+            "/api/workflows",
+            json=named_workflow("短视频口播与配图生成"),
+            headers=self.auth_headers,
+        )
+
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "", "OPENAI_API_KEY": ""}):
+            response = self.client.post(
+                "/api/workflow-router/runs",
+                json={"input_text": "楼宇新风设备离线，请查询告警并生成运维工单"},
+                headers=self.auth_headers,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["route"]["workflow_id"], building["id"])
+        self.assertIsNotNone(body["run"])
+        self.assertEqual(body["run"]["workflow_id"], building["id"])
+        self.assertEqual(body["run"]["status"], "ok")
+
+    def test_workflow_router_requires_confirmation_for_ambiguous_input(self) -> None:
+        self.client.post(
+            "/api/workflows",
+            json=named_workflow("智能楼宇设备异常诊断与运维派单"),
+            headers=self.auth_headers,
+        )
+        self.client.post(
+            "/api/workflows",
+            json=named_workflow("短视频口播与配图生成"),
+            headers=self.auth_headers,
+        )
+
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "", "OPENAI_API_KEY": ""}):
+            response = self.client.post(
+                "/api/workflow-router/runs",
+                json={"input_text": "帮我处理一下这个问题"},
+                headers=self.auth_headers,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body["route"]["needs_confirmation"])
+        self.assertIsNone(body["run"])
+        self.assertGreaterEqual(len(body["route"]["candidates"]), 2)
+
+    def test_customer_chat_runs_workflow_without_exposing_internal_route(self) -> None:
+        self.client.post(
+            "/api/workflows",
+            json=named_workflow("客户问题处理"),
+            headers=self.auth_headers,
+        )
+
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "", "OPENAI_API_KEY": ""}):
+            response = self.client.post(
+                "/api/customer-chat/messages",
+                json={"message": "请帮我处理这个问题", "history": []},
+                headers=self.auth_headers,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["status"], "completed")
+        self.assertTrue(body["reply"])
+        self.assertTrue(body["run_id"])
+        self.assertNotIn("route", body)
+        self.assertNotIn("workflow_name", body)
+        self.assertNotIn("workflow_id", body)
+
+    def test_customer_chat_asks_for_clarification_without_exposing_candidates(self) -> None:
+        self.client.post(
+            "/api/workflows",
+            json=named_workflow("智能楼宇设备异常诊断与运维派单"),
+            headers=self.auth_headers,
+        )
+        self.client.post(
+            "/api/workflows",
+            json=named_workflow("短视频口播与配图生成"),
+            headers=self.auth_headers,
+        )
+
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "", "OPENAI_API_KEY": ""}):
+            response = self.client.post(
+                "/api/customer-chat/messages",
+                json={"message": "帮我处理一下", "history": []},
+                headers=self.auth_headers,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["status"], "needs_clarification")
+        self.assertIsNone(body["run_id"])
+        self.assertNotIn("candidates", body)
+        self.assertNotIn("route", body)
+
+    def test_customer_chat_uses_recent_conversation_for_routing(self) -> None:
+        building = self.client.post(
+            "/api/workflows",
+            json=named_workflow("智能楼宇设备异常诊断与运维派单"),
+            headers=self.auth_headers,
+        ).json()
+        self.client.post(
+            "/api/workflows",
+            json=named_workflow("短视频口播与配图生成"),
+            headers=self.auth_headers,
+        )
+
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "", "OPENAI_API_KEY": ""}):
+            response = self.client.post(
+                "/api/customer-chat/messages",
+                json={
+                    "message": "AHU-18F-07 现在离线告警了",
+                    "history": [
+                        {"role": "user", "content": "A座智能楼宇里的新风设备"},
+                        {"role": "assistant", "content": "请描述具体情况"},
+                    ],
+                },
+                headers=self.auth_headers,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["status"], "completed")
+        run = self.client.get(f"/api/runs/{body['run_id']}", headers=self.auth_headers).json()
+        self.assertEqual(run["workflow_id"], building["id"])
+
+    def test_customer_chat_accepts_long_previous_assistant_reply(self) -> None:
+        self.client.post(
+            "/api/workflows",
+            json=named_workflow("短视频口播与配图生成"),
+            headers=self.auth_headers,
+        )
+
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "", "OPENAI_API_KEY": ""}):
+            response = self.client.post(
+                "/api/customer-chat/messages",
+                json={
+                    "message": "再生成一版，更温暖一点",
+                    "history": [
+                        {"role": "user", "content": "帮我生成短视频素材"},
+                        {"role": "assistant", "content": "上一轮输出：" + "很长的结果" * 1200},
+                    ],
+                },
+                headers=self.auth_headers,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(response.json()["status"], {"completed", "needs_clarification", "error"})
+
+    def test_customer_chat_requires_authentication(self) -> None:
+        response = self.client.post(
+            "/api/customer-chat/messages",
+            json={"message": "你好", "history": []},
+        )
+        self.assertEqual(response.status_code, 401)
+
+    def test_customer_workspace_role_can_chat_but_cannot_read_internal_workflows(self) -> None:
+        workspace = self.client.get("/api/workspaces", headers=self.auth_headers).json()[0]
+        owner_workspace_headers = {**self.auth_headers, "X-Workspace-Id": workspace["id"]}
+        self.client.post("/api/workflows", json=valid_workflow(), headers=owner_workspace_headers)
+        invitation = self.client.post(
+            f"/api/workspaces/{workspace['id']}/invitations",
+            json={"role": "customer"},
+            headers=self.auth_headers,
+        ).json()
+        customer_headers = self.create_auth_headers()
+        accepted = self.client.post(
+            "/api/workspaces/invitations/accept",
+            json={"code": invitation["code"]},
+            headers=customer_headers,
+        )
+        self.assertEqual(accepted.status_code, 200)
+        self.assertEqual(accepted.json()["role"], "customer")
+
+        customer_workspace_headers = {**customer_headers, "X-Workspace-Id": workspace["id"]}
+        workspace_records = self.client.get("/api/workspaces", headers=customer_headers).json()
+        joined = next(record for record in workspace_records if record["id"] == workspace["id"])
+        self.assertEqual(joined["role"], "customer")
+
+        self.assertEqual(
+            self.client.get("/api/workflows", headers=customer_workspace_headers).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.get("/api/runs", headers=customer_workspace_headers).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.get("/api/audit-logs", headers=customer_workspace_headers).status_code,
+            403,
+        )
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "", "OPENAI_API_KEY": ""}):
+            chat = self.client.post(
+                "/api/customer-chat/messages",
+                json={"message": "请帮我处理这个问题", "history": []},
+                headers=customer_workspace_headers,
+            )
+        self.assertEqual(chat.status_code, 200)
+        self.assertEqual(chat.json()["status"], "completed")
 
     def test_mock_building_bms_mcp_tool(self) -> None:
         response = self.client.post(
@@ -805,6 +1078,87 @@ class ApiTestCase(unittest.TestCase):
         run = self.client.get(f"/api/runs/{latest['run_id']}", headers=self.auth_headers)
         self.assertEqual(run.status_code, 200)
         self.assertEqual(run.json()["input_text"], "异步运行")
+        self.assertEqual(run.json()["workflow_version"], "0.2.0")
+        self.assertEqual(run.json()["execution_mode"], "development")
+
+    def test_run_job_uses_enqueue_time_workflow_snapshot(self) -> None:
+        created = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers).json()
+        user = self.client.get("/api/auth/me", headers=self.auth_headers).json()
+        workspace = self.client.get("/api/workspaces", headers=self.auth_headers).json()[0]
+        job = api.store.create_run_job(user["id"], workspace["id"], created["id"], "快照运行")
+
+        changed = named_workflow("入队后改名")
+        changed["nodes"][1]["data"]["prompt"] = "入队之后的新输出"
+        update = self.client.put(
+            f"/api/workflows/{created['id']}",
+            json=changed,
+            headers=self.auth_headers,
+        )
+        self.assertEqual(update.status_code, 200)
+
+        snapshot = api.store.get_workflow_for_job(created["id"], job.id)
+        self.assertIsNotNone(snapshot)
+        self.assertEqual(snapshot.name, valid_workflow()["name"])
+        self.assertEqual(snapshot.nodes[1]["data"]["prompt"], "{{user_request}}")
+
+    def test_interrupted_job_resumes_from_persisted_steps(self) -> None:
+        created = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers).json()
+        user = self.client.get("/api/auth/me", headers=self.auth_headers).json()
+        workspace = self.client.get("/api/workspaces", headers=self.auth_headers).json()[0]
+        job = api.store.create_run_job(user["id"], workspace["id"], created["id"], "续跑输入")
+        claimed = api.store.claim_run_job(job.id)
+        workflow = api.store.get_workflow_for_job(created["id"], job.id)
+        run = api.store.ensure_run_for_job(job.id, workflow)
+        api.store.update_run_progress(
+            run.id,
+            RunResponse(
+                status="running",
+                execution_mode="development",
+                steps=[
+                    RunStep(
+                        node_id="input-1",
+                        title="1. 用户输入",
+                        status="done",
+                        input="用户请求",
+                        output="续跑输入",
+                        kind="input",
+                        variable="{{user_request}}",
+                    )
+                ],
+            ),
+        )
+
+        self.assertEqual(api.store.requeue_interrupted_run_jobs(), 1)
+        queue = RunJobQueue(api.store, backend="thread", execution_mode="development")
+        self.assertTrue(queue.run_next_queued_job())
+
+        latest = api.store.get_run_job(job.id, user["id"], workspace["id"])
+        resumed = api.store.get_run(run.id, user["id"], workspace["id"])
+        self.assertEqual(latest.status, "succeeded")
+        self.assertEqual(latest.run_id, run.id)
+        self.assertEqual(resumed.status, "ok")
+        self.assertEqual([step.node_id for step in resumed.steps], ["input-1", "output-1"])
+
+    def test_running_run_job_can_be_canceled_at_node_boundary(self) -> None:
+        created = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers).json()
+        user = self.client.get("/api/auth/me", headers=self.auth_headers).json()
+        workspace = self.client.get("/api/workspaces", headers=self.auth_headers).json()[0]
+        job = api.store.create_run_job(user["id"], workspace["id"], created["id"], "运行中取消")
+        claimed = api.store.claim_run_job(job.id)
+        workflow = api.store.get_workflow_for_job(created["id"], job.id)
+        run = api.store.ensure_run_for_job(job.id, workflow)
+
+        cancel = self.client.post(f"/api/run-jobs/{job.id}/cancel", headers=self.auth_headers)
+        self.assertEqual(cancel.status_code, 200)
+        self.assertEqual(cancel.json()["status"], "canceling")
+        self.assertTrue(cancel.json()["cancel_requested"])
+
+        RunJobQueue(api.store, backend="thread", execution_mode="development")._run_claimed_job(claimed)
+        latest = api.store.get_run_job(job.id, user["id"], workspace["id"])
+        canceled_run = api.store.get_run(run.id, user["id"], workspace["id"])
+        self.assertEqual(latest.status, "canceled")
+        self.assertEqual(canceled_run.status, "canceled")
+        self.assertEqual(canceled_run.steps[-1].status, "canceled")
 
     def test_test_worker_claims_queued_job(self) -> None:
         created = self.client.post("/api/workflows", json=valid_workflow(), headers=self.auth_headers).json()
@@ -1326,10 +1680,58 @@ class ApiTestCase(unittest.TestCase):
 
         self.assertEqual(run.status_code, 200)
         body = run.json()
-        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["status"], "degraded")
         self.assertEqual(body["steps"][1]["provider"], "模拟输出")
+        self.assertEqual(body["steps"][1]["status"], "degraded")
         self.assertEqual(body["steps"][2]["status"], "done")
         self.assertIn("燕麦拿铁", body["steps"][3]["output"])
+
+    def test_production_mode_rejects_simulated_llm_output(self) -> None:
+        workflow = WorkflowPayload(
+            **{
+                **valid_workflow(),
+                "nodes": [
+                    valid_workflow()["nodes"][0],
+                    {
+                        "id": "llm-1",
+                        "position": {"x": 240, "y": 0},
+                        "data": {
+                            "kind": "llm",
+                            "label": "真实模型必需",
+                            "prompt": "{{user_request}}",
+                            "outputKey": "draft",
+                        },
+                    },
+                    valid_workflow()["nodes"][1],
+                ],
+                "edges": [
+                    {"id": "e1", "source": "input-1", "target": "llm-1"},
+                    {"id": "e2", "source": "llm-1", "target": "output-1"},
+                ],
+            }
+        )
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "", "OPENAI_API_KEY": ""}):
+            result = runner.simulate_run(workflow, "必须真实调用", execution_mode="production")
+
+        self.assertEqual(result.status, "error")
+        self.assertEqual(result.execution_mode, "production")
+        self.assertEqual(result.steps[1].status, "error")
+        self.assertEqual(result.steps[1].provider, "生产模式已阻止模拟输出")
+        self.assertIn("生产模式禁止模拟", result.steps[1].error)
+
+    def test_progress_callback_reports_running_node_before_completion(self) -> None:
+        events: list[RunResponse] = []
+        result = runner.simulate_run(
+            WorkflowPayload(**valid_workflow()),
+            "进度测试",
+            execution_mode="development",
+            progress_callback=events.append,
+            run_id="run-progress-test",
+        )
+
+        self.assertEqual(result.status, "ok")
+        self.assertTrue(any(step.status == "running" for event in events for step in event.steps))
+        self.assertEqual(events[-1].status, "ok")
 
     def test_orchestration_nodes_transform_and_aggregate_context(self) -> None:
         workflow = {
@@ -1586,7 +1988,24 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(captured["payload"]["input"]["text"], "欢迎使用工作流")
         self.assertEqual(captured["payload"]["input"]["voice"], "longxiaochun_v2")
         self.assertEqual(captured["payload"]["input"]["format"], "mp3")
-        self.assertEqual(captured["payload"]["input"]["rate"], 120)
+        self.assertEqual(captured["payload"]["input"]["rate"], 1.2)
+
+    def test_aliyun_tts_clamps_speech_rate_as_multiplier(self) -> None:
+        captured_rates = []
+
+        def fake_request_json(path, payload=None, headers=None, runtime_config=None):
+            captured_rates.append(payload["input"]["rate"])
+            return {"output": {"audio_url": "https://example.test/audio.mp3"}}
+
+        previous = aliyun._request_json
+        aliyun._request_json = fake_request_json
+        try:
+            aliyun.run_tts("慢速", speech_rate=0.2, runtime_config={"api_key": "sk-test"})
+            aliyun.run_tts("快速", speech_rate=4.0, runtime_config={"api_key": "sk-test"})
+        finally:
+            aliyun._request_json = previous
+
+        self.assertEqual(captured_rates, [0.5, 2.0])
 
     def test_aliyun_tts_keeps_v1_voice_for_v1_model(self) -> None:
         captured = {}

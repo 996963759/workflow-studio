@@ -3,6 +3,7 @@ import time
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
@@ -24,6 +25,8 @@ from .models import (
     AuthPayload,
     AuthResponse,
     AuditLogRecord,
+    CustomerChatRequest,
+    CustomerChatResponse,
     EvaluationCaseResult,
     EvaluationDatasetPayload,
     EvaluationDatasetRecord,
@@ -49,6 +52,10 @@ from .models import (
     WorkflowPayload,
     WorkflowPublishPayload,
     WorkflowRecord,
+    WorkflowRouteDecision,
+    WorkflowRouteRequest,
+    WorkflowRouteRunRequest,
+    WorkflowRouteRunResponse,
     WorkflowRunRequest,
     WorkflowVersionCreatePayload,
     WorkflowVersionDiffResponse,
@@ -66,10 +73,12 @@ from .knowledge import (
     set_knowledge_session_factory,
 )
 from .logging_config import configure_logging
-from .mcp_tools import MCPToolNotFoundError, call_mcp_tool, list_mcp_tools
+from .mcp_gateway import MCPGatewayError, mcp_gateway_status
+from .mcp_tools import MCPToolNotFoundError, call_mcp_tool, list_available_mcp_tools, list_mcp_tools
 from .runner import get_provider_status, simulate_run
 from .storage import default_store
 from .validation import validate_workflow
+from .workflow_router import route_workflow
 
 
 configure_logging()
@@ -122,7 +131,13 @@ async def mock_building_bms_device_status(request: Request) -> dict[str, object]
 
 @app.get("/mcp/tools")
 def list_mock_mcp_tools() -> dict[str, object]:
-    return {"tools": list_mcp_tools()}
+    try:
+        return {"tools": list_available_mcp_tools(), "gateway": mcp_gateway_status()}
+    except MCPGatewayError as error:
+        return {
+            "tools": list_mcp_tools(),
+            "gateway": {**mcp_gateway_status(), "error": str(error)},
+        }
 
 
 @app.post("/mcp/tools/{tool_name:path}/call")
@@ -133,14 +148,17 @@ async def call_mock_mcp_tool(tool_name: str, request: Request) -> dict[str, obje
         return call_mcp_tool(normalized_tool_name, payload)
     except MCPToolNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+    except MCPGatewayError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
 
 
 @app.get("/api/provider-status")
-def provider_status() -> dict[str, str | bool]:
+def provider_status() -> dict[str, object]:
     status = get_provider_status()
     rag_status = external_rag_status()
     return {
         **status,
+        "mcp_gateway": mcp_gateway_status(),
         "external_rag_enabled": rag_status.enabled,
         "external_rag_provider": rag_status.provider,
         "external_rag_base_url": rag_status.base_url,
@@ -149,7 +167,7 @@ def provider_status() -> dict[str, str | bool]:
 
 def resolve_workspace_id(user: UserRecord, workspace_id: str | None = Header(default=None, alias="X-Workspace-Id")) -> str:
     if workspace_id:
-        if not store.can_access_workspace(workspace_id, user.id):
+        if not store.get_workspace_role(workspace_id, user.id):
             raise HTTPException(status_code=403, detail="Workspace access denied")
         return workspace_id
     return store.ensure_default_workspace(user.id, user.username)
@@ -565,6 +583,168 @@ def list_workflows(context: WorkspaceContext = Depends(require_workspace_role("v
     return store.list_workflows(user.id, workspace_id)
 
 
+@app.post("/api/workflow-router/match", response_model=WorkflowRouteDecision)
+def match_workflow(
+    payload: WorkflowRouteRequest,
+    context: WorkspaceContext = Depends(require_workspace_role("viewer")),
+) -> WorkflowRouteDecision:
+    user, workspace_id = context
+    workflows = store.list_workflows(user.id, workspace_id)
+    try:
+        return route_workflow(payload.input_text, workflows, workspace_model_configs(workspace_id))
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.post("/api/workflow-router/runs", response_model=WorkflowRouteRunResponse)
+def route_and_run_workflow(
+    payload: WorkflowRouteRunRequest,
+    context: WorkspaceContext = Depends(require_workspace_role("viewer")),
+) -> WorkflowRouteRunResponse:
+    user, workspace_id = context
+    workflows = store.list_workflows(user.id, workspace_id)
+
+    if payload.workflow_id:
+        workflow = next(
+            (item for item in workflows if item.id == payload.workflow_id and not item.archived),
+            None,
+        )
+        if not workflow:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        decision = WorkflowRouteDecision(
+            workflow_id=workflow.id,
+            workflow_name=workflow.name,
+            reason="用户从候选工作流中确认选择。",
+            confidence=1,
+            needs_confirmation=False,
+            provider="用户确认",
+            candidates=[],
+        )
+    else:
+        try:
+            decision = route_workflow(payload.input_text, workflows, workspace_model_configs(workspace_id))
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        if decision.needs_confirmation or not decision.workflow_id:
+            return WorkflowRouteRunResponse(route=decision)
+        workflow = next((item for item in workflows if item.id == decision.workflow_id), None)
+        if not workflow:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+
+    raise_on_validation_errors(workflow)
+    response = simulate_run(workflow, payload.input_text, user.id, workspace_id, workspace_model_configs(workspace_id))
+    run = store.create_run(workflow.id, user.id, workflow.name, payload.input_text, response, workspace_id, workflow)
+    store.append_audit_log(
+        workspace_id,
+        user.id,
+        "workflow.route_run",
+        "workflow",
+        f"智能路由并运行工作流：{workflow.name}",
+        workflow.id,
+        {
+            "run_id": run.id,
+            "status": run.status,
+            "router_provider": decision.provider,
+            "router_confidence": decision.confidence,
+        },
+    )
+    return WorkflowRouteRunResponse(route=decision, run=run)
+
+
+CUSTOMER_CHAT_HISTORY_LIMIT = 6
+CUSTOMER_CHAT_HISTORY_MESSAGE_LIMIT = 1200
+CUSTOMER_CHAT_ROUTE_INPUT_LIMIT = 3500
+
+
+def compact_customer_chat_text(value: str, limit: int, *, keep_tail: bool = False) -> str:
+    text = value.strip()
+    if len(text) <= limit:
+        return text
+    if keep_tail:
+        return f"...（前文已截断）\n{text[-limit:]}"
+    return f"{text[:limit]}\n...（后文已截断）"
+
+
+def customer_chat_input(payload: CustomerChatRequest) -> str:
+    history = payload.history[-CUSTOMER_CHAT_HISTORY_LIMIT:]
+    if not history:
+        return payload.message.strip()
+    transcript = "\n".join(
+        f"{'客户' if item.role == 'user' else '助手'}：{compact_customer_chat_text(item.content, CUSTOMER_CHAT_HISTORY_MESSAGE_LIMIT)}"
+        for item in history
+    )
+    routed_input = f"最近对话：\n{transcript}\n客户当前请求：{payload.message.strip()}"
+    return compact_customer_chat_text(routed_input, CUSTOMER_CHAT_ROUTE_INPUT_LIMIT, keep_tail=True)
+
+
+@app.post("/api/customer-chat/messages", response_model=CustomerChatResponse)
+def customer_chat_message(
+    payload: CustomerChatRequest,
+    context: WorkspaceContext = Depends(require_workspace_role("customer")),
+) -> CustomerChatResponse:
+    user, workspace_id = context
+    workflows = store.list_workflows(user.id, workspace_id)
+    routed_input = customer_chat_input(payload)
+    try:
+        decision = route_workflow(routed_input, workflows, workspace_model_configs(workspace_id))
+    except ValueError:
+        return CustomerChatResponse(
+            status="error",
+            reply="当前服务暂时不可用，请稍后再试。",
+        )
+
+    if decision.needs_confirmation or not decision.workflow_id:
+        store.append_audit_log(
+            workspace_id,
+            user.id,
+            "customer_chat.clarify",
+            "customer_chat",
+            "客户对话需要补充信息",
+            decision.workflow_id,
+            {
+                "router_provider": decision.provider,
+                "router_confidence": decision.confidence,
+            },
+        )
+        return CustomerChatResponse(
+            status="needs_clarification",
+            reply="我还需要一点信息。请补充问题涉及的对象或业务场景，以及你希望最终得到什么结果。",
+        )
+
+    workflow = next(
+        (item for item in workflows if item.id == decision.workflow_id and not item.archived),
+        None,
+    )
+    if not workflow:
+        return CustomerChatResponse(status="error", reply="当前服务暂时不可用，请稍后再试。")
+
+    raise_on_validation_errors(workflow)
+    response = simulate_run(workflow, routed_input, user.id, workspace_id, workspace_model_configs(workspace_id))
+    run = store.create_run(workflow.id, user.id, workflow.name, routed_input, response, workspace_id, workflow)
+    reply = final_output_from_response(response).strip()
+    if response.status != "ok" or not reply:
+        status = "error"
+        reply = "处理过程中遇到了一点问题，请稍后重试。"
+    else:
+        status = "completed"
+
+    store.append_audit_log(
+        workspace_id,
+        user.id,
+        "customer_chat.run",
+        "customer_chat",
+        "客户对话已完成工作流调用",
+        workflow.id,
+        {
+            "run_id": run.id,
+            "status": status,
+            "router_provider": decision.provider,
+            "router_confidence": decision.confidence,
+        },
+    )
+    return CustomerChatResponse(status=status, reply=reply, run_id=run.id)
+
+
 def raise_on_validation_errors(payload: WorkflowPayload) -> WorkflowValidationResult:
     result = validate_workflow(payload)
     if result.errors:
@@ -889,7 +1069,7 @@ def run_evaluation_dataset(
     results: list[EvaluationCaseResult] = []
     for case in dataset.cases:
         response = simulate_run(workflow, case.input_text, user.id, workspace_id, workspace_model_configs(workspace_id))
-        run = store.create_run(workflow.id, user.id, workflow.name, case.input_text, response, workspace_id)
+        run = store.create_run(workflow.id, user.id, workflow.name, case.input_text, response, workspace_id, workflow)
         output = final_output_from_response(response)
         passed, missing_keywords = evaluate_case_output(output, case.expected_keywords)
         duration_ms = sum(step.duration_ms for step in response.steps)
@@ -984,7 +1164,7 @@ def run_stored_workflow(
         raise HTTPException(status_code=404, detail="Workflow not found")
     raise_on_validation_errors(workflow)
     response = simulate_run(workflow, payload.input_text, user.id, workspace_id, workspace_model_configs(workspace_id))
-    run = store.create_run(workflow.id, user.id, workflow.name, payload.input_text, response, workspace_id)
+    run = store.create_run(workflow.id, user.id, workflow.name, payload.input_text, response, workspace_id, workflow)
     store.append_audit_log(
         workspace_id,
         user.id,
@@ -1103,4 +1283,11 @@ def retry_run_job(job_id: str, context: WorkspaceContext = Depends(require_works
 
 
 if DIST_DIR.exists():
+    @app.get("/customer", include_in_schema=False)
+    def customer_frontend() -> FileResponse:
+        return FileResponse(
+            DIST_DIR / "index.html",
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
+
     app.mount("/", StaticFiles(directory=DIST_DIR, html=True), name="frontend")

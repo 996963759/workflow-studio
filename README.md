@@ -47,6 +47,7 @@ flowchart LR
   Runner --> DashScope[阿里云百炼 TTS / 图片生成]
   Runner --> RAG[本地知识库 / PaiSmart RAG]
   Runner --> Tool[本机 HTTP 工具]
+  Runner --> MCP[公司 MCP Gateway]
   Worker --> Store
 ```
 
@@ -55,7 +56,7 @@ flowchart LR
 | 分类 | 能力 |
 | --- | --- |
 | 工作流编排 | 节点拖拽、连线执行、变量传递、条件分支、JSON 解析、循环、聚合、文本模板 |
-| AI 节点 | 大模型对话、知识检索、文字转语音、图片生成、HTTP 工具调用 |
+| AI 节点 | 大模型对话、知识检索、文字转语音、图片生成、HTTP / MCP 工具调用 |
 | 多用户协作 | 本地账号、团队空间、owner/editor/viewer 角色、成员管理、邀请码 |
 | 持久化与治理 | 工作流 CRUD、归档恢复、发布态、版本快照、版本对比、审计日志 |
 | 运行与评测 | 同步运行、异步入队、失败重试、运行历史、节点级输入输出、成本估算、关键词评测集 |
@@ -144,9 +145,25 @@ npm.cmd run dev
 - `DASHSCOPE_API_KEY`：启用阿里云百炼 TTS 和图片生成节点。
 - `DATABASE_URL`：PostgreSQL 连接串。
 - `RUN_JOB_QUEUE_BACKEND`：正式异步队列默认 `kafka`；自动化测试会临时覆盖为 `thread`。
+- `RUN_EXECUTION_MODE`：`demo/development` 会把模拟回退标为“降级”，`production` 会禁止模拟输出并明确失败。
 - `MODEL_CONFIG_SECRET`：保护团队空间级模型 API Key。
+- `MCP_GATEWAY_URL`：公司 MCP Gateway 的 Streamable HTTP 地址；未带路径时默认使用 `/mcp`。
+- `MCP_GATEWAY_API_KEY`：公司 MCP Gateway 生成的 API Key，会以 `X-API-Key` 请求头发送。
+- `MCP_GATEWAY_AUTHORIZATION`、`MCP_PROJECT_ID`、`MCP_TENANT_CODE`、`MCP_USER_ID`：透传给公司网关的调用上下文。
 
 更多配置见 [用户教程](docs/user-guide.md#模型配置) 和 `.env.example`。
+
+### 公司 MCP Gateway
+
+配置环境变量并重建容器后，工具节点可以直接填写公司 MCP 工具名，例如：
+
+```text
+neuron-task-mcp.GetSchedulePage
+```
+
+工具节点的“请求体”填写 `tools/call` 的 arguments JSON，“请求地址”保持为空。执行器会自动完成 MCP 初始化和工具调用；节点“请求头”中填写的 `Authorization`、`X-Project-Id`、`X-Tenant-Code`、`X-User-Id` 会覆盖同名环境变量，适合临时联调。正式部署建议只通过服务端环境变量注入凭证。
+
+访问 `GET /mcp/tools` 可以查看本地演示工具和网关发现到的真实工具；`GET /api/provider-status` 会返回网关配置状态，但不会返回令牌内容。
 
 ## Docker
 
